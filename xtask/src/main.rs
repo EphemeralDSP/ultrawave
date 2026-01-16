@@ -1,14 +1,63 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     
     if args.len() > 1 && args[1] == "install" {
         install_plugins();
+    } else if args.len() > 1 && args[1] == "pluginval" {
+        run_pluginval(&args[2..]);
     } else {
         let _ = nih_plug_xtask::main();
+    }
+}
+
+fn run_pluginval(args: &[String]) {
+    let strictness = args.iter()
+        .position(|a| a == "--strictness")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str())
+        .unwrap_or("5");
+    
+    let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
+    
+    let vst3_path = PathBuf::from("target/bundled/ultrawave.vst3");
+    
+    if !skip_bundle || !vst3_path.exists() {
+        println!("Building and bundling VST3...");
+        let status = Command::new("cargo")
+            .args(["xtask", "bundle", "ultrawave", "--release"])
+            .status()
+            .expect("Failed to run cargo xtask bundle");
+        
+        if !status.success() {
+            eprintln!("Bundle failed");
+            std::process::exit(1);
+        }
+    }
+    
+    if !vst3_path.exists() {
+        eprintln!("VST3 bundle not found at {:?}", vst3_path);
+        std::process::exit(1);
+    }
+    
+    println!("Running pluginval with strictness {}...", strictness);
+    let status = Command::new("pluginval")
+        .args([
+            "--strictness-level", strictness,
+            "--validate", vst3_path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("Failed to run pluginval. Is it installed and in PATH?");
+    
+    if status.success() {
+        println!("✓ pluginval passed");
+    } else {
+        eprintln!("✗ pluginval failed");
+        std::process::exit(1);
     }
 }
 
