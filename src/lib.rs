@@ -31,7 +31,7 @@ impl Plugin for Ultrawave {
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
-        main_input_channels: NonZeroU32::new(2),
+        main_input_channels: None,
         main_output_channels: NonZeroU32::new(2),
         aux_input_ports: &[],
         aux_output_ports: &[],
@@ -104,7 +104,10 @@ impl ClapPlugin for Ultrawave {
 
 impl Vst3Plugin for Ultrawave {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemeralUltrav1";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Sampler];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Instrument,
+        Vst3SubCategory::Sampler,
+    ];
 }
 
 nih_export_clap!(Ultrawave);
