@@ -2,6 +2,7 @@ use nih_plug::prelude::*;
 use std::sync::Arc;
 
 mod dsp;
+mod editor;
 mod machines;
 mod params;
 
@@ -9,6 +10,7 @@ use params::UltrawaveParams;
 
 pub struct Ultrawave {
     params: Arc<UltrawaveParams>,
+    editor_state: Arc<nih_plug_vizia::ViziaState>,
     sample_rate: f32,
 }
 
@@ -16,6 +18,7 @@ impl Default for Ultrawave {
     fn default() -> Self {
         Self {
             params: Arc::new(UltrawaveParams::default()),
+            editor_state: editor::default_state(),
             sample_rate: 44100.0,
         }
     }
@@ -46,6 +49,10 @@ impl Plugin for Ultrawave {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(self.params.clone(), self.editor_state.clone())
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -60,9 +67,20 @@ impl Plugin for Ultrawave {
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Passthrough for now
+        while let Some(event) = context.next_event() {
+            match event {
+                NoteEvent::NoteOn { note, velocity, .. } => {
+                    nih_log!("Note ON: {} velocity: {}", note, velocity);
+                }
+                NoteEvent::NoteOff { note, .. } => {
+                    nih_log!("Note OFF: {}", note);
+                }
+                _ => {}
+            }
+        }
+
         for channel_samples in buffer.iter_samples() {
             for sample in channel_samples {
                 *sample = *sample;

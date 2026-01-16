@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd*:*)",
+      "Bash(gh auth status:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(cargo build:*)",
+      "Bash(cargo clean:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo xtask:*)"
+    ]
+  }
+}
