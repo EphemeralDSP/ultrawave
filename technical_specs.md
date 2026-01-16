@@ -922,7 +922,189 @@ AR_PLOCK_TYPE_FLT_RESO      (0x15u)  /* filter resonance (0..127) */
 - Smooth time constant: ~1-5 ms for LFOs, ~5-10 ms for filter changes
 - Prevent zipper noise from P-locks and automation
 
-**Samp
+**Sample Buffer Management**:
+- Pre-allocate buffers outside audio thread
+- Use `hound` crate for WAV file loading
+- Support mono 12-bit and stereo 16-bit sample formats
+- Implement circular buffer for RAM machine recording
+
+---
+
+## 13.1 RECOMMENDED RUST CRATE STACK
+
+Based on ecosystem research (January 2026), the following crates are recommended:
+
+### Resampling / Interpolation
+
+| Crate | Purpose | Key Features |
+|-------|---------|--------------|
+| **rubato** (v1.0+) | Sample rate conversion | Linear interpolation (authentic), sinc (quality mode), SIMD acceleration, real-time safe |
+| **dasp** | Sample/frame types | Generic over bit-depth, `#![no_std]` compatible, modular feature flags |
+
+**Recommendation**: Use **rubato** for all resampling. It supports lowering polynomial degree to linear for authentic Elektron behavior, with optional sinc for HQ mode.
+
+### Filters
+
+| Crate | Purpose | Key Features |
+|-------|---------|--------------|
+| **synfx-dsp** | Complete DSP toolkit | Stilson/Moog 24dB ladder filter, SVF, distortion, delay |
+| **biquad-rs** | Biquad building blocks | DF1/DF2T implementations, `#![no_std]`, f32/f64 |
+| **surgefilter-moog** | Moog ladder filter | From Surge synthesizer, production-ready |
+
+**Recommendation**: Use **synfx-dsp** for the 24dB resonant filter - it includes the exact Stilson/Moog topology specified. Use **biquad-rs** for custom filter chains.
+
+### FFT (Phase Vocoder Time-Stretching)
+
+| Crate | Purpose | Key Features |
+|-------|---------|--------------|
+| **rustfft** (v6.4+) | FFT computation | 11M+ downloads, SIMD (AVX/SSE4/NEON), pure Rust |
+| **realfft** | Real-to-complex FFT | 5.8M downloads, companion to rustfft |
+
+**Recommendation**: Use **rustfft + realfft** for STFT-based phase vocoder. Pre-allocate FFT planner outside audio thread.
+
+### Bitcrushing / Sample Rate Reduction
+
+| Crate | Purpose | Key Features |
+|-------|---------|--------------|
+| **audio-processor-bitcrusher** | Sample-and-hold bitcrusher | Thread-safe handles, simple API |
+
+**Alternative**: Implement custom - SRR is straightforward (sample-and-hold + bit quantization).
+
+### Complete Cargo.toml Dependencies
+
+```toml
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+
+# DSP
+rubato = "1.0"
+synfx-dsp = "0.5"
+biquad = "0.4"
+rustfft = "6.4"
+realfft = "3.4"
+
+# Audio I/O
+hound = "3.5"
+dasp_sample = "0.11"
+
+[dev-dependencies]
+audio-processor-testing-helpers = "2.7"
+approx = "0.5"
+```
+
+---
+
+## 13.2 GUI FRAMEWORK
+
+### Recommendation: VIZIA
+
+**Status**: Most mature option for nih-plug. Actively maintained.
+
+**Why VIZIA over alternatives**:
+- **iced**: Outdated - pinned to iced 0.4, wgpu support removed, OpenGL-only
+- **egui**: Officially deprecated for plugins ("Consider using nih_plug_vizia instead")
+- **VIZIA**: CSS-like styling, audio-focused, AccessKit accessibility support
+
+**Available nih_plug_vizia Widgets**:
+- `ParamSlider` - Parameter-bound slider
+- `ParamButton` - BoolParam toggle
+- `GenericUi` - Auto-generated UI from Params
+- `PeakMeter` - Horizontal peak meter
+- `ResizeHandle` - Window resize control
+
+**Implementation Strategy**:
+```
+Phase 1: GenericUi for rapid prototyping
+Phase 2: Custom Elektron-inspired CSS theme
+Phase 3: Custom knob/encoder widgets with waveform displays
+```
+
+**CSS Styling Example** (Elektron aesthetic):
+```css
+.knob {
+    width: 60px;
+    height: 60px;
+    background-color: #1a1a1a;
+    border-radius: 50%;
+    border: 2px solid #333;
+}
+
+.knob .track {
+    background-color: #00ff88;  /* Elektron green */
+}
+
+.label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    color: #888;
+}
+```
+
+---
+
+## 13.3 TESTING STRATEGY
+
+### Unit Testing DSP Code
+
+**Recommended crates**:
+- `audio-processor-testing-helpers` - `assert_f_eq`, `rms_level()`, `sine_buffer()`
+- `approx` - Relative and ULPs float comparison
+- `rustfft` - Frequency response analysis
+
+**Priority test areas for Elektron emulation**:
+
+1. **Linear Interpolation**: Verify aliasing pattern matches Elektron behavior (26dB sidelobe suppression)
+2. **12-bit Quantization**: Test SRR 0-127 range produces correct bit-depth reduction
+3. **24dB Filter**: Test LP/BP/HP modes, verify resonance self-oscillation
+4. **LFO Smoothing**: Ensure no zipper noise with ~300Hz low-pass smoothing
+5. **Parameter Ranges**: All 0-127 mappings correct
+
+**Example filter test**:
+```rust
+#[test]
+fn test_24db_filter_slope() {
+    let mut filter = ResonantFilter::new(44100.0);
+    filter.set_cutoff(1000.0);
+    filter.set_mode(FilterMode::LowPass);
+
+    // Generate impulse, compute FFT, verify -24dB/octave slope
+    let spectrum = analyze_impulse_response(&mut filter, 1024);
+
+    // At 2x cutoff (2000Hz), should be ~-24dB
+    let attenuation_db = 20.0 * (spectrum[2000] / spectrum[500]).log10();
+    assert!((attenuation_db - (-24.0)).abs() < 3.0);
+}
+```
+
+### Integration Testing
+
+**Plugin validation tools**:
+- **clap-validator**: CLAP format validation, CI-friendly
+- **pluginval**: VST3/AU validation, strictness levels 1-10
+
+**GitHub Actions CI**:
+```yaml
+- name: Validate CLAP
+  run: |
+    ./clap-validator validate target/bundled/ultrawave.clap
+
+- name: Validate VST3
+  run: |
+    ./pluginval --strictness-level 5 target/bundled/ultrawave.vst3
+```
+
+### Golden File Testing
+
+Compare plugin output against known-good reference audio:
+```rust
+#[test]
+fn test_ram_play_output() {
+    let output = process_test_pattern("kick_pattern.mid");
+    let expected = load_wav("test_references/kick_output.wav");
+    assert_audio_similar(&output, &expected, -60.0); // -60dB tolerance
+}
+```
 
 ---
 
