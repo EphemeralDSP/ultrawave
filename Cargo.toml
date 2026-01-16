@@ -1,0 +1,34 @@
+[package]
+name = "ultrawave"
+version = "0.1.0"
+edition = "2021"
+authors = ["EphemeralDSP"]
+license = "MIT"
+description = "Elektron Machinedrum UW RAM machine emulation VST/CLAP plugin"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+
+# DSP
+rubato = "1.0"
+biquad = "0.4"
+hound = "3.5"
+dasp_sample = "0.11"
+
+# Note: synfx-dsp requires nightly Rust. For MVP, using biquad for filters.
+# synfx-dsp will be added when we switch to nightly or find stable-compatible alternative.
+
+[dev-dependencies]
+audio-processor-testing-helpers = "2.7"
+approx = "0.5"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+
+[workspace]
+members = ["xtask"]

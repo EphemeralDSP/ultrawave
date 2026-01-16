@@ -1,0 +1,54 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxcb1-dev libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-render-util0-dev libxcb-xkb-dev libxkbcommon-x11-dev libxkbcommon-dev libasound2-dev
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test
+
+      - name: Bundle plugins
+        run: cargo xtask bundle ultrawave --release
+
+      - name: Validate CLAP plugin (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://github.com/free-audio/clap-validator/releases/latest/download/clap-validator-linux.zip
+          unzip -q clap-validator-linux.zip
+          ./clap-validator validate target/bundled/ultrawave.clap || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultrawave-${{ matrix.os }}
+          path: target/bundled/
