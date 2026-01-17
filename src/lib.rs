@@ -6,8 +6,9 @@ mod editor;
 mod machines;
 mod params;
 
+use dsp::filter::ResonantFilter;
 use machines::ram_play::{RamPlay, RamPlayParams};
-use machines::ram_record::{RamRecord, RamRecordParams};
+use machines::ram_record::RamRecord;
 use params::UltrawaveParams;
 
 pub struct Ultrawave {
@@ -16,6 +17,7 @@ pub struct Ultrawave {
     sample_rate: f32,
     ram_record: RamRecord,
     ram_play: RamPlay,
+    filter: ResonantFilter,
 }
 
 impl Default for Ultrawave {
@@ -27,6 +29,7 @@ impl Default for Ultrawave {
             sample_rate,
             ram_record: RamRecord::new(sample_rate),
             ram_play: RamPlay::new(sample_rate),
+            filter: ResonantFilter::new(sample_rate),
         }
     }
 }
@@ -69,6 +72,7 @@ impl Plugin for Ultrawave {
         self.sample_rate = buffer_config.sample_rate;
         self.ram_record.set_sample_rate(buffer_config.sample_rate);
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
+        self.filter.set_sample_rate(buffer_config.sample_rate);
         true
     }
 
@@ -106,10 +110,20 @@ impl Plugin for Ultrawave {
 
         let gain = nih_plug::util::db_to_gain(self.params.gain.value());
 
+        // Update filter parameters
+        let filter_freq = 20.0 + (self.params.fltf.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
+        let filter_resonance = self.params.fltq.value() as f32 / 127.0;
+        let filter_mode = dsp::filter::FilterMode::from_param(self.params.fltw.value());
+        self.filter.set_params(filter_freq, filter_resonance, filter_mode);
+
         for channel_samples in buffer.iter_samples() {
             let sample_out = self.ram_play.process();
+            let (left, right) = self.filter.process_stereo(sample_out, sample_out);
+
+            let mut out_idx = 0;
             for sample in channel_samples {
-                *sample = sample_out * gain;
+                *sample = if out_idx == 0 { left } else { right } * gain;
+                out_idx += 1;
             }
         }
         ProcessStatus::Normal
