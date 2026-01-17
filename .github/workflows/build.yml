@@ -43,8 +43,8 @@ jobs:
       - name: Validate CLAP plugin (Linux)
         if: runner.os == 'Linux'
         run: |
-          wget -q https://github.com/free-audio/clap-validator/releases/latest/download/clap-validator-linux.zip
-          unzip -q clap-validator-linux.zip
+          wget -q https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
+          tar -xzf clap-validator-0.3.2-ubuntu-18.04.tar.gz
           ./clap-validator validate target/bundled/ultrawave.clap || true
 
       - name: Upload artifacts
