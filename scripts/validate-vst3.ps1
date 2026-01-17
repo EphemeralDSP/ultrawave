@@ -2,50 +2,42 @@
 # This script automates VST3 plugin validation with configurable strictness levels
 #
 # Usage:
-#   .\validate-vst3.ps1 [-PluginPath <path>] [-Strictness <1-10>] [-Verbose]
+#   .\validate-vst3.ps1 [-PluginPath <path>] [-Strictness <1-10>] [-Detailed]
 #
 # References:
 #   - https://github.com/Tracktion/pluginval
-#   - https://github.com/Tracktion/pluginval/blob/develop/docs/Testing%20plugins%20with%20pluginval.md
 
 param(
-    [Parameter(Mandatory=$false)]
     [string]$PluginPath = "",
-
-    [Parameter(Mandatory=$false)]
-    [ValidateRange(1,10)]
     [int]$Strictness = 5,
-
-    [Parameter(Mandatory=$false)]
-    [switch]$Verbose,
-
-    [Parameter(Mandatory=$false)]
+    [switch]$Detailed,
     [string]$PluginvalPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-# ANSI color codes for output
-$RED = "`e[31m"
-$GREEN = "`e[32m"
-$YELLOW = "`e[33m"
-$BLUE = "`e[34m"
-$RESET = "`e[0m"
+# ANSI color codes for output (safer version)
+$ESC = [char]27
+$RED = "$ESC[31m"
+$GREEN = "$ESC[32m"
+$YELLOW = "$ESC[33m"
+$BLUE = "$ESC[34m"
+$RESET = "$ESC[0m"
 
 function Write-Info($message) {
-    Write-Host "${BLUE}[INFO]${RESET} $message"
+    Write-Host ("${BLUE}[INFO]${RESET} " + $message)
 }
 
 function Write-Success($message) {
-    Write-Host "${GREEN}[SUCCESS]${RESET} $message"
+    Write-Host ("${GREEN}[SUCCESS]${RESET} " + $message)
 }
 
 function Write-Warning($message) {
-    Write-Host "${YELLOW}[WARNING]${RESET} $message"
+    Write-Host ("${YELLOW}[WARNING]${RESET} " + $message)
 }
 
 function Write-Error($message) {
-    Write-Host "${RED}[ERROR]${RESET} $message"
+    Write-Host ("${RED}[ERROR]${RESET} " + $message)
 }
 
 # Find pluginval executable
@@ -64,7 +56,7 @@ function Find-Pluginval {
 
     foreach ($path in $possiblePaths) {
         if (Test-Path $path) {
-            Write-Info "Found pluginval at: $path"
+            Write-Info ("Found pluginval at: " + $path)
             return $path
         }
     }
@@ -72,7 +64,7 @@ function Find-Pluginval {
     # Try to find in PATH
     $pluginvalCmd = Get-Command pluginval -ErrorAction SilentlyContinue
     if ($pluginvalCmd) {
-        Write-Info "Found pluginval in PATH: $($pluginvalCmd.Source)"
+        Write-Info ("Found pluginval in PATH: " + $pluginvalCmd.Source)
         return $pluginvalCmd.Source
     }
 
@@ -101,7 +93,7 @@ function Find-Plugin {
 
     foreach ($buildPath in $buildPaths) {
         if (Test-Path $buildPath) {
-            Write-Info "Found VST3 plugin at: $buildPath"
+            Write-Info ("Found VST3 plugin at: " + $buildPath)
             return $buildPath
         }
     }
@@ -117,38 +109,37 @@ function Invoke-Validation {
     Write-Info "========================================="
     Write-Info ""
 
-    $pluginval = Find-Pluginval
-    $plugin = Find-Plugin -path $PluginPath
+    $pv = Find-Pluginval
+    $p = Find-Plugin -path $PluginPath
 
-    Write-Info "Pluginval: $pluginval"
-    Write-Info "Plugin: $plugin"
-    Write-Info "Strictness Level: $Strictness (1=lenient, 10=strict)"
+    Write-Info ("Pluginval: " + $pv)
+    Write-Info ("Plugin: " + $p)
+    Write-Info ("Strictness Level: " + $Strictness + " (1=lenient, 10=strict)")
     Write-Info ""
 
     # Build pluginval arguments
-    $args = @(
+    $vArgs = @(
         "--validate-in-process",
-        "--strictness-level", $Strictness,
-        "--verbose"
+        "--strictness-level", $Strictness
     )
 
-    if (-not $Verbose) {
-        $args = $args | Where-Object { $_ -ne "--verbose" }
+    if ($Detailed) {
+        $vArgs += "--verbose"
     }
 
-    $args += $plugin
+    $vArgs += $p
 
     Write-Info "Running validation..."
-    Write-Info "Command: $pluginval $($args -join ' ')"
+    Write-Info ("Command: " + $pv + " " + ($vArgs -join ' '))
     Write-Info ""
 
     # Run pluginval
     $startTime = Get-Date
     try {
-        & $pluginval @args
+        & $pv $vArgs
         $exitCode = $LASTEXITCODE
     } catch {
-        Write-Error "Failed to run pluginval: $_"
+        Write-Error ("Failed to run pluginval: " + $_)
         exit 1
     }
     $endTime = Get-Date
@@ -158,12 +149,12 @@ function Invoke-Validation {
     Write-Info "========================================="
     Write-Info "Validation Results"
     Write-Info "========================================="
-    Write-Info "Duration: $($duration.TotalSeconds) seconds"
+    Write-Info ("Duration: " + $duration.TotalSeconds + " seconds")
     Write-Info ""
 
     if ($exitCode -eq 0) {
-        Write-Success "✓ All tests passed!"
-        Write-Success "Plugin is compatible with strictness level $Strictness"
+        Write-Success "PASSED: All tests passed!"
+        Write-Success ("Plugin is compatible with strictness level " + $Strictness)
         Write-Info ""
         Write-Info "Strictness level meanings:"
         Write-Info "  5+ : Recommended for broad DAW compatibility"
@@ -171,8 +162,8 @@ function Invoke-Validation {
         Write-Info "  10 : Maximum strictness (all tests)"
         return 0
     } else {
-        Write-Error "✗ Validation failed (exit code: $exitCode)"
-        Write-Warning "Some tests did not pass at strictness level $Strictness"
+        Write-Error ("FAILED: Validation failed (exit code: " + $exitCode + ")")
+        Write-Warning ("Some tests did not pass at strictness level " + $Strictness)
         Write-Info ""
         Write-Info "Next steps:"
         Write-Info "  1. Review the output above for specific failures"
@@ -184,5 +175,5 @@ function Invoke-Validation {
 }
 
 # Run validation
-$result = Invoke-Validation
-exit $result
+$res = Invoke-Validation
+exit $res

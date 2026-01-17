@@ -116,23 +116,84 @@ Or download pre-built binaries from: https://github.com/free-audio/clap-validato
 
 ### CLAP Validation
 
-**All Platforms:**
+**Windows (PowerShell):**
+```powershell
+# Validate with default settings (all tests)
+.\scripts\validate-clap.ps1
+
+# Specify plugin path
+.\scripts\validate-clap.ps1 -PluginPath ".\target\release\Ultrawave.clap"
+
+# Run specific tests
+.\scripts\validate-clap.ps1 -Tests "state-reproducibility-basic"
+
+# List available tests
+.\scripts\validate-clap.ps1 -ListTests
+
+# Verbose output
+.\scripts\validate-vst3.ps1 -Detailed
+```
+
+**macOS/Linux (Bash):**
+```bash
+# Validate with default settings (strictness level 5)
+./scripts/validate-vst3.sh
+
+# Specify plugin path
+./scripts/validate-vst3.sh --plugin ./target/release/Ultrawave.vst3
+
+# Increase strictness
+./scripts/validate-vst3.sh --strictness 8
+
+# Verbose output
+./scripts/validate-vst3.sh --verbose
+```
+
+### CLAP Validation
+
+**Windows (PowerShell):**
+```powershell
+# Validate with default settings (all tests)
+.\scripts\validate-clap.ps1
+
+# Specify plugin path
+.\scripts\validate-clap.ps1 -PluginPath ".\target\release\Ultrawave.clap"
+
+# Run specific tests
+.\scripts\validate-clap.ps1 -Tests "state-reproducibility-basic"
+
+# List available tests
+.\scripts\validate-clap.ps1 -ListTests
+
+# Verbose output
+.\scripts\validate-clap.ps1 -Detailed
+```
+
+**macOS/Linux (Bash):**
+```bash
+# Validate with default settings (all tests)
+./scripts/validate-clap.sh
+
+# Specify plugin path
+./scripts/validate-clap.sh --plugin ./target/release/Ultrawave.clap
+
+# Run specific tests
+./scripts/validate-clap.sh --tests state-reproducibility-basic
+
+# List available tests
+./scripts/validate-clap.sh --list-tests
+
+# Verbose output
+./scripts/validate-clap.sh --verbose
+```
+
+**Direct CLI usage:**
 ```bash
 # List available tests
 clap-validator list tests
 
 # Validate CLAP plugin (all tests)
 clap-validator validate ./target/release/Ultrawave.clap
-
-# Run specific test categories
-clap-validator validate --test-fuzzing ./target/release/Ultrawave.clap
-clap-validator validate --test-thread-safety ./target/release/Ultrawave.clap
-clap-validator validate --test-state ./target/release/Ultrawave.clap
-```
-
-PowerShell wrapper (coming soon):
-```powershell
-.\scripts\validate-clap.ps1 -PluginPath ".\target\release\Ultrawave.clap"
 ```
 
 ## Expected Output

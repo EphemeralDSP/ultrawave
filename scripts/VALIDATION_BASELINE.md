@@ -34,7 +34,17 @@ cargo xtask bundle ultrawave --release
 ./scripts/validate-vst3.sh --strictness 5
 ```
 
-**CLAP (All platforms):**
+**CLAP (Windows):**
+```powershell
+.\scripts\validate-clap.ps1
+```
+
+**CLAP (macOS/Linux):**
+```bash
+./scripts/validate-clap.sh
+```
+
+**CLAP (Direct CLI):**
 ```bash
 clap-validator validate ./target/bundled/Ultrawave.clap
 ```
