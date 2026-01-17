@@ -6,20 +6,27 @@ mod editor;
 mod machines;
 mod params;
 
+use machines::ram_play::{RamPlay, RamPlayParams};
+use machines::ram_record::{RamRecord, RamRecordParams};
 use params::UltrawaveParams;
 
 pub struct Ultrawave {
     params: Arc<UltrawaveParams>,
     editor_state: Arc<nih_plug_vizia::ViziaState>,
     sample_rate: f32,
+    ram_record: RamRecord,
+    ram_play: RamPlay,
 }
 
 impl Default for Ultrawave {
     fn default() -> Self {
+        let sample_rate = 44100.0;
         Self {
             params: Arc::new(UltrawaveParams::default()),
             editor_state: editor::default_state(),
-            sample_rate: 44100.0,
+            sample_rate,
+            ram_record: RamRecord::new(sample_rate),
+            ram_play: RamPlay::new(sample_rate),
         }
     }
 }
@@ -60,6 +67,8 @@ impl Plugin for Ultrawave {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+        self.ram_record.set_sample_rate(buffer_config.sample_rate);
+        self.ram_play.set_sample_rate(buffer_config.sample_rate);
         true
     }
 
@@ -71,19 +80,36 @@ impl Plugin for Ultrawave {
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
             match event {
-                NoteEvent::NoteOn { note, velocity, .. } => {
-                    nih_log!("Note ON: {} velocity: {}", note, velocity);
+                NoteEvent::NoteOn { velocity, .. } => {
+                    if self.ram_record.buffer_len() > 0 {
+                        let play_params = RamPlayParams {
+                            strt: self.params.strt.value(),
+                            end: self.params.end.value(),
+                            pitch: self.params.pitch.value(),
+                            hold: self.params.hold.value(),
+                            dec: self.params.dec.value(),
+                            rtrg: self.params.rtrg.value(),
+                            rtim: self.params.rtim.value(),
+                            srr: self.params.srr.value(),
+                            vol: ((velocity * 127.0) as i32).min(127),
+                        };
+                        self.ram_play.load_buffer(self.ram_record.get_buffer());
+                        self.ram_play.trigger(&play_params);
+                    }
                 }
-                NoteEvent::NoteOff { note, .. } => {
-                    nih_log!("Note OFF: {}", note);
+                NoteEvent::NoteOff { .. } => {
+                    self.ram_play.stop();
                 }
                 _ => {}
             }
         }
 
+        let gain = nih_plug::util::db_to_gain(self.params.gain.value());
+
         for channel_samples in buffer.iter_samples() {
+            let sample_out = self.ram_play.process();
             for sample in channel_samples {
-                *sample = *sample;
+                *sample = sample_out * gain;
             }
         }
         ProcessStatus::Normal
