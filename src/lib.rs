@@ -85,7 +85,8 @@ impl Plugin for Ultrawave {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { velocity, .. } => {
-                    if self.ram_record.buffer_len() > 0 {
+                    let play_chan = self.params.play_chan.value() as usize;
+                    if self.ram_record.buffer_len(play_chan) > 0 {
                         let play_params = RamPlayParams {
                             strt: self.params.strt.value(),
                             end: self.params.end.value(),
@@ -97,12 +98,13 @@ impl Plugin for Ultrawave {
                             srr: self.params.srr.value(),
                             vol: ((velocity * 127.0) as i32).min(127),
                         };
-                        self.ram_play.load_buffer(self.ram_record.get_buffer());
-                        self.ram_play.trigger(&play_params);
+                        self.ram_play.load_buffer(self.ram_record.get_buffer(play_chan), play_chan);
+                        self.ram_play.trigger(&play_params, play_chan);
                     }
                 }
                 NoteEvent::NoteOff { .. } => {
-                    self.ram_play.stop();
+                    let play_chan = self.params.play_chan.value() as usize;
+                    self.ram_play.stop(play_chan);
                 }
                 _ => {}
             }
@@ -119,7 +121,8 @@ impl Plugin for Ultrawave {
             .set_params(filter_freq, filter_resonance, filter_mode);
 
         for channel_samples in buffer.iter_samples() {
-            let sample_out = self.ram_play.process();
+            let play_chan = self.params.play_chan.value() as usize;
+            let sample_out = self.ram_play.process(play_chan);
             let (left, right) = self.filter.process_stereo(sample_out, sample_out);
 
             let mut out_idx = 0;

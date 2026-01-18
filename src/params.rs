@@ -7,6 +7,8 @@ pub struct UltrawaveParams {
     pub gain: FloatParam,
 
     // RAM RECORD Parameters (R1-R4)
+    #[id = "rec_chan"]
+    pub rec_chan: IntParam,
     #[id = "mlev"]
     pub mlev: IntParam,
     #[id = "mbal"]
@@ -25,6 +27,8 @@ pub struct UltrawaveParams {
     pub rec_rate: IntParam,
 
     // RAM PLAY Parameters (P1-P4)
+    #[id = "play_chan"]
+    pub play_chan: IntParam,
     #[id = "strt"]
     pub strt: IntParam,
     #[id = "end"]
@@ -72,6 +76,7 @@ impl Default for UltrawaveParams {
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
 
             // RAM RECORD (0-127)
+            rec_chan: IntParam::new("Rec Channel", 0, IntRange::Linear { min: 0, max: 7 }),
             mlev: IntParam::new("Main Level", 64, IntRange::Linear { min: 0, max: 127 }),
             mbal: IntParam::new("Main Balance", 64, IntRange::Linear { min: 0, max: 127 }),
             ilev: IntParam::new("Input Level", 64, IntRange::Linear { min: 0, max: 127 }),
@@ -82,6 +87,7 @@ impl Default for UltrawaveParams {
             rec_rate: IntParam::new("Rec Rate", 127, IntRange::Linear { min: 0, max: 127 }),
 
             // RAM PLAY (0-127)
+            play_chan: IntParam::new("Play Channel", 0, IntRange::Linear { min: 0, max: 7 }),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 }),
             end: IntParam::new("End", 127, IntRange::Linear { min: 0, max: 127 }),
             pitch: IntParam::new("Pitch", 64, IntRange::Linear { min: 0, max: 127 }),
