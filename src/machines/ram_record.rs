@@ -60,16 +60,17 @@ impl RamRecord {
             self.buffer.clear();
             self.write_position = 0;
         }
-        
+
         let len_normalized = param_to_normalized(params.rec_len);
-        self.target_length = ((len_normalized * Self::MAX_RECORD_SECONDS * self.sample_rate) as usize)
+        self.target_length = ((len_normalized * Self::MAX_RECORD_SECONDS * self.sample_rate)
+            as usize)
             .min(self.max_length)
             .max(1);
-        
+
         let rate_normalized = param_to_normalized(params.rec_rate);
         self.rec_rate_divisor = 1.0 + (1.0 - rate_normalized) * 15.0;
         self.rec_rate_counter = 0.0;
-        
+
         self.is_recording = true;
     }
 
@@ -106,11 +107,11 @@ impl RamRecord {
 
         let mlev = param_to_normalized(params.mlev);
         let ilev = param_to_normalized(params.ilev);
-        
+
         let mbal = param_to_normalized(params.mbal);
         let main_l_gain = (1.0 - mbal).min(1.0);
         let main_r_gain = mbal.min(1.0);
-        
+
         let ibal = param_to_normalized(params.ibal);
         let input_l_gain = (1.0 - ibal).min(1.0);
         let input_r_gain = ibal.min(1.0);

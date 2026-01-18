@@ -89,7 +89,11 @@ impl Default for UltrawaveParams {
             dec: IntParam::new("Decay", 0, IntRange::Linear { min: 0, max: 127 }),
             rtrg: IntParam::new("Retrigger", 0, IntRange::Linear { min: 0, max: 127 }),
             rtim: IntParam::new("Retrig Time", 0, IntRange::Linear { min: 0, max: 127 }),
-            srr: IntParam::new("Sample Rate Reduction", 0, IntRange::Linear { min: 0, max: 127 }),
+            srr: IntParam::new(
+                "Sample Rate Reduction",
+                0,
+                IntRange::Linear { min: 0, max: 127 },
+            ),
 
             // Filter (0-127)
             fltf: IntParam::new("Filter Freq", 64, IntRange::Linear { min: 0, max: 127 }),

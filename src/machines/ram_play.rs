@@ -1,4 +1,4 @@
-use crate::dsp::sample_engine::{pitch_to_ratio, param_to_normalized, SampleEngine};
+use crate::dsp::sample_engine::{param_to_normalized, pitch_to_ratio, SampleEngine};
 
 pub struct RamPlayParams {
     pub strt: i32,
@@ -144,7 +144,9 @@ impl RamPlay {
         }
 
         let pitch_ratio = pitch_to_ratio(self.current_params.pitch);
-        let sample = self.engine.read_sample_with_processing(pitch_ratio, self.current_params.srr);
+        let sample = self
+            .engine
+            .read_sample_with_processing(pitch_ratio, self.current_params.srr);
 
         if self.hold_counter < self.hold_time_samples {
             self.hold_counter += 1;
@@ -173,7 +175,9 @@ mod tests {
     use super::*;
 
     fn make_test_buffer() -> Vec<i16> {
-        (0..1000).map(|i| ((i as f32 / 1000.0 * 32767.0) as i16)).collect()
+        (0..1000)
+            .map(|i| ((i as f32 / 1000.0 * 32767.0) as i16))
+            .collect()
     }
 
     #[test]

@@ -9,6 +9,10 @@ description = "Elektron Machinedrum UW RAM machine emulation VST/CLAP plugin"
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[[bin]]
+name = "ultrawave_standalone"
+path = "src/main.rs"
+
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"] }
 nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }

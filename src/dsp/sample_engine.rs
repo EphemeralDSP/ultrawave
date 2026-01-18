@@ -64,7 +64,12 @@ impl SampleEngine {
     pub fn read_sample_with_processing(&mut self, pitch_ratio: f64, srr: i32) -> f32 {
         let raw_sample = self.read_sample_linear(pitch_ratio);
         let quantized = apply_12bit_quantization(raw_sample);
-        apply_sample_rate_reduction(quantized, srr, &mut self.srr_counter, &mut self.srr_hold_sample)
+        apply_sample_rate_reduction(
+            quantized,
+            srr,
+            &mut self.srr_counter,
+            &mut self.srr_hold_sample,
+        )
     }
 
     pub fn is_finished(&self, end_position: f64) -> bool {

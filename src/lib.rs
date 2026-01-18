@@ -111,10 +111,12 @@ impl Plugin for Ultrawave {
         let gain = nih_plug::util::db_to_gain(self.params.gain.value());
 
         // Update filter parameters
-        let filter_freq = 20.0 + (self.params.fltf.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
+        let filter_freq =
+            20.0 + (self.params.fltf.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
         let filter_resonance = self.params.fltq.value() as f32 / 127.0;
         let filter_mode = dsp::filter::FilterMode::from_param(self.params.fltw.value());
-        self.filter.set_params(filter_freq, filter_resonance, filter_mode);
+        self.filter
+            .set_params(filter_freq, filter_resonance, filter_mode);
 
         for channel_samples in buffer.iter_samples() {
             let sample_out = self.ram_play.process();
@@ -136,7 +138,8 @@ impl Plugin for Ultrawave {
 
 impl ClapPlugin for Ultrawave {
     const CLAP_ID: &'static str = "com.ephemeraldsp.ultrawave";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Elektron Machinedrum UW RAM machine emulation");
+    const CLAP_DESCRIPTION: Option<&'static str> =
+        Some("Elektron Machinedrum UW RAM machine emulation");
     const CLAP_MANUAL_URL: Option<&'static str> = Some("https://github.com/EphemeralDSP/ultrawave");
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Sampler];
@@ -144,10 +147,8 @@ impl ClapPlugin for Ultrawave {
 
 impl Vst3Plugin for Ultrawave {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemeralUltrav1";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
-        Vst3SubCategory::Instrument,
-        Vst3SubCategory::Sampler,
-    ];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
 }
 
 nih_export_clap!(Ultrawave);

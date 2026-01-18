@@ -22,3 +22,7 @@ target
 
 # Windows reserved file name
 nul
+
+# Generated test screenshots
+ultrawave_gui_test.png
+*_gui_test.png
