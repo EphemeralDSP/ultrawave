@@ -26,3 +26,6 @@ nul
 # Generated test screenshots
 ultrawave_gui_test.png
 *_gui_test.png
+
+# Gemini AI settings
+.gemini/
