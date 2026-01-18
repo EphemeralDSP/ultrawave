@@ -7,7 +7,7 @@ mod machines;
 mod params;
 
 use dsp::filter::ResonantFilter;
-use machines::ram_play::{RamPlay, RamPlayParams};
+use machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
 use machines::ram_record::RamRecord;
 use params::UltrawaveParams;
 
@@ -87,7 +87,7 @@ impl Plugin for Ultrawave {
                 NoteEvent::NoteOn { velocity, .. } => {
                     let play_chan = self.params.play_chan.value() as usize;
                     if self.ram_record.buffer_len(play_chan) > 0 {
-                        let play_params = RamPlayParams {
+                        let play_params = RamPlayMachineParams {
                             strt: self.params.strt.value(),
                             end: self.params.end.value(),
                             pitch: self.params.pitch.value(),
