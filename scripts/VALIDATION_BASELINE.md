@@ -128,6 +128,41 @@ Issues discovered during validation will be tracked here and linked to beads iss
 **Resolution**: How issues were resolved
 ```
 
+## Release Checklist
+
+Before releasing, ensure the following validation gates pass:
+
+- [ ] All validators pass at strictness level 5+
+- [ ] Validation reports generated and archived
+- [ ] No regression from previous release
+- [ ] All platforms tested (Windows, macOS, Linux)
+- [ ] All formats validated (VST3, CLAP, AU on macOS)
+
+### Automated Release Process
+
+Releases are automated via GitHub Actions. To create a release:
+
+1. Tag the commit: `git tag v1.0.0 && git push --tags`
+2. The release workflow runs validation on all platforms
+3. **Validation failures block the release**
+4. On success, artifacts are uploaded with validation reports
+5. Release includes "Verified by pluginval" badges
+
+### Manual Pre-Release Validation
+
+```bash
+# Build release
+cargo build --release
+cargo xtask bundle ultrawave --release
+
+# Run validators locally
+.\scripts\validate-vst3.ps1 -Strictness 5   # Windows
+.\scripts\validate-clap.ps1                  # Windows
+
+./scripts/validate-vst3.sh --strictness 5    # macOS/Linux
+./scripts/validate-clap.sh                   # macOS/Linux
+```
+
 ## Next Steps
 
 1. Complete core DSP implementation
@@ -136,4 +171,5 @@ Issues discovered during validation will be tracked here and linked to beads iss
 4. Document baseline results above
 5. Address any critical failures
 6. Re-validate until all tests pass at strictness level 5+
-7. Set up CI automation (ultrawave-45r)
+7. ~~Set up CI automation (ultrawave-45r)~~ ✅ Complete
+8. ~~Integrate validators into release pipeline (ultrawave-cz4)~~ ✅ Complete

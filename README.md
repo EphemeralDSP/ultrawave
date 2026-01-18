@@ -2,6 +2,9 @@
 
 [![Plugin Validation](https://github.com/EphemeralDSP/ultrawave/actions/workflows/plugin-validation.yml/badge.svg)](https://github.com/EphemeralDSP/ultrawave/actions/workflows/plugin-validation.yml)
 [![Build](https://github.com/EphemeralDSP/ultrawave/actions/workflows/build.yml/badge.svg)](https://github.com/EphemeralDSP/ultrawave/actions/workflows/build.yml)
+[![Release](https://github.com/EphemeralDSP/ultrawave/actions/workflows/release.yml/badge.svg)](https://github.com/EphemeralDSP/ultrawave/actions/workflows/release.yml)
+![Verified by pluginval](https://img.shields.io/badge/Verified%20by-pluginval-blue)
+![Verified by clap-validator](https://img.shields.io/badge/Verified%20by-clap--validator-green)
 
 A wavetable synthesizer plugin built with Rust and [NIH-plug](https://github.com/robbert-vdh/nih-plug).
 
