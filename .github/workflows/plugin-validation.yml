@@ -1,0 +1,166 @@
+name: Plugin Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  PLUGINVAL_VERSION: "1.0.3"
+  CLAP_VALIDATOR_VERSION: "0.3.2"
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
+            clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
+            formats: [vst3, clap]
+          - os: windows-latest
+            pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Windows.zip
+            clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-windows.zip
+            formats: [vst3, clap]
+          - os: macos-latest
+            pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_macOS.zip
+            clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-macos-universal.tar.gz
+            formats: [vst3, clap, au]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxcb1-dev libxcb-icccm4-dev libxcb-image0-dev libxcb-keysyms1-dev libxcb-render-util0-dev libxcb-xkb-dev libxkbcommon-x11-dev libxkbcommon-dev libasound2-dev libxcursor-dev libx11-dev libx11-xcb-dev libjack-dev libxcb-dri2-0-dev libfontconfig1-dev
+
+      - name: Build plugin
+        run: cargo build --release
+
+      - name: Bundle plugins
+        run: cargo xtask bundle ultrawave --release
+
+      - name: Download pluginval (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -q ${{ matrix.pluginval_url }} -O pluginval.zip
+          unzip -q pluginval.zip
+          chmod +x pluginval
+
+      - name: Download pluginval (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ matrix.pluginval_url }}" -OutFile pluginval.zip
+          Expand-Archive -Path pluginval.zip -DestinationPath .
+
+      - name: Download pluginval (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sL ${{ matrix.pluginval_url }} -o pluginval.zip
+          unzip -q pluginval.zip
+
+      - name: Download clap-validator (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -q ${{ matrix.clap_validator_url }} -O clap-validator.tar.gz
+          tar -xzf clap-validator.tar.gz
+          chmod +x clap-validator
+
+      - name: Download clap-validator (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ matrix.clap_validator_url }}" -OutFile clap-validator.zip
+          Expand-Archive -Path clap-validator.zip -DestinationPath .
+
+      - name: Download clap-validator (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sL ${{ matrix.clap_validator_url }} -o clap-validator.tar.gz
+          tar -xzf clap-validator.tar.gz
+          chmod +x clap-validator
+
+      - name: Validate VST3 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "::group::VST3 Validation"
+          ./pluginval --validate-in-process --strictness-level 5 target/bundled/Ultrawave.vst3 2>&1 | tee vst3-validation.log
+          echo "::endgroup::"
+
+      - name: Validate VST3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "::group::VST3 Validation"
+          .\pluginval.exe --validate-in-process --strictness-level 5 target\bundled\Ultrawave.vst3 2>&1 | Tee-Object -FilePath vst3-validation.log
+          Write-Host "::endgroup::"
+
+      - name: Validate VST3 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "::group::VST3 Validation"
+          ./pluginval.app/Contents/MacOS/pluginval --validate-in-process --strictness-level 5 target/bundled/Ultrawave.vst3 2>&1 | tee vst3-validation.log
+          echo "::endgroup::"
+
+      - name: Validate AU (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          echo "::group::AU Validation"
+          if [ -d "target/bundled/Ultrawave.component" ]; then
+            ./pluginval.app/Contents/MacOS/pluginval --validate-in-process --strictness-level 5 target/bundled/Ultrawave.component 2>&1 | tee au-validation.log
+          else
+            echo "AU component not found, skipping AU validation"
+          fi
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: Validate CLAP (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "::group::CLAP Validation"
+          ./clap-validator validate target/bundled/Ultrawave.clap 2>&1 | tee clap-validation.log
+          echo "::endgroup::"
+
+      - name: Validate CLAP (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "::group::CLAP Validation"
+          .\clap-validator.exe validate target\bundled\Ultrawave.clap 2>&1 | Tee-Object -FilePath clap-validation.log
+          Write-Host "::endgroup::"
+
+      - name: Validate CLAP (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "::group::CLAP Validation"
+          ./clap-validator validate target/bundled/Ultrawave.clap 2>&1 | tee clap-validation.log
+          echo "::endgroup::"
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs-${{ matrix.os }}
+          path: |
+            *-validation.log
+          retention-days: 30
+
+      - name: Upload plugin artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultrawave-validated-${{ matrix.os }}
+          path: target/bundled/
+          retention-days: 30
