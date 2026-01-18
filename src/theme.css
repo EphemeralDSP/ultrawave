@@ -1,0 +1,90 @@
+.main-container {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    color: #ffffff;
+    border: 2px solid #404040;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.title {
+    color: #00ffcc;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+}
+
+.knob-grid {
+    child-space: 30px;
+    row-between: 40px;
+}
+
+.knob-row {
+    col-between: 50px;
+}
+
+.knob-container {
+    width: 120px;
+    height: 140px;
+    child-space: 8px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 1px solid #404040;
+    padding: 10px;
+    align-items: center;
+}
+
+.knob-label {
+    font-family: "Roboto Mono", monospace;
+    color: #00ffcc;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.knob {
+    width: 80px;
+    height: 80px;
+    background: radial-gradient(circle, #3a3a3a 0%, #1a1a1a 70%, #0a0a0a 100%);
+    border-radius: 50%;
+    border: 3px solid #505050;
+    box-shadow: 
+        inset 0 2px 4px rgba(0, 0, 0, 0.5),
+        0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.knob:hover {
+    border-color: #00ffcc;
+    box-shadow: 
+        inset 0 2px 4px rgba(0, 0, 0, 0.5),
+        0 2px 12px rgba(0, 255, 204, 0.2);
+}
+
+slider {
+    height: 80px;
+    width: 80px;
+    background-color: #1a1a1a;
+    border-radius: 50%;
+    border: 2px solid #404040;
+}
+
+slider .track {
+    background: linear-gradient(90deg, #ff3333 0%, #ff6b6b 50%, #ff3333 100%);
+    border-radius: 50%;
+}
+
+slider .thumb {
+    background: radial-gradient(circle, #ffffff 0%, #cccccc 100%);
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid #666666;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+slider .thumb:hover {
+    background: radial-gradient(circle, #00ffcc 0%, #00cc99 100%);
+    box-shadow: 0 1px 6px rgba(0, 255, 204, 0.4);
+}
