@@ -169,7 +169,8 @@ impl RamPlay {
         if self.hold_counters[channel] < self.hold_time_samples[channel] {
             self.hold_counters[channel] += 1;
         } else {
-            self.envelopes[channel] = (self.envelopes[channel] - self.decay_rates[channel]).max(0.0);
+            self.envelopes[channel] =
+                (self.envelopes[channel] - self.decay_rates[channel]).max(0.0);
             if self.envelopes[channel] <= 0.0 {
                 self.is_playing[channel] = false;
             }

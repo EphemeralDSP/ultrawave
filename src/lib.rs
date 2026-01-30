@@ -85,26 +85,27 @@ impl Plugin for Ultrawave {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { velocity, .. } => {
-                    let play_chan = self.params.play_chan.value() as usize;
-                    if self.ram_record.buffer_len(play_chan) > 0 {
+                    let chan = self.params.channel.value() as usize;
+                    if self.ram_record.buffer_len(chan) > 0 {
                         let play_params = RamPlayMachineParams {
-                            strt: self.params.strt.value(),
-                            end: self.params.end.value(),
-                            pitch: self.params.pitch.value(),
-                            hold: self.params.hold.value(),
-                            dec: self.params.dec.value(),
-                            rtrg: self.params.rtrg.value(),
-                            rtim: self.params.rtim.value(),
-                            srr: self.params.srr.value(),
+                            strt: self.params.play.strt.value(),
+                            end: self.params.play.end.value(),
+                            pitch: self.params.play.pitch.value(),
+                            hold: self.params.play.hold.value(),
+                            dec: self.params.play.dec.value(),
+                            rtrg: self.params.play.rtrg.value(),
+                            rtim: self.params.play.rtim.value(),
+                            srr: self.params.play.srr.value(),
                             vol: ((velocity * 127.0) as i32).min(127),
                         };
-                        self.ram_play.load_buffer(self.ram_record.get_buffer(play_chan), play_chan);
-                        self.ram_play.trigger(&play_params, play_chan);
+                        self.ram_play
+                            .load_buffer(self.ram_record.get_buffer(chan), chan);
+                        self.ram_play.trigger(&play_params, chan);
                     }
                 }
                 NoteEvent::NoteOff { .. } => {
-                    let play_chan = self.params.play_chan.value() as usize;
-                    self.ram_play.stop(play_chan);
+                    let chan = self.params.channel.value() as usize;
+                    self.ram_play.stop(chan);
                 }
                 _ => {}
             }
@@ -121,8 +122,8 @@ impl Plugin for Ultrawave {
             .set_params(filter_freq, filter_resonance, filter_mode);
 
         for channel_samples in buffer.iter_samples() {
-            let play_chan = self.params.play_chan.value() as usize;
-            let sample_out = self.ram_play.process(play_chan);
+            let chan = self.params.channel.value() as usize;
+            let sample_out = self.ram_play.process(chan);
             let (left, right) = self.filter.process_stereo(sample_out, sample_out);
 
             let mut out_idx = 0;

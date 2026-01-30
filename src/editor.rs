@@ -14,7 +14,7 @@ struct EditorData {
 impl Model for EditorData {}
 
 pub fn default_state() -> Arc<ViziaState> {
-    ViziaState::new(|| (650, 500))
+    ViziaState::new(|| (850, 600))
 }
 
 pub fn create(
@@ -31,62 +31,186 @@ pub fn create(
         .build(cx);
 
         VStack::new(cx, |cx| {
-            Label::new(cx, "ULTRAWAVE")
-                .font_family(vec![FamilyOwned::SansSerif])
-                .font_size(28.0)
-                .top(Pixels(15.0))
-                .bottom(Pixels(25.0))
-                .height(Pixels(40.0))
-                .child_top(Stretch(1.0))
-                .child_bottom(Stretch(1.0))
-                .child_left(Stretch(1.0))
-                .child_right(Stretch(1.0))
-                .class("title");
-
-            VStack::new(cx, |cx| {
-                HStack::new(cx, |cx| {
+            // Top section: Display + LED + Title + 2x4 Knob Grid
+            HStack::new(cx, |cx| {
+                // Left side: Display and LED
+                VStack::new(cx, |cx| {
+                    // Display section
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "PITCH").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.pitch).class("knob");
+                        Label::new(cx, "100.0")
+                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_size(16.0)
+                            .class("display-value");
+                        Label::new(cx, "KIT:16")
+                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_size(10.0)
+                            .class("display-label");
+                        Label::new(cx, "RAM PLAY")
+                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_size(10.0)
+                            .class("display-label");
                     })
-                    .class("knob-container");
+                    .class("display-section");
 
+                    // LED section
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "DECAY").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.dec).class("knob");
+                        Label::new(cx, "LED")
+                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_size(10.0)
+                            .class("led-label");
+                        Element::new(cx).class("led-indicator");
                     })
-                    .class("knob-container");
-
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "VOL").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.vol).class("knob");
-                    })
-                    .class("knob-container");
+                    .class("led-section");
                 })
-                .class("knob-row");
+                .class("left-panel");
 
-                HStack::new(cx, |cx| {
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "FILT F").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.fltf).class("knob");
-                    })
-                    .class("knob-container");
+                // Right side: 2x4 Knob Grid
+                VStack::new(cx, |cx| {
+                    // Top row: HLEV, HABL, ILEV, IBAL
+                    HStack::new(cx, |cx| {
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "HLEV").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.mlev)
+                                .class("knob");
+                        })
+                        .class("knob-container");
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "FILT Q").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.fltq).class("knob");
-                    })
-                    .class("knob-container");
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "HABL").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.mbal)
+                                .class("knob");
+                        })
+                        .class("knob-container");
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "SRR").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("knob");
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "ILEV").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.ilev)
+                                .class("knob");
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "IBAL").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.ibal)
+                                .class("knob");
+                        })
+                        .class("knob-container");
                     })
-                    .class("knob-container");
+                    .class("knob-row");
+
+                    // Bottom row: CUE1, CUE2, LEN, RATE
+                    HStack::new(cx, |cx| {
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "CUE1").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.cue1)
+                                .class("knob");
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "CUE2").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.cue2)
+                                .class("knob");
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "LEN").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.rec_len)
+                                .class("knob");
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "RATE").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.record.rec_rate)
+                                .class("knob");
+                        })
+                        .class("knob-container");
+                    })
+                    .class("knob-row");
                 })
-                .class("knob-row");
+                .class("knob-grid");
             })
-            .class("knob-grid");
+            .class("top-section");
+
+            // Bottom section: Title + Play Parameters (smaller knobs)
+            HStack::new(cx, |cx| {
+                // Title on the left
+                Label::new(cx, "ULTRAWAVE")
+                    .font_family(vec![FamilyOwned::SansSerif])
+                    .font_size(24.0)
+                    .class("title");
+
+                // Play parameters with smaller knobs (2 rows of 4)
+                VStack::new(cx, |cx| {
+                    // Top row: STRT, END, PTCH, HOLD
+                    HStack::new(cx, |cx| {
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "STRT").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.strt)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "END").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.end)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "PTCH").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.pitch)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "HOLD").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.hold)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+                    })
+                    .class("small-knob-row");
+
+                    // Bottom row: DEC, RTRG, RTIM, SRR
+                    HStack::new(cx, |cx| {
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "DEC").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.dec)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "RTRG").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.rtrg)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "RTIM").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.rtim)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "SRR").class("small-knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.play.srr)
+                                .class("small-knob");
+                        })
+                        .class("small-knob-container");
+                    })
+                    .class("small-knob-row");
+                })
+                .class("play-params-section");
+            })
+            .class("bottom-section");
         })
         .class("main-container");
     })
