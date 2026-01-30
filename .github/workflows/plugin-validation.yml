@@ -91,6 +91,8 @@ jobs:
         run: |
           curl -sL ${{ matrix.clap_validator_url }} -o clap-validator.tar.gz
           tar -xzf clap-validator.tar.gz
+          # macOS tar extracts to binaries/clap-validator
+          mv binaries/clap-validator clap-validator
           chmod +x clap-validator
 
       - name: Validate VST3 (Linux)
