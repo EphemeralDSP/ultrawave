@@ -105,7 +105,9 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "::group::VST3 Validation"
-          .\pluginval.exe --validate-in-process --strictness-level 5 target\bundled\Ultrawave.vst3 2>&1 | Tee-Object -FilePath vst3-validation.log
+          # Skip editor tests on Windows CI due to baseview GL context panic in headless environment
+          # See: https://github.com/EphemeralDSP/ultrawave/issues/ultrawave-ba7
+          .\pluginval.exe --validate-in-process --strictness-level 5 --skip-editor-tests target\bundled\Ultrawave.vst3 2>&1 | Tee-Object -FilePath vst3-validation.log
           Write-Host "::endgroup::"
 
       - name: Validate VST3 (macOS)
@@ -139,6 +141,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "::group::CLAP Validation"
+          # Note: clap-validator doesn't have editor tests like pluginval, so no skip needed
           .\clap-validator.exe validate target\bundled\Ultrawave.clap 2>&1 | Tee-Object -FilePath clap-validation.log
           Write-Host "::endgroup::"
 
