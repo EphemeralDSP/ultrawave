@@ -4,9 +4,11 @@ use std::sync::Arc;
 use crate::dsp::filter::ResonantFilter;
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
 use crate::params::RamPlayParams;
+use crate::standalone::play_editor;
 
 pub struct StandalonePlay {
     params: Arc<RamPlayParams>,
+    editor_state: Arc<nih_plug_vizia::ViziaState>,
     sample_rate: f32,
     ram_play: RamPlay,
     filter: ResonantFilter,
@@ -30,6 +32,7 @@ impl Default for StandalonePlay {
 
         Self {
             params: Arc::new(RamPlayParams::default()),
+            editor_state: play_editor::default_state(),
             sample_rate,
             ram_play,
             filter: ResonantFilter::new(sample_rate),
@@ -61,6 +64,10 @@ impl Plugin for StandalonePlay {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        play_editor::create(self.params.clone(), self.editor_state.clone())
     }
 
     fn initialize(

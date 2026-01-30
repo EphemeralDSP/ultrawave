@@ -4,9 +4,11 @@ use std::sync::Arc;
 use crate::dsp::filter::ResonantFilter;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
 use crate::params::RamRecordParams;
+use crate::standalone::record_editor;
 
 pub struct StandaloneRecord {
     params: Arc<RamRecordParams>,
+    editor_state: Arc<nih_plug_vizia::ViziaState>,
     sample_rate: f32,
     ram_record: RamRecord,
     filter: ResonantFilter,
@@ -17,6 +19,7 @@ impl Default for StandaloneRecord {
         let sample_rate = 44100.0;
         Self {
             params: Arc::new(RamRecordParams::default()),
+            editor_state: record_editor::default_state(),
             sample_rate,
             ram_record: RamRecord::new(sample_rate),
             filter: ResonantFilter::new(sample_rate),
@@ -47,6 +50,10 @@ impl Plugin for StandaloneRecord {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        record_editor::create(self.params.clone(), self.editor_state.clone())
     }
 
     fn initialize(
