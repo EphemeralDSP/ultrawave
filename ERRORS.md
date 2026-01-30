@@ -19,7 +19,7 @@
 
 ## Warnings
 
-### 2. Vizia CSS Style Warnings
+### 2. Vizia CSS Style Warnings - RESOLVED
 Multiple CSS custom properties not recognized by vizia_core::style:
 - Custom Property: `background`
 - Custom Property: `padding`
@@ -33,9 +33,9 @@ Multiple CSS custom properties not recognized by vizia_core::style:
 
 **Impact:** Log clutter, potential UI styling issues
 **Priority:** LOW
-**Status:** Open
+**Status:** **Complete** (Fixed by removing unsupported CSS properties from theme.css)
 
-### 3. Jack Audio Server Connection
+### 3. Jack Audio Server Connection - RESOLVED
 **Errors:**
 - `Cannot connect to named pipe after wait = \\.\pipe\server_jack_default_0 err = 2`
 - `Cannot connect to server request channel`
@@ -43,7 +43,15 @@ Multiple CSS custom properties not recognized by vizia_core::style:
 
 **Impact:** App correctly falls back to WASAPI, but error messages are noisy
 **Priority:** LOW
-**Status:** Open (enhancement - handle more gracefully)
+**Status:** **Complete** (Use `--backend wasapi` flag to skip Jack initialization)
+
+**Solution:** Run with explicit backend selection to avoid Jack:
+```bash
+ultrawave_play --backend wasapi
+ultrawave_record --backend wasapi
+```
+
+This bypasses Jack entirely and connects directly to WASAPI without error messages.
 
 ## Log Summary
 
