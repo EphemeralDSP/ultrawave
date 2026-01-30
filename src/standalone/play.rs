@@ -1,42 +1,45 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
-mod dsp;
-mod editor;
-mod machines;
-mod params;
-pub mod standalone;
+use crate::dsp::filter::ResonantFilter;
+use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
+use crate::params::RamPlayParams;
 
-use dsp::filter::ResonantFilter;
-use machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
-use machines::ram_record::RamRecord;
-use params::UltrawaveParams;
-
-pub struct Ultrawave {
-    params: Arc<UltrawaveParams>,
-    editor_state: Arc<nih_plug_vizia::ViziaState>,
+pub struct StandalonePlay {
+    params: Arc<RamPlayParams>,
     sample_rate: f32,
-    ram_record: RamRecord,
     ram_play: RamPlay,
     filter: ResonantFilter,
+    test_buffer_loaded: bool,
 }
 
-impl Default for Ultrawave {
+impl Default for StandalonePlay {
     fn default() -> Self {
         let sample_rate = 44100.0;
+        let mut ram_play = RamPlay::new(sample_rate);
+
+        // Load a test buffer (saw wave)
+        let test_buffer: Vec<i16> = (0..10000)
+            .map(|i| {
+                let phase = (i % 100) as f32 / 100.0;
+                (phase * 2.0 - 1.0) * 2047.0 as f32
+            })
+            .map(|f| f as i16)
+            .collect();
+        ram_play.load_buffer(test_buffer, 0);
+
         Self {
-            params: Arc::new(UltrawaveParams::default()),
-            editor_state: editor::default_state(),
+            params: Arc::new(RamPlayParams::default()),
             sample_rate,
-            ram_record: RamRecord::new(sample_rate),
-            ram_play: RamPlay::new(sample_rate),
+            ram_play,
             filter: ResonantFilter::new(sample_rate),
+            test_buffer_loaded: true,
         }
     }
 }
 
-impl Plugin for Ultrawave {
-    const NAME: &'static str = "Ultrawave";
+impl Plugin for StandalonePlay {
+    const NAME: &'static str = "Ultrawave-Play";
     const VENDOR: &'static str = "EphemeralDSP";
     const URL: &'static str = "https://github.com/EphemeralDSP/ultrawave";
     const EMAIL: &'static str = "";
@@ -60,10 +63,6 @@ impl Plugin for Ultrawave {
         self.params.clone()
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.editor_state.clone())
-    }
-
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -71,7 +70,6 @@ impl Plugin for Ultrawave {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
-        self.ram_record.set_sample_rate(buffer_config.sample_rate);
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
         self.filter.set_sample_rate(buffer_config.sample_rate);
         true
@@ -86,50 +84,48 @@ impl Plugin for Ultrawave {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { velocity, .. } => {
-                    let chan = self.params.channel.value() as usize;
-                    if self.ram_record.buffer_len(chan) > 0 {
+                    let chan = 0;
+                    if self.ram_play.buffer_len(chan) > 0 || self.test_buffer_loaded {
                         let play_params = RamPlayMachineParams {
-                            strt: self.params.play.strt.value(),
-                            end: self.params.play.end.value(),
-                            pitch: self.params.play.pitch.value(),
-                            hold: self.params.play.hold.value(),
-                            dec: self.params.play.dec.value(),
-                            rtrg: self.params.play.rtrg.value(),
-                            rtim: self.params.play.rtim.value(),
-                            srr: self.params.play.srr.value(),
+                            strt: self.params.strt.value(),
+                            end: self.params.end.value(),
+                            pitch: self.params.pitch.value(),
+                            hold: self.params.hold.value(),
+                            dec: self.params.dec.value(),
+                            rtrg: self.params.rtrg.value(),
+                            rtim: self.params.rtim.value(),
+                            srr: self.params.srr.value(),
                             vol: ((velocity * 127.0) as i32).min(127),
                         };
-                        self.ram_play
-                            .load_buffer(self.ram_record.get_buffer(chan), chan);
                         self.ram_play.trigger(&play_params, chan);
                     }
                 }
                 NoteEvent::NoteOff { .. } => {
-                    let chan = self.params.channel.value() as usize;
+                    let chan = 0;
                     self.ram_play.stop(chan);
                 }
                 _ => {}
             }
         }
 
-        let gain = nih_plug::util::db_to_gain(self.params.gain.value());
-
-        // Update filter parameters
+        // Update filter parameters (reusing srr and rtim for filter)
         let filter_freq =
-            20.0 + (self.params.fltf.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
-        let filter_resonance = self.params.fltq.value() as f32 / 127.0;
-        let filter_mode = dsp::filter::FilterMode::from_param(self.params.fltw.value());
-        self.filter
-            .set_params(filter_freq, filter_resonance, filter_mode);
+            20.0 + (self.params.srr.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
+        let filter_resonance = self.params.rtim.value() as f32 / 127.0;
+        self.filter.set_params(
+            filter_freq,
+            filter_resonance,
+            crate::dsp::filter::FilterMode::LowPass,
+        );
 
         for channel_samples in buffer.iter_samples() {
-            let chan = self.params.channel.value() as usize;
+            let chan = 0;
             let sample_out = self.ram_play.process(chan);
             let (left, right) = self.filter.process_stereo(sample_out, sample_out);
 
             let mut out_idx = 0;
             for sample in channel_samples {
-                *sample = if out_idx == 0 { left } else { right } * gain;
+                *sample = if out_idx == 0 { left } else { right };
                 out_idx += 1;
             }
         }
@@ -141,20 +137,19 @@ impl Plugin for Ultrawave {
     }
 }
 
-impl ClapPlugin for Ultrawave {
-    const CLAP_ID: &'static str = "com.ephemeraldsp.ultrawave";
+impl ClapPlugin for StandalonePlay {
+    const CLAP_ID: &'static str = "com.ephemeraldsp.ultrawave-play";
     const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("Elektron Machinedrum UW RAM machine emulation");
+        Some("Ultrawave RAM PLAY machine - standalone test");
     const CLAP_MANUAL_URL: Option<&'static str> = Some("https://github.com/EphemeralDSP/ultrawave");
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Sampler];
 }
 
-impl Vst3Plugin for Ultrawave {
-    const VST3_CLASS_ID: [u8; 16] = *b"EphemeralUltrav1";
+impl Vst3Plugin for StandalonePlay {
+    const VST3_CLASS_ID: [u8; 16] = *b"EphemUWavePlayS1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
 }
 
-nih_export_clap!(Ultrawave);
-nih_export_vst3!(Ultrawave);
+// Standalone only - no plugin exports
