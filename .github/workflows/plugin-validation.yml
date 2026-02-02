@@ -18,18 +18,21 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            runner: ephemeral-runners
             pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
             clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
             formats: [vst3, clap]
           - os: windows-latest
+            runner: windows-latest
             pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Windows.zip
             clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-windows.zip
             formats: [vst3, clap]
           - os: macos-latest
+            runner: macos-latest
             pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_macOS.zip
             clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-macos-universal.tar.gz
             formats: [vst3, clap, au]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4

@@ -30,18 +30,21 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            runner: ephemeral-runners
             target: linux
             pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
             clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
           - os: windows-latest
+            runner: windows-latest
             target: windows
             pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Windows.zip
             clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-windows.zip
           - os: macos-latest
+            runner: macos-latest
             target: macos
             pluginval_url: https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_macOS.zip
             clap_validator_url: https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-macos-universal.tar.gz
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -245,7 +248,7 @@ jobs:
     name: Create Release
     needs: validate-and-build
     if: ${{ !inputs.dry_run }}
-    runs-on: ubuntu-latest
+    runs-on: ephemeral-runners
     permissions:
       contents: write
 
