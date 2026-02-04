@@ -53,11 +53,42 @@ SCREENSHOT_DIR=/tmp/shots ./scripts/screenshot.sh
 Screenshots save to `screenshots/` with timestamps. Also available as GitHub Action:
 **Actions → "GUI Screenshots" → Run workflow**
 
+#### Comparing Against Wireframes
+
+The GUI should match the wireframes in `docs/gui_wireframes.md`. When reviewing screenshots, check:
+
+**Record Plugin Layout:**
+- Sidebar (left ~20%): Level meter + 3 effect knobs (LEV, SRR, DIST) + buffer status
+- Main area (right ~80%): 4×2 grid of rotary encoders (MLEV, MBAL, ILEV, IBAL / CUE1, CUE2, LEN, RATE)
+- Footer: Breadcrumb navigation (RAM > R1 > REC) + buffer selector tabs [R1-R4]
+- Waveform display: Shows recorded buffer with time indicator
+
+**Play Plugin Layout:**
+- Sidebar (left ~20%): Level meter + 3 effect knobs (LEV, SRR, DIST) + buffer status
+- Main area (right ~80%): 4×2 grid (PTCH, DEC, HOLD, BRR / STRT, END, RTRG, RTIM)
+- Footer: Breadcrumb navigation (RAM > R1 > PLAY) + buffer selector tabs [R1-R4]
+- Waveform display: Shows playback buffer with start/end markers
+
+**Acceptance Criteria for GUI Tasks:**
+1. Build plugin: `cargo build --release`
+2. Capture screenshot: `./scripts/screenshot.sh [record|play]`
+3. Compare against wireframe in `docs/gui_wireframes.md`
+4. All wireframe elements must be present and visually match
+
 ---
 
 ## Issue Tracking
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This project uses **bd (beads)** for issue tracking.
+Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
+
+**Quick reference:**
+- `bd ready` - Find unblocked work
+- `bd create "Title" --type task --priority 2` - Create issue
+- `bd close <id>` - Complete work
+- `bd sync` - Sync with git (run at session end)
+
+For full workflow details: `bd prime`
 
 ## Quick Reference
 
