@@ -5,10 +5,12 @@ use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 
 use crate::params::RamRecordParams;
+use crate::widgets::{WaveformData, WaveformDisplay};
 
 #[derive(Lens)]
 struct EditorData {
     params: Arc<RamRecordParams>,
+    waveform: WaveformData,
 }
 
 impl Model for EditorData {}
@@ -27,6 +29,7 @@ pub fn create(
 
         EditorData {
             params: params.clone(),
+            waveform: WaveformData::default(),
         }
         .build(cx);
 
@@ -142,9 +145,9 @@ pub fn create(
                     })
                     .class("knob-grid");
 
-                    // Waveform display placeholder
+                    // Waveform display with time indicator
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁").class("waveform-text");
+                        WaveformDisplay::new(cx, false, true).class("waveform-display");
                         Label::new(cx, "TIME: 0.0s / 10.0s").class("time-display");
                     })
                     .class("waveform-section");

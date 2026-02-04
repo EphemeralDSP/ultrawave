@@ -6,6 +6,7 @@ mod editor;
 mod machines;
 mod params;
 pub mod standalone;
+pub mod widgets;
 
 use dsp::filter::ResonantFilter;
 use machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
