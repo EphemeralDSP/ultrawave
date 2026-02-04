@@ -1,5 +1,42 @@
 # Agent Instructions
 
+## Project Overview
+
+**Ultrawave** is a pair of VST3/CLAP audio plugins for real-time RAM sampling, inspired by the Elektron Machinedrum UW RAM machines.
+
+### Two Plugins, One Shared Buffer
+
+| Plugin | Role | I/O | Description |
+|--------|------|-----|-------------|
+| **Ultrawave Record** | Sampler | Audio In | Captures audio to shared RAM buffer |
+| **Ultrawave Play** | Instrument | MIDI In → Audio Out | Plays back from shared buffer |
+
+Both plugins access a **global buffer registry** (`src/machines/shared.rs`) containing 4 buffers (R1-R4), each up to 10 seconds.
+
+### Key Files
+
+- `src/standalone/record.rs` / `record_editor.rs` - Record plugin
+- `src/standalone/play.rs` / `play_editor.rs` - Play plugin  
+- `src/machines/shared.rs` - Global buffer registry (the bridge)
+- `src/machines/ram_record.rs` - Recording DSP
+- `src/machines/ram_play.rs` - Playback DSP with pitch/envelope
+- `src/dsp/filter.rs` - 24dB resonant filter
+- `technical_specs.md` - Elektron hardware specs for reference
+
+### Build Commands
+
+```bash
+cargo build                                    # Debug build
+cargo build --release                          # Release build
+cargo xtask bundle ultrawave_record --release  # Bundle Record plugin
+cargo xtask bundle ultrawave_play --release    # Bundle Play plugin
+cargo test                                     # Run tests
+```
+
+---
+
+## Issue Tracking
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference
