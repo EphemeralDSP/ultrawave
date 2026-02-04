@@ -19,6 +19,33 @@ pub fn default_state() -> Arc<ViziaState> {
     ViziaState::new(|| (700, 400))
 }
 
+/// Helper function to create a buffer tab button
+fn buffer_tab<P: Lens<Target = RamPlayParams>>(
+    cx: &mut Context,
+    params: P,
+    buffer_index: i32,
+    label: &str,
+) {
+    let is_active = params.map(move |p| p.buffer.value() == buffer_index);
+
+    Button::new(
+        cx,
+        move |cx| {
+            Label::new(cx, label).class("buffer-tab-label");
+        },
+        move |cx| {
+            // Set the buffer parameter when clicked
+            if let Some(param) = params.get(cx).buffer.as_ptr() {
+                unsafe {
+                    (*param).set(buffer_index);
+                }
+            }
+        },
+    )
+    .class("buffer-tab")
+    .toggle_class("buffer-tab-active", is_active);
+}
+
 pub fn create(
     params: Arc<RamPlayParams>,
     editor_state: Arc<ViziaState>,
@@ -72,10 +99,23 @@ pub fn create(
                     })
                     .class("sidebar-knob-container");
 
-                    // Buffer status
+                    // Buffer status - dynamic based on selected buffer
                     VStack::new(cx, |cx| {
                         Label::new(cx, "P01").class("buffer-label");
-                        Label::new(cx, "SRC: R1").class("buffer-status");
+                        Label::new(
+                            cx,
+                            EditorData::params.map(|p| {
+                                let buffer_name = match p.buffer.value() {
+                                    0 => "R1",
+                                    1 => "R2",
+                                    2 => "R3",
+                                    3 => "R4",
+                                    _ => "R1",
+                                };
+                                format!("SRC: {}", buffer_name)
+                            }),
+                        )
+                        .class("buffer-status");
                     })
                     .class("sidebar-section");
                 })
@@ -157,13 +197,28 @@ pub fn create(
 
             // Footer with breadcrumb and buffer tabs
             HStack::new(cx, |cx| {
-                Label::new(cx, "RAM > R1 > PLAY").class("breadcrumb");
+                // Dynamic breadcrumb based on selected buffer
+                Label::new(
+                    cx,
+                    EditorData::params.map(|p| {
+                        let buffer_name = match p.buffer.value() {
+                            0 => "R1",
+                            1 => "R2",
+                            2 => "R3",
+                            3 => "R4",
+                            _ => "R1",
+                        };
+                        format!("RAM > {} > PLAY", buffer_name)
+                    }),
+                )
+                .class("breadcrumb");
 
+                // Buffer selector tabs
                 HStack::new(cx, |cx| {
-                    Label::new(cx, "[R1]").class("buffer-tab-active");
-                    Label::new(cx, "[R2]").class("buffer-tab");
-                    Label::new(cx, "[R3]").class("buffer-tab");
-                    Label::new(cx, "[R4]").class("buffer-tab");
+                    buffer_tab(cx, EditorData::params, 0, "[R1]");
+                    buffer_tab(cx, EditorData::params, 1, "[R2]");
+                    buffer_tab(cx, EditorData::params, 2, "[R3]");
+                    buffer_tab(cx, EditorData::params, 3, "[R4]");
                 })
                 .class("buffer-tabs");
             })

@@ -175,19 +175,38 @@
 }
 
 .buffer-tabs {
-    col-between: 8px;
+    col-between: 4px;
 }
 
 .buffer-tab {
+    background-color: transparent;
+    border: 1px solid #404040;
+    border-radius: 4px;
+    child-space: 4px 8px;
+}
+
+.buffer-tab:hover {
+    background-color: #1a1a1a;
+    border-color: #505050;
+}
+
+.buffer-tab:active {
+    background-color: #0d0d0d;
+}
+
+.buffer-tab-label {
     font-family: "Roboto Mono", monospace;
     color: #666666;
     font-size: 11px;
 }
 
 .buffer-tab-active {
-    font-family: "Roboto Mono", monospace;
+    background-color: #0d0d0d;
+    border-color: #00ffcc;
+}
+
+.buffer-tab-active .buffer-tab-label {
     color: #00ffcc;
-    font-size: 11px;
     font-weight: bold;
 }
 

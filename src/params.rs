@@ -2,6 +2,9 @@ use nih_plug::prelude::*;
 
 #[derive(Params)]
 pub struct RamRecordParams {
+    // Buffer selector (R1-R4)
+    #[id = "rec_buf"]
+    pub buffer: IntParam,
     // Sidebar - Output/Effects
     #[id = "lev"]
     pub lev: FloatParam,
@@ -31,6 +34,9 @@ pub struct RamRecordParams {
 impl Default for RamRecordParams {
     fn default() -> Self {
         Self {
+            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
+                .with_value_to_string(formatters::v2s_i32_buffer_index())
+                .with_string_to_value(formatters::s2v_i32_buffer_index()),
             lev: FloatParam::new(
                 "Level",
                 0.0,
@@ -57,6 +63,9 @@ impl Default for RamRecordParams {
 
 #[derive(Params)]
 pub struct RamPlayParams {
+    // Buffer selector (R1-R4)
+    #[id = "play_buf"]
+    pub buffer: IntParam,
     // Sidebar - Output/Effects
     #[id = "play_lev"]
     pub lev: FloatParam,
@@ -84,6 +93,9 @@ pub struct RamPlayParams {
 impl Default for RamPlayParams {
     fn default() -> Self {
         Self {
+            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
+                .with_value_to_string(formatters::v2s_i32_buffer_index())
+                .with_string_to_value(formatters::s2v_i32_buffer_index()),
             lev: FloatParam::new(
                 "Level",
                 0.0,
