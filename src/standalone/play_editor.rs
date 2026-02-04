@@ -14,7 +14,7 @@ struct EditorData {
 impl Model for EditorData {}
 
 pub fn default_state() -> Arc<ViziaState> {
-    ViziaState::new(|| (600, 350))
+    ViziaState::new(|| (700, 400))
 }
 
 pub fn create(
@@ -31,81 +31,140 @@ pub fn create(
         .build(cx);
 
         VStack::new(cx, |cx| {
-            // Title
+            // Title bar
             Label::new(cx, "ULTRAWAVE PLAY")
                 .font_family(vec![FamilyOwned::SansSerif])
-                .font_size(20.0)
+                .font_size(18.0)
                 .class("title");
 
-            // LED indicator
+            // Main content area with sidebar + grid
             HStack::new(cx, |cx| {
-                Label::new(cx, "PLAY")
-                    .font_family(vec![FamilyOwned::SansSerif])
-                    .font_size(10.0)
-                    .class("led-label");
-                Element::new(cx).class("led-indicator");
-            })
-            .class("led-section");
-
-            // 2×4 Knob Grid - Elektron Style
-            VStack::new(cx, |cx| {
-                // Top row: STRT, END, PTCH, HOLD
-                HStack::new(cx, |cx| {
+                // Left sidebar (~20%)
+                VStack::new(cx, |cx| {
+                    // Level meter
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "STRT").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.strt).class("knob");
+                        Label::new(cx, "LEVEL").class("sidebar-label");
+                        Element::new(cx).class("level-meter");
                     })
-                    .class("knob-container");
+                    .class("sidebar-section");
 
+                    // LEV knob
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "END").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.end).class("knob");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.lev).class("sidebar-knob");
+                        Label::new(cx, "LEV").class("sidebar-knob-label");
                     })
-                    .class("knob-container");
+                    .class("sidebar-knob-container");
 
+                    // SRR knob
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "PTCH").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.pitch).class("knob");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("sidebar-knob");
+                        Label::new(cx, "SRR").class("sidebar-knob-label");
                     })
-                    .class("knob-container");
+                    .class("sidebar-knob-container");
 
+                    // DIST knob
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "HOLD").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.hold).class("knob");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.dist).class("sidebar-knob");
+                        Label::new(cx, "DIST").class("sidebar-knob-label");
                     })
-                    .class("knob-container");
+                    .class("sidebar-knob-container");
+
+                    // Buffer status
+                    VStack::new(cx, |cx| {
+                        Label::new(cx, "P01").class("buffer-label");
+                        Label::new(cx, "SRC: R1").class("buffer-status");
+                    })
+                    .class("sidebar-section");
                 })
-                .class("knob-row");
+                .class("sidebar");
 
-                // Bottom row: DEC, RTRG, RTIM, SRR
-                HStack::new(cx, |cx| {
+                // Right main area (~80%)
+                VStack::new(cx, |cx| {
+                    // 2×4 Knob Grid - Elektron Style
                     VStack::new(cx, |cx| {
-                        Label::new(cx, "DEC").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.dec).class("knob");
-                    })
-                    .class("knob-container");
+                        // Top row: PTCH, DEC, HOLD, BRR
+                        HStack::new(cx, |cx| {
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "PTCH").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.pitch)
+                                    .class("knob");
+                            })
+                            .class("knob-container");
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "RTRG").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.rtrg).class("knob");
-                    })
-                    .class("knob-container");
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "DEC").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.dec).class("knob");
+                            })
+                            .class("knob-container");
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "RTIM").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.rtim).class("knob");
-                    })
-                    .class("knob-container");
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "HOLD").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.hold).class("knob");
+                            })
+                            .class("knob-container");
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "SRR").class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("knob");
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "BRR").class("knob-label");
+                                Element::new(cx).class("knob"); // Placeholder for BRR
+                            })
+                            .class("knob-container");
+                        })
+                        .class("knob-row");
+
+                        // Bottom row: STRT, END, RTRG, RTIM
+                        HStack::new(cx, |cx| {
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "STRT").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.strt).class("knob");
+                            })
+                            .class("knob-container");
+
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "END").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.end).class("knob");
+                            })
+                            .class("knob-container");
+
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "RTRG").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.rtrg).class("knob");
+                            })
+                            .class("knob-container");
+
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "RTIM").class("knob-label");
+                                ParamSlider::new(cx, EditorData::params, |p| &p.rtim).class("knob");
+                            })
+                            .class("knob-container");
+                        })
+                        .class("knob-row");
                     })
-                    .class("knob-container");
+                    .class("knob-grid");
+
+                    // Waveform display placeholder
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁").class("waveform-text");
+                        Label::new(cx, "[▌    ▐] STRT/END").class("time-display");
+                    })
+                    .class("waveform-section");
                 })
-                .class("knob-row");
+                .class("main-area");
             })
-            .class("knob-grid");
+            .class("content-area");
+
+            // Footer with breadcrumb and buffer tabs
+            HStack::new(cx, |cx| {
+                Label::new(cx, "RAM > R1 > PLAY").class("breadcrumb");
+
+                HStack::new(cx, |cx| {
+                    Label::new(cx, "[R1]").class("buffer-tab-active");
+                    Label::new(cx, "[R2]").class("buffer-tab");
+                    Label::new(cx, "[R3]").class("buffer-tab");
+                    Label::new(cx, "[R4]").class("buffer-tab");
+                })
+                .class("buffer-tabs");
+            })
+            .class("footer");
         })
         .class("main-container");
     })

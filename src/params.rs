@@ -2,6 +2,14 @@ use nih_plug::prelude::*;
 
 #[derive(Params)]
 pub struct RamRecordParams {
+    // Sidebar - Output/Effects
+    #[id = "lev"]
+    pub lev: FloatParam,
+    #[id = "srr"]
+    pub srr: IntParam,
+    #[id = "dist"]
+    pub dist: IntParam,
+    // Main grid
     #[id = "mlev"]
     pub mlev: IntParam,
     #[id = "mbal"]
@@ -23,6 +31,18 @@ pub struct RamRecordParams {
 impl Default for RamRecordParams {
     fn default() -> Self {
         Self {
+            lev: FloatParam::new(
+                "Level",
+                0.0,
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            srr: IntParam::new("SRR", 0, IntRange::Linear { min: 0, max: 127 }),
+            dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 }),
             mlev: IntParam::new("Main Level", 64, IntRange::Linear { min: 0, max: 127 }),
             mbal: IntParam::new("Main Balance", 64, IntRange::Linear { min: 0, max: 127 }),
             ilev: IntParam::new("Input Level", 64, IntRange::Linear { min: 0, max: 127 }),
@@ -37,6 +57,14 @@ impl Default for RamRecordParams {
 
 #[derive(Params)]
 pub struct RamPlayParams {
+    // Sidebar - Output/Effects
+    #[id = "play_lev"]
+    pub lev: FloatParam,
+    #[id = "play_srr"]
+    pub srr: IntParam,
+    #[id = "play_dist"]
+    pub dist: IntParam,
+    // Main grid
     #[id = "strt"]
     pub strt: IntParam,
     #[id = "end"]
@@ -51,13 +79,23 @@ pub struct RamPlayParams {
     pub rtrg: IntParam,
     #[id = "rtim"]
     pub rtim: IntParam,
-    #[id = "srr"]
-    pub srr: IntParam,
 }
 
 impl Default for RamPlayParams {
     fn default() -> Self {
         Self {
+            lev: FloatParam::new(
+                "Level",
+                0.0,
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            srr: IntParam::new("SRR", 0, IntRange::Linear { min: 0, max: 127 }),
+            dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 }),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 }),
             end: IntParam::new("End", 127, IntRange::Linear { min: 0, max: 127 }),
             pitch: IntParam::new("Pitch", 64, IntRange::Linear { min: 0, max: 127 }),
@@ -65,11 +103,6 @@ impl Default for RamPlayParams {
             dec: IntParam::new("Decay", 0, IntRange::Linear { min: 0, max: 127 }),
             rtrg: IntParam::new("Retrigger", 0, IntRange::Linear { min: 0, max: 127 }),
             rtim: IntParam::new("Retrig Time", 0, IntRange::Linear { min: 0, max: 127 }),
-            srr: IntParam::new(
-                "Sample Rate Reduction",
-                0,
-                IntRange::Linear { min: 0, max: 127 },
-            ),
         }
     }
 }

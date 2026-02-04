@@ -5,72 +5,105 @@
     color: #ffffff;
     border: 2px solid #404040;
     border-radius: 8px;
-    child-space: 15px;
-}
-
-/* Top section with display and main knobs */
-.top-section {
-    col-between: 20px;
-    height: auto;
-}
-
-/* Left panel with display and LED */
-.left-panel {
-    width: 140px;
     child-space: 10px;
 }
 
-/* Display section */
-.display-section {
-    background-color: #0a0a0a;
-    border: 2px solid #404040;
-    border-radius: 4px;
-    width: 120px;
-    child-space: 4px;
-}
-
-.display-value {
+/* Title */
+.title {
     color: #00ffcc;
     font-family: "Roboto Mono", monospace;
     font-weight: bold;
+    height: 30px;
 }
 
-.display-label {
-    color: #888888;
-    font-family: "Roboto Mono", monospace;
+/* Content area - sidebar + main */
+.content-area {
+    col-between: 0;
+    height: auto;
 }
 
-/* LED section */
-.led-section {
+/* Left sidebar (~20%) */
+.sidebar {
+    width: 120px;
+    background-color: #0d0d0d;
+    border: 2px solid #404040;
+    border-radius: 4px;
+    child-space: 8px;
+    row-between: 8px;
+}
+
+.sidebar-section {
     child-space: 4px;
 }
 
-.led-label {
-    color: #888888;
+.sidebar-label {
     font-family: "Roboto Mono", monospace;
+    color: #888888;
+    font-size: 10px;
 }
 
-.led-indicator {
-    width: 16px;
-    height: 16px;
-    background-color: #cc0000;
+/* Level meter */
+.level-meter {
+    width: 20px;
+    height: 80px;
+    background-color: #0a0a0a;
+    border: 1px solid #404040;
+    border-radius: 2px;
+}
+
+/* Sidebar knobs */
+.sidebar-knob-container {
+    child-space: 2px;
+}
+
+.sidebar-knob {
+    width: 50px;
+    height: 50px;
+    background-color: #1a1a1a;
     border-radius: 50%;
-    border: 2px solid #404040;
+    border: 2px solid #505050;
+}
+
+.sidebar-knob-label {
+    font-family: "Roboto Mono", monospace;
+    color: #00ffcc;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+/* Buffer status in sidebar */
+.buffer-label {
+    font-family: "Roboto Mono", monospace;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.buffer-status {
+    font-family: "Roboto Mono", monospace;
+    color: #00ffcc;
+    font-size: 9px;
+}
+
+/* Main area (~80%) */
+.main-area {
+    child-space: 15px;
+    row-between: 15px;
 }
 
 /* Main knob grid (2x4) */
 .knob-grid {
-    child-space: 20px;
-    row-between: 25px;
+    child-space: 15px;
+    row-between: 15px;
 }
 
 .knob-row {
-    col-between: 25px;
+    col-between: 15px;
 }
 
 .knob-container {
-    width: 100px;
-    height: 120px;
+    width: 90px;
+    height: 110px;
     child-space: 6px;
     background-color: rgba(0, 0, 0, 0.3);
     border-radius: 8px;
@@ -81,11 +114,12 @@
     font-family: "Roboto Mono", monospace;
     color: #00ffcc;
     font-weight: 500;
+    font-size: 11px;
 }
 
 .knob {
-    width: 70px;
-    height: 70px;
+    width: 60px;
+    height: 60px;
     background-color: #1a1a1a;
     border-radius: 50%;
     border: 3px solid #505050;
@@ -95,51 +129,58 @@
     border-color: #00ffcc;
 }
 
-/* Bottom section with title and play parameters */
-.bottom-section {
-    col-between: 20px;
-}
-
-.title {
-    color: #00ffcc;
-    width: 140px;
-}
-
-/* Play parameters section with smaller knobs */
-.play-params-section {
-    child-space: 12px;
-    row-between: 15px;
-}
-
-.small-knob-row {
+/* Waveform section */
+.waveform-section {
     col-between: 15px;
-}
-
-.small-knob-container {
-    width: 70px;
-    height: 85px;
-    child-space: 4px;
-    background-color: rgba(0, 0, 0, 0.2);
-    border-radius: 6px;
-    border: 1px solid #303030;
-}
-
-.small-knob-label {
-    font-family: "Roboto Mono", monospace;
-    color: #aaaaaa;
-    font-weight: 500;
-}
-
-.small-knob {
-    width: 50px;
+    child-space: 10px;
+    background-color: #0a0a0a;
+    border: 1px solid #404040;
+    border-radius: 4px;
     height: 50px;
-    background-color: #1a1a1a;
-    border-radius: 50%;
-    border: 2px solid #404040;
 }
 
-.small-knob:hover {
-    border-color: #00ffcc;
+.waveform-text {
+    font-family: monospace;
+    color: #00ffcc;
+    font-size: 14px;
+}
+
+.time-display {
+    font-family: "Roboto Mono", monospace;
+    color: #888888;
+    font-size: 10px;
+}
+
+/* Footer */
+.footer {
+    col-between: 20px;
+    child-space: 8px;
+    background-color: #0d0d0d;
+    border-top: 1px solid #404040;
+    height: 35px;
+}
+
+.breadcrumb {
+    font-family: "Roboto Mono", monospace;
+    color: #888888;
+    font-size: 11px;
+}
+
+.buffer-tabs {
+    col-between: 8px;
+}
+
+.buffer-tab {
+    font-family: "Roboto Mono", monospace;
+    color: #666666;
+    font-size: 11px;
+}
+
+.buffer-tab-active {
+    font-family: "Roboto Mono", monospace;
+    color: #00ffcc;
+    font-size: 11px;
+    font-weight: bold;
 }
 
 /* Slider styling for all knobs */
@@ -148,11 +189,11 @@ slider {
 }
 
 .knob slider {
-    height: 70px;
-    width: 70px;
+    height: 60px;
+    width: 60px;
 }
 
-.small-knob slider {
+.sidebar-knob slider {
     height: 50px;
     width: 50px;
 }
@@ -163,15 +204,15 @@ slider .track {
 
 slider .thumb {
     background-color: #cccccc;
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     border: 1px solid #666666;
 }
 
-.small-knob slider .thumb {
-    width: 8px;
-    height: 8px;
+.sidebar-knob slider .thumb {
+    width: 6px;
+    height: 6px;
 }
 
 slider .thumb:hover {
