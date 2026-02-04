@@ -33,6 +33,26 @@ cargo xtask bundle ultrawave_play --release    # Bundle Play plugin
 cargo test                                     # Run tests
 ```
 
+### Screenshot Tests (Linux/CI)
+
+Capture GUI screenshots for LLM feedback on plugin UI. Requires Linux or WSL with Xvfb + ImageMagick.
+
+```bash
+# Install deps (Ubuntu/Debian)
+sudo apt install xvfb imagemagick
+
+# Capture screenshots locally
+./scripts/screenshot.sh              # Both plugins
+./scripts/screenshot.sh record       # Record only
+./scripts/screenshot.sh play         # Play only
+
+# Custom output directory
+SCREENSHOT_DIR=/tmp/shots ./scripts/screenshot.sh
+```
+
+Screenshots save to `screenshots/` with timestamps. Also available as GitHub Action:
+**Actions → "GUI Screenshots" → Run workflow**
+
 ---
 
 ## Issue Tracking
