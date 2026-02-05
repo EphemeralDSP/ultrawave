@@ -4,13 +4,17 @@ use ultrawave::standalone::StandaloneRecord;
 fn main() {
     // WASAPI can deliver larger buffers than nih-plug's default 512-period size.
     // If the user didn't specify a period size, pick a safer default to avoid panics.
-    let mut args: Vec<String> = std::env::args().collect();
-    let has_period_size = args
-        .iter()
-        .any(|arg| arg == "--period-size" || arg.starts_with("--period-size="));
-    if !has_period_size {
-        args.push("--period-size".to_string());
-        args.push("2048".to_string());
+    let args: Vec<String> = std::env::args().collect();
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let has_period_size = args
+            .iter()
+            .any(|arg| arg == "--period-size" || arg.starts_with("--period-size="));
+        if !has_period_size {
+            args.push("--period-size".to_string());
+            args.push("2048".to_string());
+        }
     }
 
     // Avoid JACK probe noise on Windows unless the user explicitly chose a backend.

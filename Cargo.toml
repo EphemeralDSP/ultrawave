@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["EphemeralDSP"]
 license = "MIT"
 description = "Elektron Machinedrum UW RAM machine emulation VST/CLAP plugin"
+default-run = "ultrawave_record"
 
 [lib]
 crate-type = ["cdylib", "lib"]
