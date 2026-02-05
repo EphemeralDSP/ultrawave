@@ -22,6 +22,11 @@ pub fn create(
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
+        // Load bundled fonts
+        cx.add_font_mem(include_bytes!("../assets/fonts/DejaVuSans.ttf"));
+        cx.add_font_mem(include_bytes!("../assets/fonts/DejaVuSansMono.ttf"));
+        cx.set_default_font(&["DejaVu Sans", "DejaVu Sans Mono"]);
+
         cx.add_stylesheet(include_str!("theme.css"))
             .expect("Failed to load stylesheet");
 
@@ -38,15 +43,15 @@ pub fn create(
                     // Display section
                     VStack::new(cx, |cx| {
                         Label::new(cx, "100.0")
-                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_family(vec![FamilyOwned::Name("DejaVu Sans".to_string())])
                             .font_size(16.0)
                             .class("display-value");
                         Label::new(cx, "KIT:16")
-                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_family(vec![FamilyOwned::Name("DejaVu Sans".to_string())])
                             .font_size(10.0)
                             .class("display-label");
                         Label::new(cx, "RAM PLAY")
-                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_family(vec![FamilyOwned::Name("DejaVu Sans".to_string())])
                             .font_size(10.0)
                             .class("display-label");
                     })
@@ -55,7 +60,7 @@ pub fn create(
                     // LED section
                     VStack::new(cx, |cx| {
                         Label::new(cx, "LED")
-                            .font_family(vec![FamilyOwned::SansSerif])
+                            .font_family(vec![FamilyOwned::Name("DejaVu Sans".to_string())])
                             .font_size(10.0)
                             .class("led-label");
                         Element::new(cx).class("led-indicator");

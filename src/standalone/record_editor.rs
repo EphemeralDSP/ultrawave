@@ -41,6 +41,11 @@ pub fn create(
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
+        // Load bundled fonts - make DejaVu Sans available as SansSerif fallback
+        cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSans.ttf"));
+        cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
+        cx.set_default_font(&["DejaVu Sans", "SansSerif", "DejaVu Sans Mono"]);
+
         cx.add_stylesheet(include_str!("../theme.css"))
             .expect("Failed to load stylesheet");
 
@@ -53,7 +58,7 @@ pub fn create(
         VStack::new(cx, |cx| {
             // Title bar
             Label::new(cx, "ULTRAWAVE RECORD")
-                .font_family(vec![FamilyOwned::SansSerif])
+                .font_family(vec![FamilyOwned::Name("DejaVu Sans".to_string())])
                 .font_size(18.0)
                 .class("title");
 

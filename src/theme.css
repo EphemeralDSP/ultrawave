@@ -11,7 +11,7 @@
 /* Title */
 .title {
     color: #00ffcc;
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     font-weight: bold;
     height: 30px;
 }
@@ -37,7 +37,7 @@
 }
 
 .sidebar-label {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #888888;
     font-size: 10px;
 }
@@ -65,7 +65,7 @@
 }
 
 .sidebar-knob-label {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #00ffcc;
     font-size: 10px;
     font-weight: 500;
@@ -73,14 +73,14 @@
 
 /* Buffer status in sidebar */
 .buffer-label {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #ffffff;
     font-size: 14px;
     font-weight: bold;
 }
 
 .buffer-status {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #00ffcc;
     font-size: 9px;
 }
@@ -111,7 +111,7 @@
 }
 
 .knob-label {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #00ffcc;
     font-weight: 500;
     font-size: 11px;
@@ -154,7 +154,7 @@
 }
 
 .time-display {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #888888;
     font-size: 10px;
 }
@@ -169,7 +169,7 @@
 }
 
 .breadcrumb {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #888888;
     font-size: 11px;
 }
@@ -195,7 +195,7 @@
 }
 
 .buffer-tab-label {
-    font-family: "Roboto Mono", monospace;
+    font-family: "DejaVu Sans Mono", monospace;
     color: #666666;
     font-size: 11px;
 }
