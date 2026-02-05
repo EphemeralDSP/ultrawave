@@ -41,3 +41,8 @@ strip = "symbols"
 
 [workspace]
 members = ["xtask"]
+
+# Patch baseview to fix null pointer dereference in become_first_responder on macOS.
+# The vendored copy adds a nil check for [this window] before calling [window isKeyWindow].
+[patch.'https://github.com/RustAudio/baseview.git']
+baseview = { path = "vendor/baseview" }

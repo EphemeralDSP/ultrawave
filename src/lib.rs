@@ -1,4 +1,5 @@
 use nih_plug::prelude::*;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 mod dsp;
@@ -7,6 +8,9 @@ mod machines;
 mod params;
 pub mod standalone;
 pub mod widgets;
+
+/// When set, standalone binaries skip the GUI (avoids baseview crash on some systems).
+pub static NO_GUI: AtomicBool = AtomicBool::new(false);
 
 use dsp::filter::ResonantFilter;
 use machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};

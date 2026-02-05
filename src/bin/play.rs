@@ -2,9 +2,12 @@ use nih_plug::prelude::*;
 use ultrawave::standalone::StandalonePlay;
 
 fn main() {
-    // WASAPI can deliver larger buffers than nih-plug's default 512-period size.
-    // If the user didn't specify a period size, pick a safer default to avoid panics.
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+
+    if let Some(pos) = args.iter().position(|a| a == "--no-gui") {
+        args.remove(pos);
+        ultrawave::NO_GUI.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     #[cfg(not(target_os = "macos"))]
     {

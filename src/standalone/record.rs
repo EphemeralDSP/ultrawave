@@ -1,4 +1,5 @@
 use nih_plug::prelude::*;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::dsp::filter::ResonantFilter;
@@ -53,6 +54,9 @@ impl Plugin for StandaloneRecord {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        if crate::NO_GUI.load(Ordering::Relaxed) {
+            return None;
+        }
         record_editor::create(self.params.clone(), self.editor_state.clone())
     }
 
