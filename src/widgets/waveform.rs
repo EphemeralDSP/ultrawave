@@ -1,4 +1,5 @@
 use nih_plug_vizia::vizia::prelude::*;
+use nih_plug_vizia::vizia::vg;
 use std::sync::Arc;
 
 /// A waveform display widget that renders audio buffer data
@@ -70,8 +71,8 @@ impl View for WaveformDisplay {
         canvas.fill_path(&bg_path, &bg_paint);
 
         // Border
-        let border_paint = vg::Paint::color(vg::Color::rgb(64, 64, 64));
-        border_paint.set_stroke_width(1.0);
+        let mut border_paint = vg::Paint::color(vg::Color::rgb(64, 64, 64));
+        border_paint.set_line_width(1.0);
         let mut border_path = vg::Path::new();
         border_path.rect(x, y, w, h);
         canvas.stroke_path(&border_path, &border_paint);
@@ -87,8 +88,8 @@ impl View for WaveformDisplay {
 
         // Draw waveform
         if !self.samples.is_empty() {
-            let waveform_paint = vg::Paint::color(vg::Color::rgb(0, 255, 204)); // Cyan
-            waveform_paint.set_stroke_width(1.5);
+            let mut waveform_paint = vg::Paint::color(vg::Color::rgb(0, 255, 204)); // Cyan
+            waveform_paint.set_line_width(1.5);
 
             let mut waveform_path = vg::Path::new();
 
@@ -122,8 +123,8 @@ impl View for WaveformDisplay {
             canvas.stroke_path(&waveform_path, &waveform_paint);
         } else {
             // Draw placeholder line when no data - subtle sine wave
-            let placeholder_paint = vg::Paint::color(vg::Color::rgb(0, 255, 204));
-            placeholder_paint.set_stroke_width(1.0);
+            let mut placeholder_paint = vg::Paint::color(vg::Color::rgb(0, 255, 204));
+            placeholder_paint.set_line_width(1.0);
             let mut placeholder_path = vg::Path::new();
             placeholder_path.move_to(x + 10.0, center_y);
 
@@ -138,8 +139,8 @@ impl View for WaveformDisplay {
         }
 
         // Draw center line
-        let center_paint = vg::Paint::color(vg::Color::rgb(40, 40, 40));
-        center_paint.set_stroke_width(1.0);
+        let mut center_paint = vg::Paint::color(vg::Color::rgb(40, 40, 40));
+        center_paint.set_line_width(1.0);
         let mut center_path = vg::Path::new();
         center_path.move_to(x, center_y);
         center_path.line_to(x + w, center_y);
@@ -147,8 +148,8 @@ impl View for WaveformDisplay {
 
         // Draw start/end markers for Play plugin
         if self.show_markers {
-            let marker_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
-            marker_paint.set_stroke_width(2.0);
+            let mut marker_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
+            marker_paint.set_line_width(2.0);
 
             // Start marker
             let start_x = x + self.start_pos * w;
@@ -171,8 +172,8 @@ impl View for WaveformDisplay {
             if self.current_time > 0.0 {
                 let progress = self.current_time / self.max_time;
                 let time_x = x + progress * w;
-                let time_paint = vg::Paint::color(vg::Color::rgb(255, 255, 0));
-                time_paint.set_stroke_width(2.0);
+                let mut time_paint = vg::Paint::color(vg::Color::rgb(255, 255, 0));
+                time_paint.set_line_width(2.0);
                 let mut time_path = vg::Path::new();
                 time_path.move_to(time_x, y + 2.0);
                 time_path.line_to(time_x, y + waveform_h - 2.0);
@@ -193,6 +194,15 @@ pub struct WaveformData {
 
 impl Model for WaveformData {}
 
+impl Data for WaveformData {
+    fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.samples, &other.samples)
+            && self.current_time.to_bits() == other.current_time.to_bits()
+            && self.start_pos.to_bits() == other.start_pos.to_bits()
+            && self.end_pos.to_bits() == other.end_pos.to_bits()
+    }
+}
+
 impl Default for WaveformData {
     fn default() -> Self {
         Self {
@@ -212,11 +222,11 @@ pub fn waveform_display<L: Lens<Target = WaveformData>>(
     show_time: bool,
 ) -> Handle<WaveformDisplay> {
     WaveformDisplay::new(cx, show_markers, show_time).bind(data, |mut handle, data| {
-        let data = data.get(&handle);
-        if let Some(view) = handle.view.downcast_mut::<WaveformDisplay>() {
+        let data = data.get(handle.context());
+        handle.modify(|view: &mut WaveformDisplay| {
             view.set_samples(&data.samples);
             view.set_current_time(data.current_time);
             view.set_markers(data.start_pos, data.end_pos);
-        }
+        });
     })
 }

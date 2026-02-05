@@ -34,9 +34,7 @@ pub struct RamRecordParams {
 impl Default for RamRecordParams {
     fn default() -> Self {
         Self {
-            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
-                .with_value_to_string(formatters::v2s_i32_buffer_index())
-                .with_string_to_value(formatters::s2v_i32_buffer_index()),
+            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 }),
             lev: FloatParam::new(
                 "Level",
                 0.0,
@@ -93,9 +91,7 @@ pub struct RamPlayParams {
 impl Default for RamPlayParams {
     fn default() -> Self {
         Self {
-            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
-                .with_value_to_string(formatters::v2s_i32_buffer_index())
-                .with_string_to_value(formatters::s2v_i32_buffer_index()),
+            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 }),
             lev: FloatParam::new(
                 "Level",
                 0.0,

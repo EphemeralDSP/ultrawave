@@ -20,31 +20,21 @@ pub fn default_state() -> Arc<ViziaState> {
 }
 
 /// Helper function to create a buffer tab button
-fn buffer_tab<P: Lens<Target = RamRecordParams>>(
-    cx: &mut Context,
-    params: P,
-    buffer_index: i32,
-    label: &str,
-) {
-    let is_active = params.map(move |p| p.buffer.value() == buffer_index);
-
+fn buffer_tab(cx: &mut Context, buffer_index: i32, label: &'static str) {
     Button::new(
         cx,
-        move |cx| {
-            Label::new(cx, label).class("buffer-tab-label");
-        },
-        move |cx| {
+        move |ex| {
             // Set the buffer parameter when clicked
-            if let Some(param) = params.get(cx).buffer.as_ptr() {
-                unsafe {
-                    (*param).set(buffer_index);
-                }
-            }
+            // We'll emit a custom event to update the buffer
+            ex.emit(BufferSelectEvent(buffer_index));
         },
+        move |cx| Label::new(cx, label).class("buffer-tab-label"),
     )
-    .class("buffer-tab")
-    .toggle_class("buffer-tab-active", is_active);
+    .class("buffer-tab");
 }
+
+#[derive(Debug, Clone, Copy)]
+struct BufferSelectEvent(i32);
 
 pub fn create(
     params: Arc<RamRecordParams>,
@@ -213,10 +203,10 @@ pub fn create(
 
                 // Buffer selector tabs
                 HStack::new(cx, |cx| {
-                    buffer_tab(cx, EditorData::params, 0, "[R1]");
-                    buffer_tab(cx, EditorData::params, 1, "[R2]");
-                    buffer_tab(cx, EditorData::params, 2, "[R3]");
-                    buffer_tab(cx, EditorData::params, 3, "[R4]");
+                    buffer_tab(cx, 0, "[R1]");
+                    buffer_tab(cx, 1, "[R2]");
+                    buffer_tab(cx, 2, "[R3]");
+                    buffer_tab(cx, 3, "[R4]");
                 })
                 .class("buffer-tabs");
             })
