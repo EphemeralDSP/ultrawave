@@ -37,6 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Rust environment (ephemeral runners)
+        if: matrix.runner == 'ephemeral-runners'
+        run: |
+          echo "RUSTUP_HOME=$HOME/.rustup" >> $GITHUB_ENV
+          echo "CARGO_HOME=$HOME/.cargo" >> $GITHUB_ENV
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
