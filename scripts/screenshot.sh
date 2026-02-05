@@ -55,7 +55,7 @@ start_xvfb() {
 screenshot_plugin() {
     local name="$1"
     local bin="$2"
-    local output="$SCREENSHOT_DIR/${name}_$(date +%Y%m%d_%H%M%S).png"
+    local output="$SCREENSHOT_DIR/${name}.png"
     
     if [[ ! -x "$bin" ]]; then
         echo "Binary not found: $bin"
