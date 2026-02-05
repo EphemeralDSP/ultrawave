@@ -36,6 +36,14 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 - MIDI-triggered playback with velocity sensitivity
 - VST3 and CLAP formats
 
+## Screenshots
+
+### Ultrawave Record
+![Ultrawave Record GUI](screenshots/ultrawave_record_20260205_031931.png)
+
+### Ultrawave Play
+![Ultrawave Play GUI](screenshots/ultrawave_play_20260205_031934.png)
+
 ## Building
 
 ```bash
