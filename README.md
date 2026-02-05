@@ -39,10 +39,10 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 ## Screenshots
 
 ### Ultrawave Record
-![Ultrawave Record GUI](screenshots/ultrawave_record_20260205_031931.png)
+![Ultrawave Record GUI](screenshots/ultrawave_record.png)
 
 ### Ultrawave Play
-![Ultrawave Play GUI](screenshots/ultrawave_play_20260205_031934.png)
+![Ultrawave Play GUI](screenshots/ultrawave_play.png)
 
 ## Building
 
