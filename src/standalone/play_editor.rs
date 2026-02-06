@@ -204,24 +204,36 @@ pub fn create(
                                 .class("knob")
                                 .width(Pixels(60.0))
                                 .height(Pixels(60.0));
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.pitch)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "DEC").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.dec).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.dec)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "HOLD").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.hold).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.hold)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "BRR").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.srr)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
                     });
@@ -230,6 +242,9 @@ pub fn create(
                         VStack::new(cx, |cx| {
                             Label::new(cx, "STRT").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.strt).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.strt)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
@@ -239,18 +254,27 @@ pub fn create(
                                 .class("knob")
                                 .width(Pixels(60.0))
                                 .height(Pixels(60.0));
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.end)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RTRG").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.rtrg).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.rtrg)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RTIM").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.rtim).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.rtim)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
                     });

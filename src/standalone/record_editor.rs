@@ -190,24 +190,36 @@ pub fn create(
                         VStack::new(cx, |cx| {
                             Label::new(cx, "MLEV").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.mlev).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.mlev)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "MBAL").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.mbal).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.mbal)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "ILEV").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.ilev).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.ilev)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "IBAL").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.ibal).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.ibal)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
                     });
@@ -216,24 +228,36 @@ pub fn create(
                         VStack::new(cx, |cx| {
                             Label::new(cx, "CUE1").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.cue1).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue1)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "CUE2").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.cue2).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue2)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "LEN").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.rec_len).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.rec_len)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RATE").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.rec_rate).class("knob");
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.rec_rate)))
+                                .color(Color::rgb(200, 200, 200))
+                                .font_size(10.0);
                         })
                         .class("knob-container");
                     });
