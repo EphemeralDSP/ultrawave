@@ -29,3 +29,4 @@ ultrawave_gui_test.png
 
 # Gemini AI settings
 .gemini/
+.beads/.jsonl.lock
