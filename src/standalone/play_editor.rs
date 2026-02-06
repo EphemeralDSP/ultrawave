@@ -57,7 +57,7 @@ pub fn create(
                 margin-bottom: 4px;
             }
             .knob-container {
-                width: 90px;
+                width: 125px;
                 height: 110px;
                 child-space: 6px;
                 background-color: #0a0a0a;
@@ -100,10 +100,11 @@ pub fn create(
             }
             .main-area {
                 background-color: #2a2a2a;
+                width: Stretch(1.0);
                 child-space: 15px;
             }
             .waveform-display {
-                width: 400px;
+                width: 100%;
                 height: 40px;
                 background-color: #0a0a0a;
             }
@@ -255,7 +256,7 @@ pub fn create(
                     });
 
                     WaveformDisplay::new(cx, true, false)
-                        .width(Pixels(400.0))
+                        .width(Stretch(1.0))
                         .height(Pixels(40.0))
                         .class("waveform-display");
                 })
