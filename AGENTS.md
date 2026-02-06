@@ -72,8 +72,24 @@ The GUI should match the wireframes in `docs/gui_wireframes.md`. When reviewing 
 **Acceptance Criteria for GUI Tasks:**
 1. Build plugin: `cargo build --release`
 2. Capture screenshot: `./scripts/screenshot.sh [record|play]`
-3. Compare against wireframe in `docs/gui_wireframes.md`
-4. All wireframe elements must be present and visually match
+3. **OPEN AND EXAMINE THE SCREENSHOT FILE** - Look at `screenshots/ultrawave_record.png` and/or `screenshots/ultrawave_play.png`
+4. Compare against wireframe in `docs/gui_wireframes.md` AND the reference image at `reference/gui_reference.png`
+5. All wireframe elements must be present and visually match
+
+**⚠️ CRITICAL: YOU MUST VISUALLY VERIFY SCREENSHOTS ⚠️**
+
+DO NOT mark GUI tasks as complete without ACTUALLY LOOKING at the screenshot files. Previous agents failed by claiming work was done while the GUI had major visual discrepancies:
+
+- **Rounded corners** instead of sharp rectangular borders (1-bit hardware aesthetic)
+- **Dark theme with cyan accents** instead of 1-bit monochrome
+- **Missing brackets** around buffer selector tabs (`[R1]` vs `R1`)
+- **Wrong knob style** - should be rotary encoders with tick marks, not circular outlines
+- **Missing waveform markers** - start/end indicators required on Play plugin
+- **Incorrect buffer status display** - needs bar indicators (`▌▌ R1 ▐▐`)
+
+**THE REFERENCE IMAGE IS THE SOURCE OF TRUTH.** The GUI must match the Elektron Machinedrum UW 1-bit monochrome hardware aesthetic. When in doubt, favor sharp angles, rectangular borders, and stark contrast over rounded "modern" UI elements.
+
+**FAILURE TO VERIFY SCREENSHOTS = WORK NOT DONE.**
 
 ---
 
