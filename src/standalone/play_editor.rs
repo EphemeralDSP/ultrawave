@@ -5,7 +5,7 @@ use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 
 use crate::params::RamPlayParams;
-use crate::widgets::{WaveformData, WaveformDisplay};
+use crate::widgets::{RotaryKnob, WaveformData, WaveformDisplay};
 
 #[derive(Lens)]
 struct EditorData {
@@ -136,7 +136,7 @@ pub fn create(
                             .color(Color::rgb(255, 255, 255))
                             .font_size(10.0)
                             .class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.lev)
+                        RotaryKnob::new(cx, EditorData::params, |p| &p.lev)
                             .width(Pixels(50.0))
                             .height(Pixels(50.0))
                             .class("knob");
@@ -148,7 +148,7 @@ pub fn create(
                             .color(Color::rgb(255, 255, 255))
                             .font_size(10.0)
                             .class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.srr)
+                        RotaryKnob::new(cx, EditorData::params, |p| &p.srr)
                             .width(Pixels(50.0))
                             .height(Pixels(50.0))
                             .class("knob");
@@ -160,7 +160,7 @@ pub fn create(
                             .color(Color::rgb(255, 255, 255))
                             .font_size(10.0)
                             .class("knob-label");
-                        ParamSlider::new(cx, EditorData::params, |p| &p.dist)
+                        RotaryKnob::new(cx, EditorData::params, |p| &p.dist)
                             .width(Pixels(50.0))
                             .height(Pixels(50.0))
                             .class("knob");
@@ -204,7 +204,7 @@ pub fn create(
                     HStack::new(cx, |cx| {
                         VStack::new(cx, |cx| {
                             Label::new(cx, "PTCH").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.pitch)
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.pitch)
                                 .class("knob")
                                 .width(Pixels(60.0))
                                 .height(Pixels(60.0));
@@ -216,7 +216,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "DEC").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.dec).class("knob");
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.dec).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.dec)))
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
@@ -225,7 +225,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "HOLD").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.hold).class("knob");
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.hold).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.hold)))
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
@@ -234,7 +234,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "BRR").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("knob");
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.srr).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.srr)))
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
@@ -245,7 +245,7 @@ pub fn create(
                     HStack::new(cx, |cx| {
                         VStack::new(cx, |cx| {
                             Label::new(cx, "STRT").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.strt).class("knob");
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.strt).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.strt)))
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
@@ -254,7 +254,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "END").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.end)
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.end)
                                 .class("knob")
                                 .width(Pixels(60.0))
                                 .height(Pixels(60.0));
@@ -266,7 +266,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RTRG").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.rtrg).class("knob");
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.rtrg).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.rtrg)))
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
@@ -275,7 +275,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RTIM").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.rtim).class("knob");
+                            RotaryKnob::new(cx, EditorData::params, |p| &p.rtim).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.rtim)))
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
