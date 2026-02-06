@@ -4189,6 +4189,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultrawave-play"
+version = "0.1.0"
+dependencies = [
+ "biquad",
+ "dasp_sample",
+ "hound",
+ "nih_plug",
+ "nih_plug_vizia",
+ "rubato",
+ "ultrawave",
+]
+
+[[package]]
+name = "ultrawave-record"
+version = "0.1.0"
+dependencies = [
+ "biquad",
+ "dasp_sample",
+ "hound",
+ "nih_plug",
+ "nih_plug_vizia",
+ "rubato",
+ "ultrawave",
+]
+
+[[package]]
 name = "unic-langid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

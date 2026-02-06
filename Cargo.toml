@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 authors = ["EphemeralDSP"]
 license = "MIT"
-description = "Elektron Machinedrum UW RAM machine emulation VST/CLAP plugin"
-default-run = "ultrawave_record"
+description = "Elektron Machinedrum UW RAM machine emulation - Core library"
 
 [lib]
-crate-type = ["cdylib", "lib"]
+name = "ultrawave"
+crate-type = ["lib"]
 
 [[bin]]
 name = "ultrawave_record"
@@ -28,9 +28,6 @@ biquad = "0.4"
 hound = "3.5"
 dasp_sample = "0.11"
 
-# Note: synfx-dsp requires nightly Rust. For MVP, using biquad for filters.
-# synfx-dsp will be added when we switch to nightly or find stable-compatible alternative.
-
 [dev-dependencies]
 audio-processor-testing-helpers = "2.7"
 approx = "0.5"
@@ -40,7 +37,7 @@ lto = "thin"
 strip = "symbols"
 
 [workspace]
-members = ["xtask"]
+members = ["xtask", "plugins/ultrawave_record", "plugins/ultrawave_play"]
 
 # Patch baseview to fix null pointer dereference in become_first_responder on macOS.
 # The vendored copy adds a nil check for [this window] before calling [window isKeyWindow].
