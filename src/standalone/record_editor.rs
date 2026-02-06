@@ -91,14 +91,6 @@ pub fn create(
 
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
-                    Label::new(cx, "LEVEL")
-                        .color(Color::rgb(136, 136, 136))
-                        .font_size(10.0);
-                    Element::new(cx)
-                        .width(Pixels(20.0))
-                        .height(Pixels(80.0))
-                        .background_color(Color::rgb(10, 10, 10));
-
                     VStack::new(cx, |cx| {
                         ParamSlider::new(cx, EditorData::params, |p| &p.lev)
                             .width(Pixels(50.0))
@@ -125,6 +117,14 @@ pub fn create(
                             .color(Color::rgb(0, 255, 204))
                             .font_size(10.0);
                     });
+
+                    Label::new(cx, "LEVEL")
+                        .color(Color::rgb(136, 136, 136))
+                        .font_size(10.0);
+                    Element::new(cx)
+                        .width(Pixels(20.0))
+                        .height(Pixels(80.0))
+                        .background_color(Color::rgb(10, 10, 10));
 
                     Label::new(
                         cx,
