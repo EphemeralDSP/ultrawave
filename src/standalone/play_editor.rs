@@ -318,6 +318,7 @@ pub fn create(
                     .height(Pixels(40.0))
                     .col_between(Pixels(8.0));
                 })
+                .row_between(Pixels(0.0))
                 .class("main-area");
             })
             .class("content-area");
