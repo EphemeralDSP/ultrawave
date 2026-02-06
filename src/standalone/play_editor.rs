@@ -212,7 +212,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "DEC").class("knob-label");
@@ -221,7 +222,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "HOLD").class("knob-label");
@@ -230,7 +232,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "BRR").class("knob-label");
@@ -239,7 +242,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
                     });
 
                     HStack::new(cx, |cx| {
@@ -250,7 +254,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "END").class("knob-label");
@@ -262,7 +267,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RTRG").class("knob-label");
@@ -271,7 +277,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RTIM").class("knob-label");
@@ -280,7 +287,8 @@ pub fn create(
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
-                        .class("knob-container");
+                        .class("knob-container")
+                        .child_space(Stretch(1.0));
                     });
 
                     HStack::new(cx, |cx| {

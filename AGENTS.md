@@ -91,6 +91,19 @@ DO NOT mark GUI tasks as complete without ACTUALLY LOOKING at the screenshot fil
 
 **FAILURE TO VERIFY SCREENSHOTS = WORK NOT DONE.**
 
+### Agent Reminder: Always Screenshot Test GUI Changes
+
+**When making ANY UI/GUI changes, you MUST:**
+1. Build the plugin (`cargo build --release`)
+2. Run screenshot test (`./scripts/screenshot.sh`)
+3. **Visually inspect** both `screenshots/ultrawave_record.png` and `screenshots/ultrawave_play.png`
+4. Compare against `reference/gui_reference.png`
+5. Verify all elements are properly positioned and visually correct
+
+**Do NOT consider GUI work complete without visual verification!**
+
+**IMPORTANT:** Screenshot verification must be done *immediately* after making GUI changes, NOT deferred to "landing the plane". The build + screenshot + verify cycle should be part of the same task completion flow. Previous agents deferred this step and forgot to do it.
+
 ---
 
 ## Issue Tracking
