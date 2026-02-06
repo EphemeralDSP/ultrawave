@@ -255,10 +255,17 @@ pub fn create(
                         .class("knob-container");
                     });
 
-                    WaveformDisplay::new(cx, true, false)
-                        .width(Stretch(1.0))
-                        .height(Pixels(40.0))
-                        .class("waveform-display");
+                    HStack::new(cx, |cx| {
+                        WaveformDisplay::new(cx, true, false)
+                            .width(Stretch(1.0))
+                            .height(Pixels(40.0))
+                            .class("waveform-display");
+
+                        Label::new(cx, "TIME: 0.0s / 10.0s")
+                            .color(Color::rgb(136, 136, 136))
+                            .font_size(11.0);
+                    })
+                    .height(Pixels(40.0));
                 })
                 .class("main-area");
             })
