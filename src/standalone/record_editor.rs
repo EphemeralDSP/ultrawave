@@ -57,13 +57,26 @@ pub fn create(
                 text-align: center;
                 margin-bottom: 4px;
             }
+            .knob-grid {
+                border: 2px solid #ffffff;
+                background-color: #000000;
+            }
+            .knob-row {
+                border-bottom: 2px solid #ffffff;
+            }
+            .knob-row:last-child {
+                border-bottom: none;
+            }
             .knob-container {
                 width: 125px;
                 height: 110px;
                 child-space: 6px;
                 background-color: #000000;
-                border: 2px solid #ffffff;
+                border-right: 2px solid #ffffff;
                 text-align: center;
+            }
+            .knob-container:last-child {
+                border-right: none;
             }
             .knob {
                 width: 60px;
@@ -206,90 +219,106 @@ pub fn create(
                 .class("sidebar");
 
                 VStack::new(cx, |cx| {
-                    // Knob grid - 2 rows x 4 knobs
-                    HStack::new(cx, |cx| {
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "MLEV").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.mlev).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.mlev)))
-                                .color(Color::rgb(255, 255, 255))
-                                .font_size(10.0);
-                        })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
+                    // Knob grid - 2 rows x 4 knobs (checkerboard style with shared borders)
+                    VStack::new(cx, |cx| {
+                        HStack::new(cx, |cx| {
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "MLEV").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.mlev).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.mlev)))
+                                    .color(Color::rgb(255, 255, 255))
+                                    .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
 
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "MBAL").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.mbal).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.mbal)))
-                                .color(Color::rgb(255, 255, 255))
-                                .font_size(10.0);
-                        })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "MBAL").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.mbal).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.mbal)))
+                                    .color(Color::rgb(255, 255, 255))
+                                    .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
 
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "ILEV").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.ilev).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.ilev)))
-                                .color(Color::rgb(255, 255, 255))
-                                .font_size(10.0);
-                        })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "ILEV").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.ilev).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.ilev)))
+                                    .color(Color::rgb(255, 255, 255))
+                                    .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
 
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "IBAL").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.ibal).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.ibal)))
-                                .color(Color::rgb(255, 255, 255))
-                                .font_size(10.0);
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "IBAL").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.ibal).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.ibal)))
+                                    .color(Color::rgb(255, 255, 255))
+                                    .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
                         })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
-                    });
+                        .col_between(Pixels(0.0))
+                        .class("knob-row");
 
-                    HStack::new(cx, |cx| {
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "CUE1").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.cue1).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue1)))
-                                .color(Color::rgb(255, 255, 255))
-                                .font_size(10.0);
-                        })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
+                        HStack::new(cx, |cx| {
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "CUE1").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.cue1).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue1)))
+                                    .color(Color::rgb(255, 255, 255))
+                                    .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
 
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "CUE2").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.cue2).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue2)))
-                                .color(Color::rgb(255, 255, 255))
-                                .font_size(10.0);
-                        })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "CUE2").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.cue2).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue2)))
+                                    .color(Color::rgb(255, 255, 255))
+                                    .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
 
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "LEN").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.rec_len).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.rec_len)))
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "LEN").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.rec_len)
+                                    .class("knob");
+                                Label::new(
+                                    cx,
+                                    EditorData::params.map(|p| format!("{}", p.rec_len)),
+                                )
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
-                        })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
 
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "RATE").class("knob-label");
-                            RotaryKnob::new(cx, EditorData::params, |p| &p.rec_rate).class("knob");
-                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.rec_rate)))
+                            VStack::new(cx, |cx| {
+                                Label::new(cx, "RATE").class("knob-label");
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.rec_rate)
+                                    .class("knob");
+                                Label::new(
+                                    cx,
+                                    EditorData::params.map(|p| format!("{}", p.rec_rate)),
+                                )
                                 .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
+                            })
+                            .class("knob-container")
+                            .child_space(Stretch(1.0));
                         })
-                        .class("knob-container")
-                        .child_space(Stretch(1.0));
-                    });
+                        .col_between(Pixels(0.0))
+                        .class("knob-row");
+                    })
+                    .class("knob-grid")
+                    .row_between(Pixels(0.0));
 
                     HStack::new(cx, |cx| {
                         WaveformDisplay::new(cx, false, true)
