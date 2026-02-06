@@ -34,7 +34,7 @@ check_deps() {
     local missing=()
     command -v Xvfb >/dev/null || missing+=("Xvfb")
     command -v import >/dev/null || missing+=("ImageMagick")
-    
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Missing dependencies: ${missing[*]}"
         echo "Install with: sudo apt install xvfb imagemagick"
@@ -56,25 +56,36 @@ screenshot_plugin() {
     local name="$1"
     local bin="$2"
     local output="$SCREENSHOT_DIR/${name}.png"
-    
+    local temp_output="$SCREENSHOT_DIR/${name}_temp.png"
+
+    # Plugin window dimensions (must match default_state() in editor)
+    local plugin_width=700
+    local plugin_height=400
+
     if [[ ! -x "$bin" ]]; then
         echo "Binary not found: $bin"
         echo "Run: cargo build --release"
         return 1
     fi
-    
+
     echo "Launching $name..."
     "$bin" &
     local pid=$!
-    
+
     echo "Waiting ${STARTUP_DELAY}s for GUI to initialize..."
     sleep "$STARTUP_DELAY"
-    
+
     echo "Capturing screenshot..."
-    import -window root "$output"
-    
-    echo "Saved: $output"
-    
+    # Capture full screen first
+    import -window root "$temp_output"
+
+    # Crop to plugin window size (top-left corner where window manager places it)
+    # Most WMs place new windows at 0,0 or with small offset
+    convert "$temp_output" -crop "${plugin_width}x${plugin_height}+0+0" "$output"
+    rm -f "$temp_output"
+
+    echo "Saved: $output ($(identify -format '%w x %h' "$output"))"
+
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
 }
