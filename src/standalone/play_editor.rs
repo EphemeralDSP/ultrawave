@@ -19,20 +19,6 @@ pub fn default_state() -> Arc<ViziaState> {
     ViziaState::new(|| (700, 400))
 }
 
-/// Helper function to create a buffer tab button
-fn buffer_tab(cx: &mut Context, buffer_index: i32, label: &'static str) {
-    Button::new(
-        cx,
-        move |ex| {
-            // Set the buffer parameter when clicked
-            // We'll emit a custom event to update the buffer
-            ex.emit(BufferSelectEvent(buffer_index));
-        },
-        move |cx| Label::new(cx, label).class("buffer-tab-label"),
-    )
-    .class("buffer-tab");
-}
-
 #[derive(Debug, Clone, Copy)]
 struct BufferSelectEvent(i32);
 
@@ -41,13 +27,55 @@ pub fn create(
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
-        // Load bundled fonts - make DejaVu Sans available as SansSerif fallback
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSans.ttf"));
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
         cx.set_default_font(&["DejaVu Sans", "SansSerif", "DejaVu Sans Mono"]);
 
-        cx.add_stylesheet(include_str!("../theme.css"))
-            .expect("Failed to load stylesheet");
+        // Minimal CSS that works
+        cx.add_stylesheet(
+            r#"
+            .main-container {
+                background-color: #1a1a1a;
+                width: 100%;
+                height: 100%;
+                child-space: 10px;
+            }
+            .title {
+                color: #00ffcc;
+                font-size: 18px;
+                height: 30px;
+            }
+            .sidebar {
+                width: 120px;
+                background-color: #0d0d0d;
+                child-space: 8px;
+            }
+            .knob-label {
+                color: #00ffcc;
+                font-size: 11px;
+            }
+            .knob-container {
+                width: 90px;
+                height: 110px;
+                child-space: 6px;
+                background-color: #0a0a0a;
+            }
+            .main-area {
+                background-color: #2a2a2a;
+                child-space: 15px;
+            }
+            .waveform-display {
+                width: 400px;
+                height: 40px;
+                background-color: #0a0a0a;
+            }
+            .footer {
+                height: 35px;
+                background-color: #0d0d0d;
+            }
+        "#,
+        )
+        .expect("Failed to load stylesheet");
 
         EditorData {
             params: params.clone(),
@@ -56,166 +84,153 @@ pub fn create(
         .build(cx);
 
         VStack::new(cx, |cx| {
-            // Title bar
             Label::new(cx, "ULTRAWAVE PLAY")
                 .font_family(vec![FamilyOwned::Name("DejaVu Sans".to_string())])
                 .font_size(18.0)
                 .class("title");
 
-            // Main content area with sidebar + grid
             HStack::new(cx, |cx| {
-                // Left sidebar (~20%)
                 VStack::new(cx, |cx| {
-                    // Level meter
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "LEVEL").class("sidebar-label");
-                        Element::new(cx).class("level-meter");
-                    })
-                    .class("sidebar-section");
+                    Label::new(cx, "LEVEL")
+                        .color(Color::rgb(136, 136, 136))
+                        .font_size(10.0);
+                    Element::new(cx)
+                        .width(Pixels(20.0))
+                        .height(Pixels(80.0))
+                        .background_color(Color::rgb(10, 10, 10));
 
-                    // LEV knob
                     VStack::new(cx, |cx| {
-                        ParamSlider::new(cx, EditorData::params, |p| &p.lev).class("sidebar-knob");
-                        Label::new(cx, "LEV").class("sidebar-knob-label");
-                    })
-                    .class("sidebar-knob-container");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.lev)
+                            .width(Pixels(50.0))
+                            .height(Pixels(50.0));
+                        Label::new(cx, "LEV")
+                            .color(Color::rgb(0, 255, 204))
+                            .font_size(10.0);
+                    });
 
-                    // SRR knob
                     VStack::new(cx, |cx| {
-                        ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("sidebar-knob");
-                        Label::new(cx, "SRR").class("sidebar-knob-label");
-                    })
-                    .class("sidebar-knob-container");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.srr)
+                            .width(Pixels(50.0))
+                            .height(Pixels(50.0));
+                        Label::new(cx, "SRR")
+                            .color(Color::rgb(0, 255, 204))
+                            .font_size(10.0);
+                    });
 
-                    // DIST knob
                     VStack::new(cx, |cx| {
-                        ParamSlider::new(cx, EditorData::params, |p| &p.dist).class("sidebar-knob");
-                        Label::new(cx, "DIST").class("sidebar-knob-label");
-                    })
-                    .class("sidebar-knob-container");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.dist)
+                            .width(Pixels(50.0))
+                            .height(Pixels(50.0));
+                        Label::new(cx, "DIST")
+                            .color(Color::rgb(0, 255, 204))
+                            .font_size(10.0);
+                    });
 
-                    // Buffer status - dynamic based on selected buffer
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "P01").class("buffer-label");
-                        Label::new(
-                            cx,
-                            EditorData::params.map(|p| {
-                                let buffer_name = match p.buffer.value() {
-                                    0 => "R1",
-                                    1 => "R2",
-                                    2 => "R3",
-                                    3 => "R4",
-                                    _ => "R1",
-                                };
-                                format!("SRC: {}", buffer_name)
-                            }),
-                        )
-                        .class("buffer-status");
-                    })
-                    .class("sidebar-section");
+                    Label::new(cx, "P01")
+                        .color(Color::rgb(255, 255, 255))
+                        .font_size(14.0);
+                    Label::new(
+                        cx,
+                        EditorData::params.map(|p| {
+                            let buffer_name = match p.buffer.value() {
+                                0 => "R1",
+                                1 => "R2",
+                                2 => "R3",
+                                3 => "R4",
+                                _ => "R1",
+                            };
+                            format!("SRC: {}", buffer_name)
+                        }),
+                    )
+                    .color(Color::rgb(0, 255, 204))
+                    .font_size(9.0);
                 })
                 .class("sidebar");
 
-                // Right main area (~80%)
                 VStack::new(cx, |cx| {
-                    // 2×4 Knob Grid - Elektron Style
-                    VStack::new(cx, |cx| {
-                        // Top row: PTCH, DEC, HOLD, BRR
-                        HStack::new(cx, |cx| {
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "PTCH").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.pitch)
-                                    .class("knob");
-                            })
-                            .class("knob-container");
-
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "DEC").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.dec).class("knob");
-                            })
-                            .class("knob-container");
-
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "HOLD").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.hold).class("knob");
-                            })
-                            .class("knob-container");
-
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "BRR").class("knob-label");
-                                Element::new(cx).class("knob"); // Placeholder for BRR
-                            })
-                            .class("knob-container");
-                        })
-                        .class("knob-row");
-
-                        // Bottom row: STRT, END, RTRG, RTIM
-                        HStack::new(cx, |cx| {
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "STRT").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.strt).class("knob");
-                            })
-                            .class("knob-container");
-
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "END").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.end).class("knob");
-                            })
-                            .class("knob-container");
-
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "RTRG").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.rtrg).class("knob");
-                            })
-                            .class("knob-container");
-
-                            VStack::new(cx, |cx| {
-                                Label::new(cx, "RTIM").class("knob-label");
-                                ParamSlider::new(cx, EditorData::params, |p| &p.rtim).class("knob");
-                            })
-                            .class("knob-container");
-                        })
-                        .class("knob-row");
-                    })
-                    .class("knob-grid");
-
-                    // Waveform display with start/end markers
+                    // Knob grid - 2 rows x 4 knobs
                     HStack::new(cx, |cx| {
-                        WaveformDisplay::new(cx, true, false).class("waveform-display");
-                        Label::new(cx, "[▌    ▐] STRT/END").class("time-display");
-                    })
-                    .class("waveform-section");
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "PTCH").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.pitch)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "DEC").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.dec)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "HOLD").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.hold)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "BRR").class("knob-label");
+                            Element::new(cx)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0))
+                                .background_color(Color::rgb(26, 26, 26));
+                        })
+                        .class("knob-container");
+                    });
+
+                    HStack::new(cx, |cx| {
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "STRT").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.strt)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "END").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.end)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "RTRG").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.rtrg)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "RTIM").class("knob-label");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.rtim)
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
+                        })
+                        .class("knob-container");
+                    });
+
+                    WaveformDisplay::new(cx, true, false)
+                        .width(Pixels(400.0))
+                        .height(Pixels(40.0))
+                        .class("waveform-display");
                 })
                 .class("main-area");
             })
             .class("content-area");
 
-            // Footer with breadcrumb and buffer tabs
             HStack::new(cx, |cx| {
-                // Dynamic breadcrumb based on selected buffer
-                Label::new(
-                    cx,
-                    EditorData::params.map(|p| {
-                        let buffer_name = match p.buffer.value() {
-                            0 => "R1",
-                            1 => "R2",
-                            2 => "R3",
-                            3 => "R4",
-                            _ => "R1",
-                        };
-                        format!("RAM > {} > PLAY", buffer_name)
-                    }),
-                )
-                .class("breadcrumb");
-
-                // Buffer selector tabs
-                HStack::new(cx, |cx| {
-                    buffer_tab(cx, 0, "[R1]");
-                    buffer_tab(cx, 1, "[R2]");
-                    buffer_tab(cx, 2, "[R3]");
-                    buffer_tab(cx, 3, "[R4]");
-                })
-                .class("buffer-tabs");
+                Label::new(cx, "RAM > R1 > PLAY")
+                    .color(Color::rgb(136, 136, 136))
+                    .font_size(11.0);
             })
             .class("footer");
         })
