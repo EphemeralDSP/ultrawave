@@ -31,27 +31,28 @@ pub fn create(
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
         cx.set_default_font(&["DejaVu Sans", "SansSerif", "DejaVu Sans Mono"]);
 
-        // Minimal CSS that works
+        // 1-bit monochrome hardware aesthetic
         cx.add_stylesheet(
             r#"
             .main-container {
-                background-color: #1a1a1a;
+                background-color: #000000;
                 width: 100%;
                 height: 100%;
                 child-space: 10px;
             }
             .title {
-                color: #00ffcc;
+                color: #ffffff;
                 font-size: 18px;
                 height: 30px;
             }
             .sidebar {
                 width: 140px;
-                background-color: #0d0d0d;
+                background-color: #000000;
                 child-space: 16px;
+                border-right: 2px solid #ffffff;
             }
             .knob-label {
-                color: #00ffcc;
+                color: #ffffff;
                 font-size: 11px;
                 text-align: center;
                 margin-bottom: 4px;
@@ -60,19 +61,18 @@ pub fn create(
                 width: 125px;
                 height: 110px;
                 child-space: 6px;
-                background-color: #0a0a0a;
-                border-radius: 8px;
-                border: 1px solid #404040;
+                background-color: #000000;
+                border: 2px solid #ffffff;
             }
             .knob {
                 width: 60px;
                 height: 60px;
-                background-color: #1a1a1a;
-                border-radius: 50%;
-                border: 3px solid #505050;
+                background-color: #000000;
+                border: 2px solid #ffffff;
             }
             .knob:hover {
-                border-color: #00ffcc;
+                border-color: #ffffff;
+                background-color: #333333;
             }
             .knob .track {
                 background-color: transparent;
@@ -81,28 +81,29 @@ pub fn create(
                 background-color: transparent;
             }
             .knob .thumb {
-                background-color: #cccccc;
+                background-color: #ffffff;
                 width: 8px;
                 height: 8px;
-                border-radius: 50%;
-                border: 1px solid #666666;
+                border: 1px solid #ffffff;
             }
             .knob .thumb:hover {
-                background-color: #00cc99;
+                background-color: #ffffff;
             }
             .main-area {
-                background-color: #2a2a2a;
+                background-color: #000000;
                 width: Stretch(1.0);
                 child-space: 15px;
             }
             .waveform-display {
                 width: 100%;
                 height: 40px;
-                background-color: #0a0a0a;
+                background-color: #000000;
+                border: 1px solid #ffffff;
             }
             .footer {
                 height: 35px;
-                background-color: #0d0d0d;
+                background-color: #000000;
+                border-top: 2px solid #ffffff;
             }
         "#,
         )
@@ -124,7 +125,7 @@ pub fn create(
                 VStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
                         Label::new(cx, "LEV")
-                            .color(Color::rgb(0, 255, 204))
+                            .color(Color::rgb(255, 255, 255))
                             .font_size(10.0)
                             .class("knob-label");
                         ParamSlider::new(cx, EditorData::params, |p| &p.lev)
@@ -136,7 +137,7 @@ pub fn create(
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, "SRR")
-                            .color(Color::rgb(0, 255, 204))
+                            .color(Color::rgb(255, 255, 255))
                             .font_size(10.0)
                             .class("knob-label");
                         ParamSlider::new(cx, EditorData::params, |p| &p.srr)
@@ -148,7 +149,7 @@ pub fn create(
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, "DIST")
-                            .color(Color::rgb(0, 255, 204))
+                            .color(Color::rgb(255, 255, 255))
                             .font_size(10.0)
                             .class("knob-label");
                         ParamSlider::new(cx, EditorData::params, |p| &p.dist)
@@ -159,27 +160,33 @@ pub fn create(
                     .child_space(Stretch(0.5));
 
                     Label::new(cx, "LEVEL")
-                        .color(Color::rgb(136, 136, 136))
+                        .color(Color::rgb(255, 255, 255))
                         .font_size(10.0);
                     Element::new(cx)
                         .width(Pixels(20.0))
                         .height(Pixels(80.0))
-                        .background_color(Color::rgb(10, 10, 10));
+                        .background_color(Color::rgb(0, 0, 0))
+                        .border_color(Color::rgb(255, 255, 255))
+                        .border_width(Pixels(1.0));
 
+                    // Buffer status with bar indicators (▌▌ R1 ▐▐)
                     Label::new(
                         cx,
-                        EditorData::params.map(|p| match p.buffer.value() {
-                            0 => "R1",
-                            1 => "R2",
-                            2 => "R3",
-                            3 => "R4",
-                            _ => "R1",
+                        EditorData::params.map(|p| {
+                            let buf = match p.buffer.value() {
+                                0 => "R1",
+                                1 => "R2",
+                                2 => "R3",
+                                3 => "R4",
+                                _ => "R1",
+                            };
+                            format!("\u{258c}\u{258c} {} \u{2590}\u{2590}", buf)
                         }),
                     )
                     .color(Color::rgb(255, 255, 255))
                     .font_size(14.0);
                     Label::new(cx, "READY")
-                        .color(Color::rgb(0, 255, 204))
+                        .color(Color::rgb(255, 255, 255))
                         .font_size(9.0);
                 })
                 .class("sidebar");
@@ -191,7 +198,7 @@ pub fn create(
                             Label::new(cx, "MLEV").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.mlev).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.mlev)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -200,7 +207,7 @@ pub fn create(
                             Label::new(cx, "MBAL").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.mbal).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.mbal)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -209,7 +216,7 @@ pub fn create(
                             Label::new(cx, "ILEV").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.ilev).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.ilev)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -218,7 +225,7 @@ pub fn create(
                             Label::new(cx, "IBAL").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.ibal).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.ibal)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -229,7 +236,7 @@ pub fn create(
                             Label::new(cx, "CUE1").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.cue1).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue1)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -238,7 +245,7 @@ pub fn create(
                             Label::new(cx, "CUE2").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.cue2).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.cue2)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -247,7 +254,7 @@ pub fn create(
                             Label::new(cx, "LEN").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.rec_len).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.rec_len)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -256,7 +263,7 @@ pub fn create(
                             Label::new(cx, "RATE").class("knob-label");
                             ParamSlider::new(cx, EditorData::params, |p| &p.rec_rate).class("knob");
                             Label::new(cx, EditorData::params.map(|p| format!("{}", p.rec_rate)))
-                                .color(Color::rgb(200, 200, 200))
+                                .color(Color::rgb(255, 255, 255))
                                 .font_size(10.0);
                         })
                         .class("knob-container");
@@ -269,7 +276,7 @@ pub fn create(
                             .class("waveform-display");
 
                         Label::new(cx, "TIME: 0.0s / 10.0s")
-                            .color(Color::rgb(136, 136, 136))
+                            .color(Color::rgb(255, 255, 255))
                             .font_size(11.0);
                     })
                     .height(Pixels(40.0));
@@ -280,13 +287,13 @@ pub fn create(
 
             HStack::new(cx, |cx| {
                 Label::new(cx, "RAM > R1 > REC")
-                    .color(Color::rgb(136, 136, 136))
+                    .color(Color::rgb(255, 255, 255))
                     .font_size(11.0);
 
                 Element::new(cx).width(Stretch(1.0));
 
                 HStack::new(cx, |cx| {
-                    for (i, label) in ["R1", "R2", "R3", "R4"].iter().enumerate() {
+                    for (i, label) in ["[R1]", "[R2]", "[R3]", "[R4]"].iter().enumerate() {
                         let buffer_index = i as i32;
                         let label_text = *label;
                         HStack::new(cx, |cx| {
@@ -295,21 +302,22 @@ pub fn create(
                                     if p.buffer.value() as i32 == buffer_index {
                                         Color::rgb(0, 0, 0)
                                     } else {
-                                        Color::rgb(136, 136, 136)
+                                        Color::rgb(255, 255, 255)
                                     }
                                 }))
                                 .font_size(10.0);
                         })
                         .background_color(EditorData::params.map(move |p| {
                             if p.buffer.value() as i32 == buffer_index {
-                                Color::rgb(0, 255, 204)
+                                Color::rgb(255, 255, 255)
                             } else {
-                                Color::rgb(42, 42, 42)
+                                Color::rgb(0, 0, 0)
                             }
                         }))
-                        .width(Pixels(32.0))
+                        .border_color(Color::rgb(255, 255, 255))
+                        .border_width(Pixels(1.0))
+                        .width(Pixels(40.0))
                         .height(Pixels(20.0))
-                        .border_radius(Pixels(2.0))
                         .child_space(Stretch(1.0));
                     }
                 })

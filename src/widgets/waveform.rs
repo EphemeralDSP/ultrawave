@@ -64,14 +64,14 @@ impl View for WaveformDisplay {
         let w = bounds.w;
         let h = bounds.h;
 
-        // Background - dark
-        let bg_paint = vg::Paint::color(vg::Color::rgb(10, 10, 10));
+        // Background - black
+        let bg_paint = vg::Paint::color(vg::Color::rgb(0, 0, 0));
         let mut bg_path = vg::Path::new();
         bg_path.rect(x, y, w, h);
         canvas.fill_path(&bg_path, &bg_paint);
 
-        // Border
-        let mut border_paint = vg::Paint::color(vg::Color::rgb(64, 64, 64));
+        // Border - white
+        let mut border_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
         border_paint.set_line_width(1.0);
         let mut border_path = vg::Path::new();
         border_path.rect(x, y, w, h);
@@ -86,9 +86,9 @@ impl View for WaveformDisplay {
         let center_y = y + waveform_h / 2.0;
         let amplitude = waveform_h / 2.0 - 2.0;
 
-        // Draw waveform
+        // Draw waveform - white for 1-bit monochrome
         if !self.samples.is_empty() {
-            let mut waveform_paint = vg::Paint::color(vg::Color::rgb(0, 255, 204)); // Cyan
+            let mut waveform_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
             waveform_paint.set_line_width(1.5);
 
             let mut waveform_path = vg::Path::new();
@@ -122,8 +122,8 @@ impl View for WaveformDisplay {
 
             canvas.stroke_path(&waveform_path, &waveform_paint);
         } else {
-            // Draw placeholder line when no data - subtle sine wave
-            let mut placeholder_paint = vg::Paint::color(vg::Color::rgb(0, 255, 204));
+            // Draw placeholder line when no data - white for 1-bit monochrome
+            let mut placeholder_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
             placeholder_paint.set_line_width(1.0);
             let mut placeholder_path = vg::Path::new();
             placeholder_path.move_to(x + 10.0, center_y);
@@ -138,8 +138,8 @@ impl View for WaveformDisplay {
             canvas.stroke_path(&placeholder_path, &placeholder_paint);
         }
 
-        // Draw center line
-        let mut center_paint = vg::Paint::color(vg::Color::rgb(40, 40, 40));
+        // Draw center line - white for 1-bit monochrome
+        let mut center_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
         center_paint.set_line_width(1.0);
         let mut center_path = vg::Path::new();
         center_path.move_to(x, center_y);
@@ -172,7 +172,7 @@ impl View for WaveformDisplay {
             if self.current_time > 0.0 {
                 let progress = self.current_time / self.max_time;
                 let time_x = x + progress * w;
-                let mut time_paint = vg::Paint::color(vg::Color::rgb(255, 255, 0));
+                let mut time_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
                 time_paint.set_line_width(2.0);
                 let mut time_path = vg::Path::new();
                 time_path.move_to(time_x, y + 2.0);
