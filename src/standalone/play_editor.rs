@@ -1,16 +1,14 @@
 use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::widgets::*;
 use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 
 use crate::params::RamPlayParams;
-use crate::widgets::{RotaryKnob, VerticalSlider, WaveformData, WaveformDisplay};
+use crate::widgets::{RotaryKnob, VerticalSlider, WaveformDisplay};
 
 #[derive(Lens)]
 struct EditorData {
     params: Arc<RamPlayParams>,
-    waveform: WaveformData,
 }
 
 impl Model for EditorData {}
@@ -18,9 +16,6 @@ impl Model for EditorData {}
 pub fn default_state() -> Arc<ViziaState> {
     ViziaState::new(|| (700, 400))
 }
-
-#[derive(Debug, Clone, Copy)]
-struct BufferSelectEvent(i32);
 
 pub fn create(
     params: Arc<RamPlayParams>,
@@ -131,10 +126,7 @@ pub fn create(
         )
         .expect("Failed to load stylesheet");
 
-        EditorData {
-            params: params.clone(),
-            waveform: WaveformData::default(),
-        }
+        EditorData { params: params.clone() }
         .build(cx);
 
         VStack::new(cx, |cx| {

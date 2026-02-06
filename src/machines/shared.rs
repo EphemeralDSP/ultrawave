@@ -39,6 +39,7 @@ impl SharedBuffer {
     }
 
     /// Check if buffer is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
@@ -50,6 +51,7 @@ pub struct BufferRegistry {
     buffers: [Mutex<SharedBuffer>; 4],
 }
 
+#[allow(dead_code)]
 impl BufferRegistry {
     fn new() -> Self {
         Self {
@@ -159,9 +161,11 @@ impl BufferRegistry {
 }
 
 /// Global singleton instance
+#[allow(dead_code)]
 static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
 
 /// Get reference to the global buffer registry
+#[allow(dead_code)]
 pub fn get_global_registry() -> Arc<BufferRegistry> {
     GLOBAL_REGISTRY
         .get_or_init(|| Arc::new(BufferRegistry::new()))

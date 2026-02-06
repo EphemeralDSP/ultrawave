@@ -34,7 +34,7 @@ impl RotaryKnob {
         cx: &mut Context,
         params: L,
         params_to_param: FMap,
-    ) -> Handle<Self>
+    ) -> Handle<'_, Self>
     where
         L: Lens<Target = Params> + Clone,
         Params: 'static,
@@ -150,7 +150,6 @@ impl View for RotaryKnob {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(button) if *button == MouseButton::Left => {
-                let cursorx = cx.mouse().cursorx;
                 let cursory = cx.mouse().cursory;
                 // Check if click is within our bounds by checking parent layout
                 // For now, accept all clicks when not dragging and let the capture handle it

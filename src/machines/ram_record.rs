@@ -33,6 +33,7 @@ pub struct RamRecord {
     rec_rate_divisor: f32,
 }
 
+#[allow(dead_code)]
 impl RamRecord {
     const MAX_RECORD_SECONDS: f32 = 10.0;
 

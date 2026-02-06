@@ -1,9 +1,11 @@
+#[allow(dead_code)]
 pub struct SampleRateReducer {
     hold_sample: f32,
     counter: f32,
     reduction_factor: f32,
 }
 
+#[allow(dead_code)]
 impl SampleRateReducer {
     pub fn new() -> Self {
         Self {
@@ -38,10 +40,12 @@ impl Default for SampleRateReducer {
     }
 }
 
+#[allow(dead_code)]
 pub struct Distortion {
     drive: f32,
 }
 
+#[allow(dead_code)]
 impl Distortion {
     pub fn new() -> Self {
         Self { drive: 0.0 }
@@ -67,6 +71,7 @@ impl Default for Distortion {
     }
 }
 
+#[allow(dead_code)]
 pub fn quantize_12bit(sample: f32) -> f32 {
     let scaled = sample * 2048.0;
     let quantized = scaled.round();

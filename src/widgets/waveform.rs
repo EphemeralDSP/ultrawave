@@ -22,7 +22,7 @@ pub struct WaveformDisplay {
 }
 
 impl WaveformDisplay {
-    pub fn new(cx: &mut Context, show_markers: bool, show_time: bool) -> Handle<Self> {
+    pub fn new(cx: &mut Context, show_markers: bool, show_time: bool) -> Handle<'_, Self> {
         Self {
             samples: Vec::new(),
             current_time: 0.0,
@@ -174,7 +174,7 @@ impl View for WaveformDisplay {
             let bracket_y = y + 4.0;
 
             // Start bracket [▌ - left side
-            let mut start_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
+            let start_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
             let mut start_bracket_path = vg::Path::new();
             start_bracket_path.rect(
                 start_x - bracket_width,
@@ -185,7 +185,7 @@ impl View for WaveformDisplay {
             canvas.fill_path(&start_bracket_path, &start_bracket_paint);
 
             // End bracket ▐] - right side
-            let mut end_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
+            let end_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
             let mut end_bracket_path = vg::Path::new();
             end_bracket_path.rect(end_x, bracket_y, bracket_width, bracket_height);
             canvas.fill_path(&end_bracket_path, &end_bracket_paint);
@@ -245,7 +245,7 @@ pub fn waveform_display<L: Lens<Target = WaveformData>>(
     data: L,
     show_markers: bool,
     show_time: bool,
-) -> Handle<WaveformDisplay> {
+) -> Handle<'_, WaveformDisplay> {
     WaveformDisplay::new(cx, show_markers, show_time).bind(data, |mut handle, data| {
         let data = data.get(handle.context());
         handle.modify(|view: &mut WaveformDisplay| {

@@ -26,6 +26,7 @@ impl SampleEngine {
         self.position = 0.0;
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.position = 0.0;
@@ -80,10 +81,12 @@ impl SampleEngine {
         self.buffer.len()
     }
 
+    #[allow(dead_code)]
     pub fn position(&self) -> f64 {
         self.position
     }
 
+    #[allow(dead_code)]
     pub fn buffer(&self) -> &[i16] {
         &self.buffer
     }

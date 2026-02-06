@@ -2,7 +2,6 @@ use nih_plug::prelude::Param;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::vizia::vg;
 use nih_plug_vizia::widgets::param_base::ParamWidgetBase;
-use nih_plug_vizia::widgets::util::ModifiersExt;
 
 /// A vertical slider widget with 1-bit monochrome aesthetic
 /// Uses block characters to create a filled bar appearance
@@ -18,7 +17,7 @@ impl VerticalSlider {
         cx: &mut Context,
         params: L,
         params_to_param: FMap,
-    ) -> Handle<Self>
+    ) -> Handle<'_, Self>
     where
         L: Lens<Target = Params> + Clone,
         Params: 'static,

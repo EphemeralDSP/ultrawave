@@ -43,6 +43,7 @@ pub struct RamPlay {
     current_params: [RamPlayParams; 8],
 }
 
+#[allow(dead_code)]
 impl RamPlay {
     pub fn new(sample_rate: f32) -> Self {
         Self {
@@ -214,7 +215,7 @@ mod tests {
 
     fn make_test_buffer() -> Vec<i16> {
         (0..1000)
-            .map(|i| ((i as f32 / 1000.0 * 32767.0) as i16))
+            .map(|i| (i as f32 / 1000.0 * 32767.0) as i16)
             .collect()
     }
 
