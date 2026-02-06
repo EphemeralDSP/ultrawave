@@ -151,19 +151,44 @@ impl View for WaveformDisplay {
             let mut marker_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
             marker_paint.set_line_width(2.0);
 
-            // Start marker
+            // Start marker position
             let start_x = x + self.start_pos * w;
+            // End marker position
+            let end_x = x + self.end_pos * w;
+
+            // Draw vertical lines for start and end
             let mut start_path = vg::Path::new();
             start_path.move_to(start_x, y + 2.0);
             start_path.line_to(start_x, y + waveform_h - 2.0);
             canvas.stroke_path(&start_path, &marker_paint);
 
-            // End marker
-            let end_x = x + self.end_pos * w;
             let mut end_path = vg::Path::new();
             end_path.move_to(end_x, y + 2.0);
             end_path.line_to(end_x, y + waveform_h - 2.0);
             canvas.stroke_path(&end_path, &marker_paint);
+
+            // Draw bracket indicators [▌ at start and ▐] at end
+            // Using filled rectangles to create bracket shapes
+            let bracket_width = 4.0;
+            let bracket_height = waveform_h - 8.0;
+            let bracket_y = y + 4.0;
+
+            // Start bracket [▌ - left side
+            let mut start_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
+            let mut start_bracket_path = vg::Path::new();
+            start_bracket_path.rect(
+                start_x - bracket_width,
+                bracket_y,
+                bracket_width,
+                bracket_height,
+            );
+            canvas.fill_path(&start_bracket_path, &start_bracket_paint);
+
+            // End bracket ▐] - right side
+            let mut end_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
+            let mut end_bracket_path = vg::Path::new();
+            end_bracket_path.rect(end_x, bracket_y, bracket_width, bracket_height);
+            canvas.fill_path(&end_bracket_path, &end_bracket_paint);
         }
 
         // Draw time indicator for Record plugin

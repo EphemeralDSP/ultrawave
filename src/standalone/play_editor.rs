@@ -289,11 +289,12 @@ pub fn create(
                             .height(Pixels(40.0))
                             .class("waveform-display");
 
-                        Label::new(cx, "TIME: 0.0s / 10.0s")
+                        Label::new(cx, "[▌▐] STRT/END")
                             .color(Color::rgb(255, 255, 255))
                             .font_size(11.0);
                     })
-                    .height(Pixels(40.0));
+                    .height(Pixels(40.0))
+                    .col_between(Pixels(8.0));
                 })
                 .class("main-area");
             })
