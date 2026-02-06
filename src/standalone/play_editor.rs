@@ -128,30 +128,36 @@ pub fn create(
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        ParamSlider::new(cx, EditorData::params, |p| &p.lev)
-                            .width(Pixels(50.0))
-                            .height(Pixels(50.0));
                         Label::new(cx, "LEV")
                             .color(Color::rgb(0, 255, 204))
-                            .font_size(10.0);
+                            .font_size(10.0)
+                            .class("knob-label");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.lev)
+                            .width(Pixels(50.0))
+                            .height(Pixels(50.0))
+                            .class("knob");
                     });
 
                     VStack::new(cx, |cx| {
-                        ParamSlider::new(cx, EditorData::params, |p| &p.srr)
-                            .width(Pixels(50.0))
-                            .height(Pixels(50.0));
                         Label::new(cx, "SRR")
                             .color(Color::rgb(0, 255, 204))
-                            .font_size(10.0);
+                            .font_size(10.0)
+                            .class("knob-label");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.srr)
+                            .width(Pixels(50.0))
+                            .height(Pixels(50.0))
+                            .class("knob");
                     });
 
                     VStack::new(cx, |cx| {
-                        ParamSlider::new(cx, EditorData::params, |p| &p.dist)
-                            .width(Pixels(50.0))
-                            .height(Pixels(50.0));
                         Label::new(cx, "DIST")
                             .color(Color::rgb(0, 255, 204))
-                            .font_size(10.0);
+                            .font_size(10.0)
+                            .class("knob-label");
+                        ParamSlider::new(cx, EditorData::params, |p| &p.dist)
+                            .width(Pixels(50.0))
+                            .height(Pixels(50.0))
+                            .class("knob");
                     });
 
                     Label::new(cx, "LEVEL")
