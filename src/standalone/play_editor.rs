@@ -72,7 +72,14 @@ pub fn create(
             .knob:hover {
                 border-color: #00ffcc;
             }
+            .knob slider {
+                height: 60px;
+                width: 60px;
+            }
             .knob .track {
+                background-color: transparent;
+            }
+            .knob .fill {
                 background-color: transparent;
             }
             .knob .thumb {
@@ -81,6 +88,10 @@ pub fn create(
                 height: 8px;
                 border-radius: 50%;
                 border: 1px solid #666666;
+            }
+            .knob label {
+                background-color: transparent;
+                color: #ffffff;
             }
             .knob .thumb:hover {
                 background-color: #00cc99;
@@ -177,7 +188,10 @@ pub fn create(
                     HStack::new(cx, |cx| {
                         VStack::new(cx, |cx| {
                             Label::new(cx, "PTCH").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.pitch).class("knob");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.pitch)
+                                .class("knob")
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
                         })
                         .class("knob-container");
 
@@ -195,9 +209,7 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "BRR").class("knob-label");
-                            Element::new(cx)
-                                .class("knob")
-                                .background_color(Color::rgb(26, 26, 26));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.srr).class("knob");
                         })
                         .class("knob-container");
                     });
@@ -211,7 +223,10 @@ pub fn create(
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "END").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.end).class("knob");
+                            ParamSlider::new(cx, EditorData::params, |p| &p.end)
+                                .class("knob")
+                                .width(Pixels(60.0))
+                                .height(Pixels(60.0));
                         })
                         .class("knob-container");
 

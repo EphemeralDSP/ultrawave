@@ -75,6 +75,9 @@ pub fn create(
             .knob .track {
                 background-color: transparent;
             }
+            .knob .fill {
+                background-color: transparent;
+            }
             .knob .thumb {
                 background-color: #cccccc;
                 width: 8px;
