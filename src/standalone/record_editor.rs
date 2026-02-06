@@ -5,7 +5,7 @@ use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 
 use crate::params::RamRecordParams;
-use crate::widgets::{RotaryKnob, WaveformData, WaveformDisplay};
+use crate::widgets::{RotaryKnob, VerticalSlider, WaveformData, WaveformDisplay};
 
 #[derive(Lens)]
 struct EditorData {
@@ -124,41 +124,54 @@ pub fn create(
 
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "LEV")
-                            .color(Color::rgb(255, 255, 255))
-                            .font_size(10.0)
-                            .class("knob-label");
-                        RotaryKnob::new(cx, EditorData::params, |p| &p.lev)
-                            .width(Pixels(50.0))
-                            .height(Pixels(50.0))
-                            .class("knob");
-                    })
-                    .child_space(Stretch(0.5));
+                    // 3 vertical sliders side by side (LEV, SRR, DST)
+                    HStack::new(cx, |cx| {
+                        // LEV slider
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "LEV")
+                                .color(Color::rgb(255, 255, 255))
+                                .font_size(10.0)
+                                .class("knob-label");
+                            VerticalSlider::new(cx, EditorData::params, |p| &p.lev)
+                                .width(Pixels(24.0))
+                                .height(Pixels(100.0));
+                            Label::new(cx, EditorData::params.map(|p| format!("{:.1}", p.lev)))
+                                .color(Color::rgb(255, 255, 255))
+                                .font_size(9.0);
+                        })
+                        .child_space(Stretch(1.0));
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "SRR")
-                            .color(Color::rgb(255, 255, 255))
-                            .font_size(10.0)
-                            .class("knob-label");
-                        RotaryKnob::new(cx, EditorData::params, |p| &p.srr)
-                            .width(Pixels(50.0))
-                            .height(Pixels(50.0))
-                            .class("knob");
-                    })
-                    .child_space(Stretch(0.5));
+                        // SRR slider
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "SRR")
+                                .color(Color::rgb(255, 255, 255))
+                                .font_size(10.0)
+                                .class("knob-label");
+                            VerticalSlider::new(cx, EditorData::params, |p| &p.srr)
+                                .width(Pixels(24.0))
+                                .height(Pixels(100.0));
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.srr)))
+                                .color(Color::rgb(255, 255, 255))
+                                .font_size(9.0);
+                        })
+                        .child_space(Stretch(1.0));
 
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, "DIST")
-                            .color(Color::rgb(255, 255, 255))
-                            .font_size(10.0)
-                            .class("knob-label");
-                        RotaryKnob::new(cx, EditorData::params, |p| &p.dist)
-                            .width(Pixels(50.0))
-                            .height(Pixels(50.0))
-                            .class("knob");
+                        // DIST slider
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "DST")
+                                .color(Color::rgb(255, 255, 255))
+                                .font_size(10.0)
+                                .class("knob-label");
+                            VerticalSlider::new(cx, EditorData::params, |p| &p.dist)
+                                .width(Pixels(24.0))
+                                .height(Pixels(100.0));
+                            Label::new(cx, EditorData::params.map(|p| format!("{}", p.dist)))
+                                .color(Color::rgb(255, 255, 255))
+                                .font_size(9.0);
+                        })
+                        .child_space(Stretch(1.0));
                     })
-                    .child_space(Stretch(0.5));
+                    .col_between(Pixels(4.0));
 
                     Label::new(cx, "LEVEL")
                         .color(Color::rgb(255, 255, 255))
