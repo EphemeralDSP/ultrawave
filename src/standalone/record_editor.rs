@@ -59,6 +59,31 @@ pub fn create(
                 height: 110px;
                 child-space: 6px;
                 background-color: #0a0a0a;
+                border-radius: 8px;
+                border: 1px solid #404040;
+            }
+            .knob {
+                width: 60px;
+                height: 60px;
+                background-color: #1a1a1a;
+                border-radius: 50%;
+                border: 3px solid #505050;
+            }
+            .knob:hover {
+                border-color: #00ffcc;
+            }
+            .knob .track {
+                background-color: transparent;
+            }
+            .knob .thumb {
+                background-color: #cccccc;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                border: 1px solid #666666;
+            }
+            .knob .thumb:hover {
+                background-color: #00cc99;
             }
             .main-area {
                 background-color: #2a2a2a;
@@ -149,33 +174,25 @@ pub fn create(
                     HStack::new(cx, |cx| {
                         VStack::new(cx, |cx| {
                             Label::new(cx, "MLEV").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.mlev)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.mlev).class("knob");
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "MBAL").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.mbal)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.mbal).class("knob");
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "ILEV").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.ilev)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.ilev).class("knob");
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "IBAL").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.ibal)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.ibal).class("knob");
                         })
                         .class("knob-container");
                     });
@@ -183,33 +200,25 @@ pub fn create(
                     HStack::new(cx, |cx| {
                         VStack::new(cx, |cx| {
                             Label::new(cx, "CUE1").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.cue1)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.cue1).class("knob");
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "CUE2").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.cue2)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.cue2).class("knob");
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "LEN").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.rec_len)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.rec_len).class("knob");
                         })
                         .class("knob-container");
 
                         VStack::new(cx, |cx| {
                             Label::new(cx, "RATE").class("knob-label");
-                            ParamSlider::new(cx, EditorData::params, |p| &p.rec_rate)
-                                .width(Pixels(60.0))
-                                .height(Pixels(60.0));
+                            ParamSlider::new(cx, EditorData::params, |p| &p.rec_rate).class("knob");
                         })
                         .class("knob-container");
                     });
