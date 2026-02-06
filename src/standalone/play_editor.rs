@@ -46,13 +46,15 @@ pub fn create(
                 height: 30px;
             }
             .sidebar {
-                width: 120px;
+                width: 140px;
                 background-color: #0d0d0d;
-                child-space: 8px;
+                child-space: 16px;
             }
             .knob-label {
                 color: #00ffcc;
                 font-size: 11px;
+                text-align: center;
+                margin-bottom: 4px;
             }
             .knob-container {
                 width: 90px;
@@ -136,7 +138,8 @@ pub fn create(
                             .width(Pixels(50.0))
                             .height(Pixels(50.0))
                             .class("knob");
-                    });
+                    })
+                    .child_space(Stretch(0.5));
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, "SRR")
@@ -147,7 +150,8 @@ pub fn create(
                             .width(Pixels(50.0))
                             .height(Pixels(50.0))
                             .class("knob");
-                    });
+                    })
+                    .child_space(Stretch(0.5));
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, "DIST")
@@ -158,7 +162,8 @@ pub fn create(
                             .width(Pixels(50.0))
                             .height(Pixels(50.0))
                             .class("knob");
-                    });
+                    })
+                    .child_space(Stretch(0.5));
 
                     Label::new(cx, "LEVEL")
                         .color(Color::rgb(136, 136, 136))
