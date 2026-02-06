@@ -231,6 +231,38 @@ pub fn create(
                 Label::new(cx, "RAM > R1 > PLAY")
                     .color(Color::rgb(136, 136, 136))
                     .font_size(11.0);
+
+                Element::new(cx).width(Stretch(1.0));
+
+                HStack::new(cx, |cx| {
+                    for (i, label) in ["R1", "R2", "R3", "R4"].iter().enumerate() {
+                        let buffer_index = i as i32;
+                        let label_text = *label;
+                        HStack::new(cx, |cx| {
+                            Label::new(cx, label_text)
+                                .color(EditorData::params.map(move |p| {
+                                    if p.buffer.value() as i32 == buffer_index {
+                                        Color::rgb(0, 0, 0)
+                                    } else {
+                                        Color::rgb(136, 136, 136)
+                                    }
+                                }))
+                                .font_size(10.0);
+                        })
+                        .background_color(EditorData::params.map(move |p| {
+                            if p.buffer.value() as i32 == buffer_index {
+                                Color::rgb(0, 255, 204)
+                            } else {
+                                Color::rgb(42, 42, 42)
+                            }
+                        }))
+                        .width(Pixels(32.0))
+                        .height(Pixels(20.0))
+                        .border_radius(Pixels(2.0))
+                        .child_space(Stretch(1.0));
+                    }
+                })
+                .col_between(Pixels(4.0));
             })
             .class("footer");
         })
