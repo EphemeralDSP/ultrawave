@@ -63,6 +63,7 @@ pub fn create(
                 child-space: 6px;
                 background-color: #000000;
                 border: 2px solid #ffffff;
+                text-align: center;
             }
             .knob {
                 width: 60px;
