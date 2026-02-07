@@ -25,7 +25,7 @@ impl Default for StandalonePlay {
         let test_buffer: Vec<i16> = (0..10000)
             .map(|i| {
                 let phase = (i % 100) as f32 / 100.0;
-                (phase * 2.0 - 1.0) * 2047.0 as f32
+                (phase * 2.0 - 1.0) * 2047.0_f32
             })
             .map(|f| f as i16)
             .collect();
@@ -134,10 +134,8 @@ impl Plugin for StandalonePlay {
             let sample_out = self.ram_play.process(chan);
             let (left, right) = self.filter.process_stereo(sample_out, sample_out);
 
-            let mut out_idx = 0;
-            for sample in channel_samples {
+            for (out_idx, sample) in channel_samples.into_iter().enumerate() {
                 *sample = if out_idx == 0 { left } else { right };
-                out_idx += 1;
             }
         }
         ProcessStatus::Normal

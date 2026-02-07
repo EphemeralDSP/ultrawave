@@ -1,54 +1,99 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicI16, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
-/// Maximum recording length in seconds
+const CHANNEL_COUNT: usize = 4;
+
+/// Maximum recording length in seconds.
 const MAX_RECORD_SECONDS: f32 = 10.0;
 
-/// Sample rate used for buffer allocation (44.1kHz standard)
+/// Sample rate used for buffer allocation (44.1kHz standard).
 const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
-/// Shared buffer for a single channel (R1-R4)
-#[derive(Clone)]
+/// Lock-free buffer for a single channel (R1-R4).
 pub struct SharedBuffer {
-    /// 12-bit audio samples stored as i16
-    pub samples: Vec<i16>,
-    /// Current write position (for recording)
-    pub write_position: usize,
-    /// Maximum length in samples
-    pub max_length: usize,
+    /// Fixed storage to avoid allocation/locking on the audio thread.
+    samples: Box<[AtomicI16]>,
+    /// Current write position for append/overwrite operations.
+    write_position: AtomicUsize,
+    /// Number of valid samples currently visible to readers.
+    length: AtomicUsize,
+    /// Maximum addressable length in samples.
+    max_length: usize,
 }
 
 impl SharedBuffer {
     fn new() -> Self {
         let max_length = (DEFAULT_SAMPLE_RATE * MAX_RECORD_SECONDS) as usize;
+        let samples = std::iter::repeat_with(|| AtomicI16::new(0))
+            .take(max_length)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
         Self {
-            samples: Vec::with_capacity(max_length),
-            write_position: 0,
+            samples,
+            write_position: AtomicUsize::new(0),
+            length: AtomicUsize::new(0),
             max_length,
         }
     }
 
-    /// Clear buffer and reset write position
-    pub fn clear(&mut self) {
-        self.samples.clear();
-        self.write_position = 0;
+    fn clear(&self) {
+        self.length.store(0, Ordering::Release);
+        self.write_position.store(0, Ordering::Release);
     }
 
-    /// Get current buffer length
-    pub fn len(&self) -> usize {
-        self.samples.len()
+    fn len(&self) -> usize {
+        self.length.load(Ordering::Acquire)
     }
 
-    /// Check if buffer is empty
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
+    fn write_sample(&self, sample: i16) -> bool {
+        let position = loop {
+            let current = self.write_position.load(Ordering::Acquire);
+            if current >= self.max_length {
+                return false;
+            }
+
+            if self
+                .write_position
+                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break current;
+            }
+        };
+
+        self.samples[position].store(sample, Ordering::Release);
+        self.length.fetch_max(position + 1, Ordering::AcqRel);
+        true
+    }
+
+    fn read_buffer(&self) -> Vec<i16> {
+        let len = self.len();
+        let mut out = Vec::with_capacity(len);
+        for sample in self.samples.iter().take(len) {
+            out.push(sample.load(Ordering::Acquire));
+        }
+        out
+    }
+
+    fn replace_buffer(&self, samples: &[i16]) {
+        let len = samples.len().min(self.max_length);
+        for (idx, sample) in samples.iter().take(len).enumerate() {
+            self.samples[idx].store(*sample, Ordering::Release);
+        }
+        self.length.store(len, Ordering::Release);
+        self.write_position.store(len, Ordering::Release);
+    }
+
+    fn reset_write_position(&self) {
+        self.write_position.store(0, Ordering::Release);
     }
 }
 
-/// Global registry for shared buffers R1-R4
+/// Global registry for shared buffers R1-R4.
 pub struct BufferRegistry {
-    /// The four shared buffers (R1, R2, R3, R4)
-    buffers: [Mutex<SharedBuffer>; 4],
+    /// The four shared buffers (R1, R2, R3, R4).
+    buffers: [SharedBuffer; CHANNEL_COUNT],
 }
 
 #[allow(dead_code)]
@@ -56,103 +101,62 @@ impl BufferRegistry {
     fn new() -> Self {
         Self {
             buffers: [
-                Mutex::new(SharedBuffer::new()),
-                Mutex::new(SharedBuffer::new()),
-                Mutex::new(SharedBuffer::new()),
-                Mutex::new(SharedBuffer::new()),
+                SharedBuffer::new(),
+                SharedBuffer::new(),
+                SharedBuffer::new(),
+                SharedBuffer::new(),
             ],
         }
     }
 
-    /// Get a clone of the buffer data for reading
-    /// Returns None if the channel is invalid or if lock fails
+    /// Get a clone of the buffer data for reading.
     pub fn read_buffer(&self, channel: usize) -> Option<Vec<i16>> {
-        if channel >= 4 {
-            return None;
-        }
-        self.buffers[channel]
-            .lock()
-            .ok()
-            .map(|buf| buf.samples.clone())
+        self.buffers.get(channel).map(SharedBuffer::read_buffer)
     }
 
-    /// Write a sample to the buffer
-    /// Returns true if successful, false if channel is invalid or lock fails
+    /// Write a sample to the buffer.
     pub fn write_sample(&self, channel: usize, sample: i16) -> bool {
-        if channel >= 4 {
-            return false;
-        }
-        if let Ok(mut buf) = self.buffers[channel].lock() {
-            let write_pos = buf.write_position;
-            if write_pos < buf.samples.len() {
-                buf.samples[write_pos] = sample;
-            } else if buf.samples.len() < buf.max_length {
-                buf.samples.push(sample);
-            } else {
-                // Buffer is full
-                return false;
-            }
-            buf.write_position += 1;
-            true
-        } else {
-            false
-        }
+        self.buffers
+            .get(channel)
+            .is_some_and(|buffer| buffer.write_sample(sample))
     }
 
-    /// Replace entire buffer contents
-    /// Returns true if successful
+    /// Replace entire buffer contents.
     pub fn replace_buffer(&self, channel: usize, samples: Vec<i16>) -> bool {
-        if channel >= 4 {
-            return false;
-        }
-        if let Ok(mut buf) = self.buffers[channel].lock() {
-            buf.samples = samples;
-            buf.write_position = buf.samples.len();
+        if let Some(buffer) = self.buffers.get(channel) {
+            buffer.replace_buffer(&samples);
             true
         } else {
             false
         }
     }
 
-    /// Get current buffer length
+    /// Get current buffer length.
     pub fn buffer_len(&self, channel: usize) -> usize {
-        if channel >= 4 {
-            return 0;
-        }
-        self.buffers[channel]
-            .lock()
-            .ok()
-            .map(|buf| buf.len())
-            .unwrap_or(0)
+        self.buffers.get(channel).map_or(0, SharedBuffer::len)
     }
 
-    /// Clear a specific buffer
+    /// Clear a specific buffer.
     pub fn clear_buffer(&self, channel: usize) -> bool {
-        if channel >= 4 {
-            return false;
-        }
-        if let Ok(mut buf) = self.buffers[channel].lock() {
-            buf.clear();
+        if let Some(buffer) = self.buffers.get(channel) {
+            buffer.clear();
             true
         } else {
             false
         }
     }
 
-    /// Clear all buffers
+    /// Clear all buffers.
     pub fn clear_all(&self) {
-        for i in 0..4 {
-            let _ = self.clear_buffer(i);
+        for buffer in &self.buffers {
+            buffer.clear();
         }
     }
 
-    /// Reset write position for recording (without clearing data)
+    /// Reset write position for recording (without clearing data).
     pub fn reset_write_position(&self, channel: usize) -> bool {
-        if channel >= 4 {
-            return false;
-        }
-        if let Ok(mut buf) = self.buffers[channel].lock() {
-            buf.write_position = 0;
+        if let Some(buffer) = self.buffers.get(channel) {
+            buffer.reset_write_position();
             true
         } else {
             false
@@ -160,11 +164,11 @@ impl BufferRegistry {
     }
 }
 
-/// Global singleton instance
+/// Global singleton instance.
 #[allow(dead_code)]
 static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
 
-/// Get reference to the global buffer registry
+/// Get reference to the global buffer registry.
 #[allow(dead_code)]
 pub fn get_global_registry() -> Arc<BufferRegistry> {
     GLOBAL_REGISTRY
@@ -175,11 +179,12 @@ pub fn get_global_registry() -> Arc<BufferRegistry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn test_buffer_creation() {
         let registry = BufferRegistry::new();
-        for i in 0..4 {
+        for i in 0..CHANNEL_COUNT {
             assert_eq!(registry.buffer_len(i), 0);
         }
     }
@@ -223,11 +228,11 @@ mod tests {
     #[test]
     fn test_clear_all() {
         let registry = BufferRegistry::new();
-        for i in 0..4 {
+        for i in 0..CHANNEL_COUNT {
             registry.write_sample(i, 100 * i as i16);
         }
         registry.clear_all();
-        for i in 0..4 {
+        for i in 0..CHANNEL_COUNT {
             assert_eq!(registry.buffer_len(i), 0);
         }
     }
@@ -244,11 +249,9 @@ mod tests {
     fn test_global_singleton() {
         let reg1 = get_global_registry();
         let reg2 = get_global_registry();
+        reg1.clear_all();
 
-        // Write with first reference
         reg1.write_sample(0, 999);
-
-        // Read with second reference - should see same data
         let buffer = reg2.read_buffer(0).unwrap();
         assert_eq!(buffer[0], 999);
     }
@@ -259,7 +262,62 @@ mod tests {
         registry.write_sample(2, 10);
         registry.write_sample(2, 20);
         assert!(registry.reset_write_position(2));
-        // Buffer still has data, but write position is reset
         assert_eq!(registry.buffer_len(2), 2);
+    }
+
+    #[test]
+    fn test_instances_share_all_channels() {
+        let shared_registry = Arc::new(BufferRegistry::new());
+        let record_instance = Arc::clone(&shared_registry);
+        let play_instance = Arc::clone(&shared_registry);
+
+        for channel in 0..CHANNEL_COUNT {
+            assert!(record_instance.replace_buffer(
+                channel,
+                vec![
+                    (channel as i16) + 1,
+                    (channel as i16) + 10,
+                    (channel as i16) + 100
+                ]
+            ));
+        }
+
+        for channel in 0..CHANNEL_COUNT {
+            let buffer = play_instance.read_buffer(channel).unwrap();
+            assert_eq!(
+                buffer,
+                vec![
+                    (channel as i16) + 1,
+                    (channel as i16) + 10,
+                    (channel as i16) + 100
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn test_concurrent_access_across_channels() {
+        let shared_registry = Arc::new(BufferRegistry::new());
+        let mut workers = Vec::with_capacity(CHANNEL_COUNT);
+
+        for channel in 0..CHANNEL_COUNT {
+            let registry = Arc::clone(&shared_registry);
+            workers.push(thread::spawn(move || {
+                for sample in 0..2048 {
+                    assert!(registry.write_sample(channel, sample as i16));
+                }
+            }));
+        }
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        for channel in 0..CHANNEL_COUNT {
+            let buffer = shared_registry.read_buffer(channel).unwrap();
+            assert_eq!(buffer.len(), 2048);
+            assert_eq!(buffer[0], 0);
+            assert_eq!(buffer[2047], 2047);
+        }
     }
 }

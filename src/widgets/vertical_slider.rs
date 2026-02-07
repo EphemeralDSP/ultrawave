@@ -25,7 +25,7 @@ impl VerticalSlider {
         FMap: Fn(&Params) -> &P + Copy + 'static,
     {
         Self {
-            param_base: ParamWidgetBase::new(cx, params.clone(), params_to_param),
+            param_base: ParamWidgetBase::new(cx, params, params_to_param),
             drag_active: false,
             last_mouse_y: 0.0,
         }

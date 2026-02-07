@@ -123,7 +123,7 @@ impl Plugin for StandaloneRecord {
 
             // Collect samples first
             let samples: Vec<f32> = channel_samples.iter_mut().map(|s| *s).collect();
-            let left = samples.get(0).copied().unwrap_or(0.0);
+            let left = samples.first().copied().unwrap_or(0.0);
             let right = samples.get(1).copied().unwrap_or(0.0);
 
             // Record the sample (main input is the audio input)

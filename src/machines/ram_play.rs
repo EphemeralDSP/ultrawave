@@ -242,7 +242,7 @@ mod tests {
         player.load_buffer(make_test_buffer(), 0);
         player.trigger(&RamPlayParams::default(), 0);
         let sample = player.process(0);
-        assert!(sample >= -1.0 && sample <= 1.0);
+        assert!((-1.0..=1.0).contains(&sample));
     }
 
     #[test]
@@ -274,7 +274,7 @@ mod tests {
         let sample0 = player.process(0);
         let sample3 = player.process(3);
 
-        assert!(sample0 >= -1.0 && sample0 <= 1.0);
-        assert!(sample3 >= -1.0 && sample3 <= 1.0);
+        assert!((-1.0..=1.0).contains(&sample0));
+        assert!((-1.0..=1.0).contains(&sample3));
     }
 }

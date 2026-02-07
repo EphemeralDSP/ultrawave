@@ -126,7 +126,9 @@ pub fn create(
         )
         .expect("Failed to load stylesheet");
 
-        EditorData { params: params.clone() }
+        EditorData {
+            params: params.clone(),
+        }
         .build(cx);
 
         VStack::new(cx, |cx| {
@@ -350,7 +352,7 @@ pub fn create(
                         HStack::new(cx, |cx| {
                             Label::new(cx, label_text)
                                 .color(EditorData::params.map(move |p| {
-                                    if p.buffer.value() as i32 == buffer_index {
+                                    if p.buffer.value() == buffer_index {
                                         Color::rgb(0, 0, 0)
                                     } else {
                                         Color::rgb(255, 255, 255)
@@ -359,7 +361,7 @@ pub fn create(
                                 .font_size(10.0);
                         })
                         .background_color(EditorData::params.map(move |p| {
-                            if p.buffer.value() as i32 == buffer_index {
+                            if p.buffer.value() == buffer_index {
                                 Color::rgb(255, 255, 255)
                             } else {
                                 Color::rgb(0, 0, 0)

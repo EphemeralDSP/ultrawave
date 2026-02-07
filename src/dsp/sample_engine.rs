@@ -207,6 +207,6 @@ mod tests {
         engine.trigger(0.0);
 
         let s1 = engine.read_sample_linear(0.5);
-        assert!(s1 >= 0.0 && s1 < 0.3);
+        assert!((0.0..0.3).contains(&s1));
     }
 }

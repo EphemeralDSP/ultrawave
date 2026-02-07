@@ -1,6 +1,4 @@
-use nih_plug::prelude::*;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 pub mod dsp;
 pub mod machines;

@@ -45,7 +45,7 @@ fn format_rate(value: i32) -> String {
 
 /// Format main/input level: signed offset from center (64)
 fn format_level_offset(value: i32) -> String {
-    let offset = value as i32 - 64;
+    let offset = value - 64;
     if offset == 0 {
         "0".to_string()
     } else if offset > 0 {
@@ -165,21 +165,21 @@ impl Default for RamRecordParams {
             srr: IntParam::new("SRR", 0, IntRange::Linear { min: 0, max: 127 }),
             dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 }),
             mlev: IntParam::new("Main Level", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_level_offset(v as i32))),
+                .with_value_to_string(Arc::new(format_level_offset)),
             mbal: IntParam::new("Main Balance", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_balance(v as i32))),
+                .with_value_to_string(Arc::new(format_balance)),
             ilev: IntParam::new("Input Level", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_level_offset(v as i32))),
+                .with_value_to_string(Arc::new(format_level_offset)),
             ibal: IntParam::new("Input Balance", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_balance(v as i32))),
+                .with_value_to_string(Arc::new(format_balance)),
             cue1: IntParam::new("CUE1", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_cue(v as i32))),
+                .with_value_to_string(Arc::new(format_cue)),
             cue2: IntParam::new("CUE2", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_cue(v as i32))),
+                .with_value_to_string(Arc::new(format_cue)),
             rec_len: IntParam::new("Rec Length", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_rec_len(v as i32))),
+                .with_value_to_string(Arc::new(format_rec_len)),
             rec_rate: IntParam::new("Rec Rate", 127, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_rate(v as i32))),
+                .with_value_to_string(Arc::new(format_rate)),
         }
     }
 }
@@ -228,22 +228,22 @@ impl Default for RamPlayParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
             srr: IntParam::new("SRR", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_brr(v as i32))),
+                .with_value_to_string(Arc::new(format_brr)),
             dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 }),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_percent(v as i32))),
+                .with_value_to_string(Arc::new(format_percent)),
             end: IntParam::new("End", 127, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_percent(v as i32))),
+                .with_value_to_string(Arc::new(format_percent)),
             pitch: IntParam::new("Pitch", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_pitch(v as i32))),
+                .with_value_to_string(Arc::new(format_pitch)),
             hold: IntParam::new("Hold", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_hold(v as i32))),
+                .with_value_to_string(Arc::new(format_hold)),
             dec: IntParam::new("Decay", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_decay(v as i32))),
+                .with_value_to_string(Arc::new(format_decay)),
             rtrg: IntParam::new("Retrigger", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_rtrg(v as i32))),
+                .with_value_to_string(Arc::new(format_rtrg)),
             rtim: IntParam::new("Retrig Time", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(|v| format_rtim(v as i32))),
+                .with_value_to_string(Arc::new(format_rtim)),
         }
     }
 }
