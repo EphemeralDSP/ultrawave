@@ -195,6 +195,11 @@ impl RamRecord {
         self.samples_recorded[channel]
     }
 
+    pub fn samples_remaining(&self, channel: usize) -> usize {
+        let channel = Self::clamp_channel(channel);
+        self.target_lengths[channel].saturating_sub(self.samples_recorded[channel])
+    }
+
     pub fn clear(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.registry.clear_buffer(channel);
@@ -380,5 +385,26 @@ mod tests {
         let initial_target = rec.target_length(1);
         rec.start_recording(&second_params, true, 1);
         assert_eq!(rec.target_length(1), initial_target);
+    }
+
+    #[test]
+    fn samples_remaining_counts_down_to_zero() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry);
+        let params = RamRecordParams {
+            rec_len: 20,
+            ..Default::default()
+        };
+
+        rec.start_recording(&params, true, 0);
+        let initial_remaining = rec.samples_remaining(0);
+        assert_eq!(initial_remaining, rec.target_length(0));
+
+        while rec.samples_remaining(0) > 0 {
+            rec.record_sample(0.5, 0.5, 0.5, 0.5, &params, 0);
+        }
+
+        assert_eq!(rec.samples_remaining(0), 0);
+        assert!(!rec.is_recording(0));
     }
 }
