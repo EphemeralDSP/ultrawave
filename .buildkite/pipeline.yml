@@ -1,0 +1,81 @@
+env:
+  CARGO_TERM_COLOR: "always"
+
+steps:
+  - label: ":linux: CI (main)"
+    if: build.branch == "main" && build.tag == null
+    agents:
+      queue: "juce-build"
+      os: "linux"
+    env:
+      VALIDATION_STRICTNESS: "5"
+    commands:
+      - "bash ci/scripts/deps-linux.sh"
+      - "bash ci/scripts/build.sh"
+      - "bash ci/scripts/test.sh"
+      - "bash ci/scripts/bundle.sh"
+      - "bash ci/scripts/validate.sh"
+
+  - label: ":mac: CI (main)"
+    if: build.branch == "main" && build.tag == null
+    agents:
+      queue: "juce-build"
+      os: "macos"
+    env:
+      VALIDATION_STRICTNESS: "5"
+    commands:
+      - "bash ci/scripts/deps-macos.sh"
+      - "bash ci/scripts/build.sh"
+      - "bash ci/scripts/test.sh"
+      - "bash ci/scripts/bundle.sh"
+      - "bash ci/scripts/validate.sh"
+
+  - label: ":linux: Release build"
+    key: "release-linux"
+    if: build.tag != null
+    agents:
+      queue: "juce-build"
+      os: "linux"
+    env:
+      VERSION: "${BUILDKITE_TAG}"
+      VALIDATION_STRICTNESS: "10"
+    commands:
+      - "bash ci/scripts/deps-linux.sh"
+      - "bash ci/scripts/build.sh"
+      - "bash ci/scripts/test.sh"
+      - "bash ci/scripts/bundle.sh"
+      - "bash ci/scripts/validate.sh"
+      - "bash ci/scripts/package-linux.sh"
+      - "buildkite-agent artifact upload 'dist/Ultrawave-*-linux.tar.gz'"
+      - "buildkite-agent artifact upload 'dist/Ultrawave-*-linux.zip'"
+
+  - label: ":mac: Release build"
+    key: "release-macos"
+    if: build.tag != null
+    agents:
+      queue: "juce-build"
+      os: "macos"
+    env:
+      VERSION: "${BUILDKITE_TAG}"
+      VALIDATION_STRICTNESS: "10"
+    commands:
+      - "bash ci/scripts/deps-macos.sh"
+      - "bash ci/scripts/build.sh"
+      - "bash ci/scripts/test.sh"
+      - "bash ci/scripts/bundle.sh"
+      - "bash ci/scripts/validate.sh"
+      - "bash ci/scripts/package-macos.sh"
+      - "buildkite-agent artifact upload 'dist/Ultrawave-*-macos.zip'"
+
+  - label: ":github: Publish release"
+    if: build.tag != null
+    depends_on:
+      - "release-linux"
+      - "release-macos"
+    agents:
+      queue: "juce-build"
+      os: "linux"
+    commands:
+      - "command -v gh >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y gh)"
+      - "buildkite-agent artifact download 'dist/Ultrawave-*' artifacts"
+      - "bash ci/scripts/publish-release.sh"
