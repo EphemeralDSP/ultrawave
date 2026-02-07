@@ -96,7 +96,6 @@ impl Plugin for StandaloneRecord {
                     self.ram_record.start_recording(&machine_params, true, chan);
                 }
                 NoteEvent::NoteOff { .. } => {
-                    // Recording is fixed-length once Note On has armed capture.
                     let chan = self.active_channel;
                     self.ram_record.stop_recording(chan);
                 }
