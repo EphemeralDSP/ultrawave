@@ -163,13 +163,13 @@ impl ClapPlugin for StandaloneRecord {
         Some("Ultrawave RAM RECORD machine - standalone test");
     const CLAP_MANUAL_URL: Option<&'static str> = Some("https://github.com/EphemeralDSP/ultrawave");
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Sampler];
 }
 
 impl Vst3Plugin for StandaloneRecord {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemUWaveRecSt1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Fx, Vst3SubCategory::Tools];
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
 }
 
 impl Drop for StandaloneRecord {
