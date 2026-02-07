@@ -1,3 +1,5 @@
+mod render_test;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +14,10 @@ fn main() -> ExitCode {
             "pluginval" | "validate-vst3" => run_validate_vst3(&args[2..]),
             "validate-clap" => run_validate_clap(&args[2..]),
             "validate-all" => run_validate_all(&args[2..]),
+            "render-test" => {
+                let config = render_test::parse_args(&args[2..]);
+                render_test::run(config)
+            }
             "help" | "--help" | "-h" => {
                 print_help();
                 ExitCode::SUCCESS
@@ -44,17 +50,29 @@ VALIDATION COMMANDS:
     validate-all        Run all validators (VST3 + CLAP)
     pluginval           Alias for validate-vst3
 
+TESTING COMMANDS:
+    render-test         Render Reaper projects and compare output to reference WAVs
+
 VALIDATION OPTIONS:
     --strictness <1-10>     pluginval strictness level (default: 5)
     --tests <pattern>       clap-validator test filter
     --skip-bundle           Skip bundling if plugin already exists
     --verbose               Show detailed validation output
 
+RENDER-TEST OPTIONS:
+    --dir <path>            Test directory with .rpp/.wav pairs (default: tests/reaper_renders)
+    --reaper <path>         Path to Reaper executable (auto-detected if omitted)
+    --threshold-rms <f>     Max RMS difference, 0.0-1.0 (default: 0.001)
+    --threshold-peak <f>    Max peak sample difference, 0.0-1.0 (default: 0.01)
+    --verbose               Show detailed per-file comparison output
+
 EXAMPLES:
     cargo xtask bundle ultrawave --release
     cargo xtask validate-vst3 --strictness 5
     cargo xtask validate-clap
     cargo xtask validate-all
+    cargo xtask render-test
+    cargo xtask render-test --dir my/tests --threshold-rms 0.005 --verbose
     cargo xtask install
 "#
     );

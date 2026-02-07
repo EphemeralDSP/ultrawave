@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+hound = "3.5"
