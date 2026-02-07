@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::dsp::filter::ResonantFilter;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
+use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
 use crate::params::RamRecordParams;
 use crate::standalone::record_editor;
 
@@ -14,6 +15,7 @@ pub struct StandaloneRecord {
     ram_record: RamRecord,
     filter: ResonantFilter,
     active_channel: usize,
+    lifecycle_registered: bool,
 }
 
 impl Default for StandaloneRecord {
@@ -26,6 +28,7 @@ impl Default for StandaloneRecord {
             ram_record: RamRecord::new(sample_rate),
             filter: ResonantFilter::new(sample_rate),
             active_channel: 0,
+            lifecycle_registered: false,
         }
     }
 }
@@ -68,6 +71,11 @@ impl Plugin for StandaloneRecord {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
+        if !self.lifecycle_registered {
+            register_plugin_instance();
+            self.lifecycle_registered = true;
+        }
+
         self.sample_rate = buffer_config.sample_rate;
         self.ram_record.set_sample_rate(buffer_config.sample_rate);
         self.filter.set_sample_rate(buffer_config.sample_rate);
@@ -162,6 +170,15 @@ impl Vst3Plugin for StandaloneRecord {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemUWaveRecSt1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Fx, Vst3SubCategory::Tools];
+}
+
+impl Drop for StandaloneRecord {
+    fn drop(&mut self) {
+        if self.lifecycle_registered {
+            unregister_plugin_instance();
+            self.lifecycle_registered = false;
+        }
+    }
 }
 
 // Standalone only - no plugin exports

@@ -176,6 +176,7 @@ impl Default for BufferRegistry {
 /// Global singleton instance.
 #[allow(dead_code)]
 static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
+static ACTIVE_PLUGIN_INSTANCES: AtomicUsize = AtomicUsize::new(0);
 
 /// Get reference to the global buffer registry.
 #[allow(dead_code)]
@@ -183,6 +184,24 @@ pub fn get_global_registry() -> Arc<BufferRegistry> {
     GLOBAL_REGISTRY
         .get_or_init(|| Arc::new(BufferRegistry::new()))
         .clone()
+}
+
+/// Register a plugin instance lifecycle.
+///
+/// When the first instance is created after a full teardown, RAM buffers are
+/// cleared to guarantee volatile/non-persistent behavior across host reloads.
+pub fn register_plugin_instance() {
+    let previous = ACTIVE_PLUGIN_INSTANCES.fetch_add(1, Ordering::AcqRel);
+    if previous == 0 {
+        get_global_registry().clear_all();
+    }
+}
+
+/// Unregister a plugin instance lifecycle.
+pub fn unregister_plugin_instance() {
+    let _ = ACTIVE_PLUGIN_INSTANCES.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+        count.checked_sub(1)
+    });
 }
 
 #[cfg(test)]

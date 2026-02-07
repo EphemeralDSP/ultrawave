@@ -31,6 +31,8 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 - 12-bit character (Machinedrum-style grit)
 - 4 shared buffers (up to 10 seconds each)
 - Real-time recording and playback across plugin instances
+- Volatile RAM lifecycle: shared buffers are intentionally not persisted in
+  plugin state/presets and are cleared after full plugin teardown/reload
 - 24dB resonant filter (LP/BP/HP)
 - Sample rate reduction (bit-crushing)
 - MIDI-triggered playback with velocity sensitivity

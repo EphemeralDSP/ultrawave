@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
+use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
 use crate::params::RamPlayParams;
 use crate::standalone::play_editor;
 
@@ -11,6 +12,7 @@ pub struct StandalonePlay {
     editor_state: Arc<nih_plug_vizia::ViziaState>,
     ram_play: RamPlay,
     active_channel: usize,
+    lifecycle_registered: bool,
 }
 
 impl Default for StandalonePlay {
@@ -23,6 +25,7 @@ impl Default for StandalonePlay {
             editor_state: play_editor::default_state(),
             ram_play,
             active_channel: 0,
+            lifecycle_registered: false,
         }
     }
 }
@@ -65,6 +68,11 @@ impl Plugin for StandalonePlay {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
+        if !self.lifecycle_registered {
+            register_plugin_instance();
+            self.lifecycle_registered = true;
+        }
+
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
         true
     }
@@ -123,6 +131,15 @@ impl Vst3Plugin for StandalonePlay {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemUWavePlayS1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
+}
+
+impl Drop for StandalonePlay {
+    fn drop(&mut self) {
+        if self.lifecycle_registered {
+            unregister_plugin_instance();
+            self.lifecycle_registered = false;
+        }
+    }
 }
 
 // Standalone only - no plugin exports
