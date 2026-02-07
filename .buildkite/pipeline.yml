@@ -22,6 +22,8 @@ steps:
       queue: "juce-build"
       os: "macos"
     env:
+      PATH: "/Users/jeff/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      CARGO: "/Users/jeff/.cargo/bin/cargo"
       VALIDATION_STRICTNESS: "5"
     commands:
       - "bash ci/scripts/deps-macos.sh"
@@ -56,6 +58,8 @@ steps:
       queue: "juce-build"
       os: "macos"
     env:
+      PATH: "/Users/jeff/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      CARGO: "/Users/jeff/.cargo/bin/cargo"
       VERSION: "${BUILDKITE_TAG}"
       VALIDATION_STRICTNESS: "10"
     commands:
