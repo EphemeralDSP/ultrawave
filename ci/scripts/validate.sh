@@ -2,6 +2,7 @@
 set -euo pipefail
 
 STRICTNESS="${VALIDATION_STRICTNESS:-5}"
+export PATH="${HOME}/.local/bin:${PATH}"
 
 require_file() {
     local path="$1"

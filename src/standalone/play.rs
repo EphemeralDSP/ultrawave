@@ -124,7 +124,7 @@ impl ClapPlugin for StandalonePlay {
         Some("Ultrawave RAM PLAY machine - standalone test");
     const CLAP_MANUAL_URL: Option<&'static str> = Some("https://github.com/EphemeralDSP/ultrawave");
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Sampler];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Sampler];
 }
 
 impl Vst3Plugin for StandalonePlay {

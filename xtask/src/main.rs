@@ -422,10 +422,16 @@ fn plugin_destinations(system_install: bool) -> (PathBuf, PathBuf) {
     #[cfg(target_os = "linux")]
     {
         if system_install {
-            (PathBuf::from("/usr/lib/vst3"), PathBuf::from("/usr/lib/clap"))
+            (
+                PathBuf::from("/usr/lib/vst3"),
+                PathBuf::from("/usr/lib/clap"),
+            )
         } else {
             let home = env::var("HOME").expect("HOME environment variable not set");
-            (PathBuf::from(&home).join(".vst3"), PathBuf::from(&home).join(".clap"))
+            (
+                PathBuf::from(&home).join(".vst3"),
+                PathBuf::from(&home).join(".clap"),
+            )
         }
     }
 
@@ -437,7 +443,10 @@ fn plugin_destinations(system_install: bool) -> (PathBuf, PathBuf) {
         } else {
             env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\Default\\AppData\\Local".into())
         };
-        (PathBuf::from(&base).join("VST3"), PathBuf::from(&base).join("CLAP"))
+        (
+            PathBuf::from(&base).join("VST3"),
+            PathBuf::from(&base).join("CLAP"),
+        )
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
