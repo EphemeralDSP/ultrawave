@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 fn main() -> ExitCode {
@@ -36,7 +36,7 @@ USAGE:
 
 COMMANDS:
     bundle              Bundle plugins (from nih_plug_xtask)
-    install             Install bundled plugins to system directories
+    install             Build + install both plugins to platform plugin directories
 
 VALIDATION COMMANDS:
     validate-vst3       Validate VST3 plugin using pluginval
@@ -51,11 +51,13 @@ VALIDATION OPTIONS:
     --verbose               Show detailed validation output
 
 EXAMPLES:
-    cargo xtask bundle ultrawave --release
+    cargo xtask bundle ultrawave-record --release
+    cargo xtask bundle ultrawave-play --release
     cargo xtask validate-vst3 --strictness 5
     cargo xtask validate-clap
     cargo xtask validate-all
     cargo xtask install
+    cargo xtask install --system
 "#
     );
 }
@@ -282,48 +284,142 @@ fn run_validate_all(args: &[String]) -> ExitCode {
 }
 
 fn install_plugins() -> ExitCode {
+    let args: Vec<String> = env::args().skip(2).collect();
+    let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
+    let system_install = args.iter().any(|a| a == "--system");
+
+    let plugins = ["ultrawave-record", "ultrawave-play"];
     let bundle_dir = PathBuf::from("target/bundled");
 
-    // Windows plugin paths
-    let vst3_dest = PathBuf::from(
-        env::var("COMMONPROGRAMFILES").unwrap_or_else(|_| "C:\\Program Files\\Common Files".into()),
-    )
-    .join("VST3");
-    let clap_dest = PathBuf::from(
-        env::var("COMMONPROGRAMFILES").unwrap_or_else(|_| "C:\\Program Files\\Common Files".into()),
-    )
-    .join("CLAP");
+    if !skip_bundle {
+        for plugin in plugins {
+            println!("Building and bundling {}...", plugin);
+            let status = Command::new("cargo")
+                .args(["xtask", "bundle", plugin, "--release"])
+                .status()
+                .expect("Failed to run cargo xtask bundle");
 
-    // Install VST3
-    let vst3_src = bundle_dir.join("ultrawave.vst3");
-    if vst3_src.exists() {
-        let dest = vst3_dest.join("ultrawave.vst3");
-        println!("Installing VST3 to {:?}", dest);
-        if dest.exists() {
-            fs::remove_dir_all(&dest).expect("Failed to remove old VST3");
+            if !status.success() {
+                eprintln!("Bundle failed for {}", plugin);
+                return ExitCode::FAILURE;
+            }
         }
-        copy_dir_recursive(&vst3_src, &dest).expect("Failed to install VST3");
-        println!("✓ VST3 installed");
-    } else {
-        eprintln!("VST3 bundle not found. Run `cargo xtask bundle ultrawave --release` first.");
     }
 
-    // Install CLAP
-    let clap_src = bundle_dir.join("ultrawave.clap");
-    if clap_src.exists() {
-        fs::create_dir_all(&clap_dest).ok();
-        let dest = clap_dest.join("ultrawave.clap");
-        println!("Installing CLAP to {:?}", dest);
-        fs::copy(&clap_src, &dest).expect("Failed to install CLAP");
-        println!("✓ CLAP installed");
-    } else {
-        eprintln!("CLAP bundle not found. Run `cargo xtask bundle ultrawave --release` first.");
+    let (vst3_dest, clap_dest) = plugin_destinations(system_install);
+
+    if fs::create_dir_all(&vst3_dest).is_err() {
+        eprintln!("Failed to create VST3 destination at {:?}", vst3_dest);
+        return ExitCode::FAILURE;
     }
 
-    ExitCode::SUCCESS
+    if fs::create_dir_all(&clap_dest).is_err() {
+        eprintln!("Failed to create CLAP destination at {:?}", clap_dest);
+        return ExitCode::FAILURE;
+    }
+
+    let mut had_errors = false;
+    for plugin in plugins {
+        // Install VST3 bundle
+        let vst3_src = bundle_dir.join(format!("{plugin}.vst3"));
+        if vst3_src.exists() {
+            let dest = vst3_dest.join(format!("{plugin}.vst3"));
+            println!("Installing VST3 to {:?}", dest);
+            if let Err(err) = install_artifact(&vst3_src, &dest) {
+                eprintln!("Failed to install VST3 for {}: {}", plugin, err);
+                had_errors = true;
+            } else {
+                println!("✓ VST3 installed for {}", plugin);
+            }
+        } else {
+            eprintln!("VST3 bundle not found: {:?}", vst3_src);
+            had_errors = true;
+        }
+
+        // Install CLAP bundle/binary
+        let clap_src = bundle_dir.join(format!("{plugin}.clap"));
+        if clap_src.exists() {
+            let dest = clap_dest.join(format!("{plugin}.clap"));
+            println!("Installing CLAP to {:?}", dest);
+            if let Err(err) = install_artifact(&clap_src, &dest) {
+                eprintln!("Failed to install CLAP for {}: {}", plugin, err);
+                had_errors = true;
+            } else {
+                println!("✓ CLAP installed for {}", plugin);
+            }
+        } else {
+            eprintln!("CLAP bundle not found: {:?}", clap_src);
+            had_errors = true;
+        }
+    }
+
+    if had_errors {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
-fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+fn plugin_destinations(system_install: bool) -> (PathBuf, PathBuf) {
+    #[cfg(target_os = "macos")]
+    {
+        if system_install {
+            (
+                PathBuf::from("/Library/Audio/Plug-Ins/VST3"),
+                PathBuf::from("/Library/Audio/Plug-Ins/CLAP"),
+            )
+        } else {
+            let home = env::var("HOME").expect("HOME environment variable not set");
+            (
+                PathBuf::from(&home).join("Library/Audio/Plug-Ins/VST3"),
+                PathBuf::from(&home).join("Library/Audio/Plug-Ins/CLAP"),
+            )
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if system_install {
+            (PathBuf::from("/usr/lib/vst3"), PathBuf::from("/usr/lib/clap"))
+        } else {
+            let home = env::var("HOME").expect("HOME environment variable not set");
+            (PathBuf::from(&home).join(".vst3"), PathBuf::from(&home).join(".clap"))
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let base = if system_install {
+            env::var("COMMONPROGRAMFILES")
+                .unwrap_or_else(|_| "C:\\Program Files\\Common Files".into())
+        } else {
+            env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\Default\\AppData\\Local".into())
+        };
+        (PathBuf::from(&base).join("VST3"), PathBuf::from(&base).join("CLAP"))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        panic!("Unsupported platform for plugin installation");
+    }
+}
+
+fn install_artifact(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        if dst.exists() {
+            fs::remove_dir_all(dst)?;
+        }
+        copy_dir_recursive(src, dst)
+    } else {
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(src, dst)?;
+        Ok(())
+    }
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;

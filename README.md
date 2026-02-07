@@ -58,60 +58,33 @@ cd ultrawave
 cargo build --release
 
 # Bundle plugins (both Record and Play)
-cargo xtask bundle ultrawave_record --release
-cargo xtask bundle ultrawave_play --release
+cargo xtask bundle ultrawave-record --release
+cargo xtask bundle ultrawave-play --release
 ```
 
 Built plugins are placed in `target/bundled/`:
-- `ultrawave_record.clap` / `ultrawave_record.vst3`
-- `ultrawave_play.clap` / `ultrawave_play.vst3`
+- `ultrawave-record.clap` / `ultrawave-record.vst3`
+- `ultrawave-play.clap` / `ultrawave-play.vst3`
 
 ## Installation
 
-### Linux (Arch and other distros)
-
-After building, install the plugins to your DAW's search paths:
-
-**User install (recommended):**
-```bash
-# Create directories if they don't exist
-mkdir -p ~/.vst3 ~/.clap
-
-# Copy VST3 bundles
-cp -r target/bundled/ultrawave_record.vst3 ~/.vst3/
-cp -r target/bundled/ultrawave_play.vst3 ~/.vst3/
-
-# Copy CLAP bundles
-cp target/bundled/ultrawave_record.clap ~/.clap/
-cp target/bundled/ultrawave_play.clap ~/.clap/
-```
-
-**System-wide install:**
-```bash
-sudo mkdir -p /usr/lib/vst3 /usr/lib/clap
-
-sudo cp -r target/bundled/ultrawave_record.vst3 /usr/lib/vst3/
-sudo cp -r target/bundled/ultrawave_play.vst3 /usr/lib/vst3/
-
-sudo cp target/bundled/ultrawave_record.clap /usr/lib/clap/
-sudo cp target/bundled/ultrawave_play.clap /usr/lib/clap/
-```
-
-Most Linux DAWs (Bitwig, REAPER, Ardour, etc.) scan `~/.vst3/` and `~/.clap/` by default.
-
-### macOS
-
-On macOS, copy the bundles to the standard plugin directories:
+Use a single Cargo command to build, bundle, and install both plugins:
 
 ```bash
-# VST3
-cp -r target/bundled/ultrawave_record.vst3 ~/Library/Audio/Plug-Ins/VST3/
-cp -r target/bundled/ultrawave_play.vst3 ~/Library/Audio/Plug-Ins/VST3/
-
-# CLAP
-cp -r target/bundled/ultrawave_record.clap ~/Library/Audio/Plug-Ins/CLAP/
-cp -r target/bundled/ultrawave_play.clap ~/Library/Audio/Plug-Ins/CLAP/
+cargo xtask install
 ```
+
+This performs a user install by default:
+- Linux: `~/.vst3` and `~/.clap`
+- macOS: `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/CLAP`
+
+For system-wide install paths, use:
+
+```bash
+cargo xtask install --system
+```
+
+If your system paths need elevated permissions, run the command with `sudo`.
 
 ## Plugin Formats
 
