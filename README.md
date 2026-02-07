@@ -68,11 +68,13 @@ Built plugins are placed in `target/bundled/`:
 
 ## Plugin Formats
 
-| Format | Windows | macOS | Linux |
-|--------|---------|-------|-------|
-| VST3   | ✓       | ✓     | ✓     |
-| CLAP   | ✓       | ✓     | ✓     |
-| AU     | -       | ✓     | -     |
+Current milestone scope targets macOS/Linux first. Windows support is out-of-scope for this milestone.
+
+| Format | macOS | Linux |
+|--------|-------|-------|
+| VST3   | ✓     | ✓     |
+| CLAP   | ✓     | ✓     |
+| AU     | ✓     | -     |
 
 ## Development
 
@@ -84,11 +86,9 @@ Ultrawave uses industry-standard plugin validators:
 
 ```bash
 # Validate VST3
-.\scripts\validate-vst3.ps1      # Windows
 ./scripts/validate-vst3.sh       # macOS/Linux
 
 # Validate CLAP
-.\scripts\validate-clap.ps1      # Windows
 ./scripts/validate-clap.sh       # macOS/Linux
 ```
 

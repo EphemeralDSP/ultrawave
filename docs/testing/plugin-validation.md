@@ -1,6 +1,8 @@
 # Plugin Validation Guide
 
-Ultrawave uses industry-standard plugin validators to ensure compatibility across all major DAWs. This guide covers running validators locally, interpreting results, and integrating with CI.
+Ultrawave uses industry-standard plugin validators to ensure compatibility across major DAWs. This guide covers running validators locally, interpreting results, and integrating with CI.
+
+Current milestone scope is macOS/Linux-first. Windows validation is explicitly out-of-scope for this milestone.
 
 ## Quick Start
 
@@ -8,14 +10,8 @@ Ultrawave uses industry-standard plugin validators to ensure compatibility acros
 # Build the plugin
 cargo xtask bundle ultrawave --release
 
-# Validate VST3 (Windows)
-.\scripts\validate-vst3.ps1
-
 # Validate VST3 (macOS/Linux)
 ./scripts/validate-vst3.sh
-
-# Validate CLAP (Windows)
-.\scripts\validate-clap.ps1
 
 # Validate CLAP (macOS/Linux)
 ./scripts/validate-clap.sh
@@ -31,7 +27,6 @@ cargo xtask bundle ultrawave --release
 
 | Platform | Installation |
 |----------|--------------|
-| Windows | Download from [releases](https://github.com/Tracktion/pluginval/releases), extract to `.\tools\pluginval.exe` |
 | macOS | Download from [releases](https://github.com/Tracktion/pluginval/releases), extract to `./tools/pluginval.app` |
 | Linux | Download from [releases](https://github.com/Tracktion/pluginval/releases), extract to `./tools/pluginval` |
 
@@ -72,21 +67,6 @@ https://github.com/free-audio/clap-validator/releases
 
 ### VST3 Validation
 
-**Windows (PowerShell):**
-```powershell
-# Default (strictness 5)
-.\scripts\validate-vst3.ps1
-
-# Custom strictness
-.\scripts\validate-vst3.ps1 -Strictness 8
-
-# Verbose output
-.\scripts\validate-vst3.ps1 -Detailed
-
-# Specify plugin path
-.\scripts\validate-vst3.ps1 -PluginPath ".\target\release\Ultrawave.vst3"
-```
-
 **macOS/Linux (Bash):**
 ```bash
 # Default (strictness 5)
@@ -103,21 +83,6 @@ https://github.com/free-audio/clap-validator/releases
 ```
 
 ### CLAP Validation
-
-**Windows (PowerShell):**
-```powershell
-# All tests
-.\scripts\validate-clap.ps1
-
-# List available tests
-.\scripts\validate-clap.ps1 -ListTests
-
-# Run specific tests
-.\scripts\validate-clap.ps1 -Tests "state-reproducibility-basic"
-
-# Verbose output
-.\scripts\validate-clap.ps1 -Detailed
-```
 
 **macOS/Linux (Bash):**
 ```bash
@@ -182,7 +147,6 @@ Plugin validation runs automatically on every push and pull request via GitHub A
 
 | Platform | Formats Tested |
 |----------|---------------|
-| Windows | VST3, CLAP |
 | macOS | VST3, CLAP, AU |
 | Linux | VST3, CLAP |
 
@@ -202,11 +166,10 @@ CI uploads validation logs and built plugins as artifacts:
 Before releasing a new version:
 
 - [ ] Build release version: `cargo xtask bundle ultrawave --release`
-- [ ] VST3 passes at strictness level 5+ on Windows
 - [ ] VST3 passes at strictness level 5+ on macOS
 - [ ] VST3 passes at strictness level 5+ on Linux
 - [ ] AU passes at strictness level 5+ on macOS
-- [ ] CLAP passes all tests on all platforms
+- [ ] CLAP passes all tests on macOS and Linux
 - [ ] All CI validation checks pass
 - [ ] Update `scripts/VALIDATION_BASELINE.md` with results
 

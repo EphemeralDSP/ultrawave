@@ -16,8 +16,6 @@ jobs:
         include:
           - os: ubuntu-latest
             runner: ephemeral-runners
-          - os: windows-latest
-            runner: windows-latest
           - os: macos-latest
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
