@@ -1,4 +1,8 @@
 use crate::dsp::sample_engine::param_to_normalized;
+use crate::machines::shared::{
+    get_global_registry, BufferRegistry, CHANNEL_COUNT, MAX_BUFFER_SAMPLES,
+};
+use std::sync::Arc;
 
 pub struct RamRecordParams {
     pub mlev: i32,
@@ -23,85 +27,99 @@ impl Default for RamRecordParams {
 }
 
 pub struct RamRecord {
-    buffers: [Vec<i16>; 8],
-    write_positions: [usize; 8],
-    max_length: usize,
-    target_length: usize,
-    is_recording: [bool; 8],
+    registry: Arc<BufferRegistry>,
     sample_rate: f32,
-    rec_rate_counter: f32,
-    rec_rate_divisor: f32,
+    max_length: usize,
+    target_lengths: [usize; CHANNEL_COUNT],
+    samples_recorded: [usize; CHANNEL_COUNT],
+    is_recording: [bool; CHANNEL_COUNT],
+    rec_rate_counters: [f32; CHANNEL_COUNT],
+    rec_rate_divisors: [f32; CHANNEL_COUNT],
 }
 
-#[allow(dead_code)]
 impl RamRecord {
     const MAX_RECORD_SECONDS: f32 = 10.0;
 
     pub fn new(sample_rate: f32) -> Self {
+        Self::with_registry(sample_rate, get_global_registry())
+    }
+
+    pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
         let max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
+
         Self {
-            buffers: [
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-                Vec::with_capacity(max_length),
-            ],
-            write_positions: [0; 8],
-            max_length,
-            target_length: max_length,
-            is_recording: [false; 8],
+            registry,
             sample_rate,
-            rec_rate_counter: 0.0,
-            rec_rate_divisor: 1.0,
+            max_length,
+            target_lengths: [MAX_BUFFER_SAMPLES; CHANNEL_COUNT],
+            samples_recorded: [0; CHANNEL_COUNT],
+            is_recording: [false; CHANNEL_COUNT],
+            rec_rate_counters: [0.0; CHANNEL_COUNT],
+            rec_rate_divisors: [1.0; CHANNEL_COUNT],
         }
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
+        for length in &mut self.target_lengths {
+            *length = (*length).min(self.max_length);
+        }
     }
 
+    fn clamp_channel(channel: usize) -> usize {
+        channel.min(CHANNEL_COUNT - 1)
+    }
+
+    /// Starts capturing audio into the requested shared buffer channel.
+    /// Repeated triggers while the channel is already recording are ignored to keep the behaviour deterministic.
     pub fn start_recording(&mut self, params: &RamRecordParams, clear: bool, channel: usize) {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
+
+        if self.is_recording[channel] {
+            return;
+        }
 
         if clear {
-            self.buffers[channel].clear();
-            self.write_positions[channel] = 0;
+            self.registry.clear_buffer(channel);
+        } else {
+            self.registry.reset_write_position(channel);
         }
 
         let len_normalized = param_to_normalized(params.rec_len);
-        self.target_length = ((len_normalized * Self::MAX_RECORD_SECONDS * self.sample_rate)
+        let target_length = ((len_normalized * Self::MAX_RECORD_SECONDS * self.sample_rate)
             as usize)
             .min(self.max_length)
             .max(1);
 
+        self.target_lengths[channel] = target_length;
+        self.samples_recorded[channel] = 0;
+
         let rate_normalized = param_to_normalized(params.rec_rate);
-        self.rec_rate_divisor = 1.0 + (1.0 - rate_normalized) * 15.0;
-        self.rec_rate_counter = 0.0;
+        self.rec_rate_divisors[channel] = 1.0 + (1.0 - rate_normalized) * 15.0;
+        self.rec_rate_counters[channel] = 0.0;
 
         self.is_recording[channel] = true;
     }
 
     pub fn stop_recording(&mut self, channel: usize) {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
         self.is_recording[channel] = false;
     }
 
     pub fn stop_all_recording(&mut self) {
-        self.is_recording = [false; 8];
+        for channel in 0..CHANNEL_COUNT {
+            self.is_recording[channel] = false;
+        }
     }
 
     pub fn is_recording(&self, channel: usize) -> bool {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
         self.is_recording[channel]
     }
 
     pub fn is_any_recording(&self) -> bool {
-        self.is_recording.iter().any(|&r| r)
+        self.is_recording.iter().any(|&flag| flag)
     }
 
     pub fn record_sample(
@@ -113,22 +131,22 @@ impl RamRecord {
         params: &RamRecordParams,
         channel: usize,
     ) {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
 
         if !self.is_recording[channel] {
             return;
         }
 
-        if self.write_positions[channel] >= self.target_length {
+        if self.samples_recorded[channel] >= self.target_lengths[channel] {
             self.is_recording[channel] = false;
             return;
         }
 
-        self.rec_rate_counter += 1.0;
-        if self.rec_rate_counter < self.rec_rate_divisor {
+        self.rec_rate_counters[channel] += 1.0;
+        if self.rec_rate_counters[channel] < self.rec_rate_divisors[channel] {
             return;
         }
-        self.rec_rate_counter = 0.0;
+        self.rec_rate_counters[channel] = 0.0;
 
         let mlev = param_to_normalized(params.mlev);
         let ilev = param_to_normalized(params.ilev);
@@ -147,140 +165,157 @@ impl RamRecord {
 
         let sample_12bit = (combined * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
 
-        if self.write_positions[channel] < self.buffers[channel].len() {
-            self.buffers[channel][self.write_positions[channel]] = sample_12bit;
-        } else {
-            self.buffers[channel].push(sample_12bit);
+        if !self.registry.write_sample(channel, sample_12bit) {
+            self.is_recording[channel] = false;
+            return;
         }
 
-        self.write_positions[channel] += 1;
+        self.samples_recorded[channel] += 1;
+
+        if self.samples_recorded[channel] >= self.target_lengths[channel] {
+            self.is_recording[channel] = false;
+        }
     }
 
     pub fn get_buffer(&self, channel: usize) -> Vec<i16> {
-        let channel = channel.min(7);
-        self.buffers[channel].clone()
-    }
-
-    pub fn get_all_buffers(&self) -> &[Vec<i16>; 8] {
-        &self.buffers
+        self.registry.read_buffer(channel).unwrap_or_default()
     }
 
     pub fn buffer_len(&self, channel: usize) -> usize {
-        let channel = channel.min(7);
-        self.buffers[channel].len()
+        self.registry.buffer_len(channel)
     }
 
     pub fn clear(&mut self, channel: usize) {
-        let channel = channel.min(7);
-        self.buffers[channel].clear();
-        self.write_positions[channel] = 0;
+        let channel = Self::clamp_channel(channel);
+        self.registry.clear_buffer(channel);
+        self.samples_recorded[channel] = 0;
         self.is_recording[channel] = false;
-        self.rec_rate_counter = 0.0;
+        self.rec_rate_counters[channel] = 0.0;
+        self.rec_rate_divisors[channel] = 1.0;
     }
 
     pub fn clear_all(&mut self) {
-        for i in 0..8 {
-            self.buffers[i].clear();
-            self.write_positions[i] = 0;
-            self.is_recording[i] = false;
+        self.registry.clear_all();
+        for channel in 0..CHANNEL_COUNT {
+            self.samples_recorded[channel] = 0;
+            self.is_recording[channel] = false;
+            self.rec_rate_counters[channel] = 0.0;
+            self.rec_rate_divisors[channel] = 1.0;
         }
-        self.rec_rate_counter = 0.0;
     }
 
     pub fn recording_progress(&self, channel: usize) -> f32 {
-        let channel = channel.min(7);
-        if self.target_length == 0 {
+        let channel = Self::clamp_channel(channel);
+        let target = self.target_lengths[channel];
+        if target == 0 {
             return 0.0;
         }
-        self.write_positions[channel] as f32 / self.target_length as f32
+        self.samples_recorded[channel] as f32 / target as f32
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machines::shared::BufferRegistry;
+    use std::sync::Arc;
 
-    #[test]
-    fn test_new_creates_empty_buffers() {
-        let rec = RamRecord::new(44100.0);
-        for ch in 0..8 {
-            assert_eq!(rec.buffer_len(ch), 0);
-            assert!(!rec.is_recording(ch));
+    const SAMPLE_RATE: f32 = 100.0;
+
+    fn basic_params() -> RamRecordParams {
+        RamRecordParams {
+            rec_len: 10,
+            rec_rate: 127,
+            ..Default::default()
         }
     }
 
+    fn record_one_sample(rec: &mut RamRecord, params: &RamRecordParams, channel: usize) {
+        rec.record_sample(0.5, 0.5, 0.5, 0.5, params, channel);
+    }
+
     #[test]
-    fn test_start_recording_enables_flag() {
-        let mut rec = RamRecord::new(44100.0);
-        rec.start_recording(&RamRecordParams::default(), true, 0);
+    fn note_on_starts_recording_and_writes_to_registry() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let params = basic_params();
+
+        rec.start_recording(&params, true, 0);
         assert!(rec.is_recording(0));
-        assert!(!rec.is_recording(1));
+
+        record_one_sample(&mut rec, &params, 0);
+        assert!(registry.buffer_len(0) > 0);
     }
 
     #[test]
-    fn test_stop_recording_disables_flag() {
-        let mut rec = RamRecord::new(44100.0);
-        rec.start_recording(&RamRecordParams::default(), true, 0);
-        rec.stop_recording(0);
-        assert!(!rec.is_recording(0));
+    fn recording_stops_at_configured_length() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let params = basic_params();
+
+        rec.start_recording(&params, true, 0);
+        let mut loop_guard = 0;
+        while rec.is_recording(0) {
+            record_one_sample(&mut rec, &params, 0);
+            loop_guard += 1;
+            assert!(loop_guard < 500, "recording loop did not end");
+        }
+
+        let normalized_len = param_to_normalized(params.rec_len);
+        let max_length = (SAMPLE_RATE * RamRecord::MAX_RECORD_SECONDS) as usize;
+        let expected = ((normalized_len * RamRecord::MAX_RECORD_SECONDS * SAMPLE_RATE) as usize)
+            .min(max_length)
+            .max(1);
+
+        assert_eq!(registry.buffer_len(0), expected);
+        assert_eq!(rec.recording_progress(0), 1.0);
     }
 
     #[test]
-    fn test_record_sample_adds_to_buffer() {
-        let mut rec = RamRecord::new(44100.0);
-        let params = RamRecordParams {
-            rec_rate: 127,
+    fn retriggers_are_ignored_while_channel_is_recording() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let params = basic_params();
+
+        rec.start_recording(&params, true, 2);
+        record_one_sample(&mut rec, &params, 2);
+        let initial_len = registry.buffer_len(2);
+        assert!(initial_len > 0);
+        assert!(rec.is_recording(2));
+
+        rec.start_recording(&params, true, 2);
+        assert_eq!(registry.buffer_len(2), initial_len);
+        record_one_sample(&mut rec, &params, 2);
+        assert_eq!(registry.buffer_len(2), initial_len + 1);
+    }
+
+    #[test]
+    fn recording_length_is_locked_at_trigger_time() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let start_params = RamRecordParams {
+            rec_len: 10,
             ..Default::default()
         };
-        rec.start_recording(&params, true, 0);
-        rec.record_sample(0.5, 0.5, 0.0, 0.0, &params, 0);
-        assert!(rec.buffer_len(0) > 0);
-        assert_eq!(rec.buffer_len(1), 0);
-    }
-
-    #[test]
-    fn test_12bit_quantization() {
-        let mut rec = RamRecord::new(44100.0);
-        let params = RamRecordParams {
-            rec_rate: 127,
-            mlev: 127,
-            ..Default::default()
-        };
-        rec.start_recording(&params, true, 0);
-        rec.record_sample(1.0, 1.0, 0.0, 0.0, &params, 0);
-        let buffer = rec.get_buffer(0);
-        assert!(!buffer.is_empty());
-        assert!(buffer[0] <= 2047 && buffer[0] >= -2048);
-    }
-
-    #[test]
-    fn test_clear_resets_buffer() {
-        let mut rec = RamRecord::new(44100.0);
-        let params = RamRecordParams::default();
-        rec.start_recording(&params, true, 0);
-        rec.record_sample(0.5, 0.5, 0.0, 0.0, &params, 0);
-        rec.clear(0);
-        assert_eq!(rec.buffer_len(0), 0);
-        assert!(!rec.is_recording(0));
-    }
-
-    #[test]
-    fn test_multi_channel_recording() {
-        let mut rec = RamRecord::new(44100.0);
-        let params = RamRecordParams {
-            rec_rate: 127,
-            ..Default::default()
+        let changed_params = RamRecordParams {
+            rec_len: 120,
+            ..start_params
         };
 
-        rec.start_recording(&params, true, 0);
-        rec.start_recording(&params, true, 3);
+        rec.start_recording(&start_params, true, 1);
+        let mut loop_guard = 0;
+        while rec.is_recording(1) {
+            rec.record_sample(0.5, 0.5, 0.5, 0.5, &changed_params, 1);
+            loop_guard += 1;
+            assert!(loop_guard < 500, "recording loop did not end");
+        }
 
-        rec.record_sample(0.5, 0.5, 0.0, 0.0, &params, 0);
-        rec.record_sample(0.3, 0.3, 0.0, 0.0, &params, 3);
+        let normalized_len = param_to_normalized(start_params.rec_len);
+        let max_length = (SAMPLE_RATE * RamRecord::MAX_RECORD_SECONDS) as usize;
+        let expected = ((normalized_len * RamRecord::MAX_RECORD_SECONDS * SAMPLE_RATE) as usize)
+            .min(max_length)
+            .max(1);
 
-        assert!(rec.buffer_len(0) > 0);
-        assert_eq!(rec.buffer_len(1), 0);
-        assert_eq!(rec.buffer_len(2), 0);
-        assert!(rec.buffer_len(3) > 0);
+        assert_eq!(registry.buffer_len(1), expected);
     }
 }

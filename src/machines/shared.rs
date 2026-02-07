@@ -1,13 +1,16 @@
 use std::sync::atomic::{AtomicI16, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-const CHANNEL_COUNT: usize = 4;
+pub const CHANNEL_COUNT: usize = 4;
 
 /// Maximum recording length in seconds.
 const MAX_RECORD_SECONDS: f32 = 10.0;
 
 /// Sample rate used for buffer allocation (44.1kHz standard).
 const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
+
+/// Number of samples allocated per buffer (10s @ 44.1kHz).
+pub const MAX_BUFFER_SAMPLES: usize = (DEFAULT_SAMPLE_RATE * MAX_RECORD_SECONDS) as usize;
 
 /// Lock-free buffer for a single channel (R1-R4).
 pub struct SharedBuffer {
@@ -98,7 +101,7 @@ pub struct BufferRegistry {
 
 #[allow(dead_code)]
 impl BufferRegistry {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buffers: [
                 SharedBuffer::new(),
@@ -161,6 +164,12 @@ impl BufferRegistry {
         } else {
             false
         }
+    }
+}
+
+impl Default for BufferRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

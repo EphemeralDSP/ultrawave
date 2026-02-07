@@ -13,6 +13,7 @@ pub struct StandaloneRecord {
     sample_rate: f32,
     ram_record: RamRecord,
     filter: ResonantFilter,
+    active_channel: usize,
 }
 
 impl Default for StandaloneRecord {
@@ -24,6 +25,7 @@ impl Default for StandaloneRecord {
             sample_rate,
             ram_record: RamRecord::new(sample_rate),
             filter: ResonantFilter::new(sample_rate),
+            active_channel: 0,
         }
     }
 }
@@ -81,7 +83,8 @@ impl Plugin for StandaloneRecord {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { .. } => {
-                    let chan = 0;
+                    let chan = self.params.buffer.value() as usize;
+                    self.active_channel = chan;
                     let machine_params = RamRecordMachineParams {
                         mlev: self.params.mlev.value(),
                         mbal: self.params.mbal.value(),
@@ -93,7 +96,8 @@ impl Plugin for StandaloneRecord {
                     self.ram_record.start_recording(&machine_params, true, chan);
                 }
                 NoteEvent::NoteOff { .. } => {
-                    let chan = 0;
+                    // Recording is fixed-length once Note On has armed capture.
+                    let chan = self.active_channel;
                     self.ram_record.stop_recording(chan);
                 }
                 _ => {}
@@ -111,7 +115,7 @@ impl Plugin for StandaloneRecord {
         );
 
         for mut channel_samples in buffer.iter_samples() {
-            let chan = 0;
+            let chan = self.active_channel;
             let machine_params = RamRecordMachineParams {
                 mlev: self.params.mlev.value(),
                 mbal: self.params.mbal.value(),
