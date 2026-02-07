@@ -288,19 +288,17 @@ fn install_plugins() -> ExitCode {
     let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
     let system_install = args.iter().any(|a| a == "--system");
 
-    let plugins = ["ultrawave-record", "ultrawave-play"];
+    let plugins = [
+        ("ultrawave-record", "ultrawave_record"),
+        ("ultrawave-play", "ultrawave_play"),
+    ];
     let bundle_dir = PathBuf::from("target/bundled");
 
     if !skip_bundle {
-        for plugin in plugins {
-            println!("Building and bundling {}...", plugin);
-            let status = Command::new("cargo")
-                .args(["xtask", "bundle", plugin, "--release"])
-                .status()
-                .expect("Failed to run cargo xtask bundle");
-
-            if !status.success() {
-                eprintln!("Bundle failed for {}", plugin);
+        for (primary, fallback) in plugins {
+            println!("Building and bundling {}...", primary);
+            if !bundle_plugin(primary, fallback) {
+                eprintln!("Bundle failed for {} ({})", primary, fallback);
                 return ExitCode::FAILURE;
             }
         }
@@ -319,36 +317,48 @@ fn install_plugins() -> ExitCode {
     }
 
     let mut had_errors = false;
-    for plugin in plugins {
+    for (primary, fallback) in plugins {
         // Install VST3 bundle
-        let vst3_src = bundle_dir.join(format!("{plugin}.vst3"));
-        if vst3_src.exists() {
-            let dest = vst3_dest.join(format!("{plugin}.vst3"));
+        if let Some(vst3_src) = find_artifact(&bundle_dir, primary, fallback, "vst3") {
+            let dest = vst3_dest.join(
+                vst3_src
+                    .file_name()
+                    .expect("missing file name for VST3 source"),
+            );
             println!("Installing VST3 to {:?}", dest);
             if let Err(err) = install_artifact(&vst3_src, &dest) {
-                eprintln!("Failed to install VST3 for {}: {}", plugin, err);
+                eprintln!("Failed to install VST3 for {}: {}", primary, err);
                 had_errors = true;
             } else {
-                println!("✓ VST3 installed for {}", plugin);
+                println!("✓ VST3 installed for {}", primary);
             }
         } else {
-            eprintln!("VST3 bundle not found: {:?}", vst3_src);
+            eprintln!(
+                "VST3 bundle not found for {} (checked {} and {})",
+                primary, primary, fallback
+            );
             had_errors = true;
         }
 
         // Install CLAP bundle/binary
-        let clap_src = bundle_dir.join(format!("{plugin}.clap"));
-        if clap_src.exists() {
-            let dest = clap_dest.join(format!("{plugin}.clap"));
+        if let Some(clap_src) = find_artifact(&bundle_dir, primary, fallback, "clap") {
+            let dest = clap_dest.join(
+                clap_src
+                    .file_name()
+                    .expect("missing file name for CLAP source"),
+            );
             println!("Installing CLAP to {:?}", dest);
             if let Err(err) = install_artifact(&clap_src, &dest) {
-                eprintln!("Failed to install CLAP for {}: {}", plugin, err);
+                eprintln!("Failed to install CLAP for {}: {}", primary, err);
                 had_errors = true;
             } else {
-                println!("✓ CLAP installed for {}", plugin);
+                println!("✓ CLAP installed for {}", primary);
             }
         } else {
-            eprintln!("CLAP bundle not found: {:?}", clap_src);
+            eprintln!(
+                "CLAP bundle not found for {} (checked {} and {})",
+                primary, primary, fallback
+            );
             had_errors = true;
         }
     }
@@ -358,6 +368,38 @@ fn install_plugins() -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn bundle_plugin(primary: &str, fallback: &str) -> bool {
+    let status = Command::new("cargo")
+        .args(["xtask", "bundle", primary, "--release"])
+        .status()
+        .expect("Failed to run cargo xtask bundle");
+
+    if status.success() {
+        return true;
+    }
+
+    let fallback_status = Command::new("cargo")
+        .args(["xtask", "bundle", fallback, "--release"])
+        .status()
+        .expect("Failed to run cargo xtask bundle");
+
+    fallback_status.success()
+}
+
+fn find_artifact(bundle_dir: &Path, primary: &str, fallback: &str, ext: &str) -> Option<PathBuf> {
+    let primary_path = bundle_dir.join(format!("{primary}.{ext}"));
+    if primary_path.exists() {
+        return Some(primary_path);
+    }
+
+    let fallback_path = bundle_dir.join(format!("{fallback}.{ext}"));
+    if fallback_path.exists() {
+        return Some(fallback_path);
+    }
+
+    None
 }
 
 fn plugin_destinations(system_install: bool) -> (PathBuf, PathBuf) {
