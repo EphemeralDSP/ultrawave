@@ -103,6 +103,11 @@ impl RamPlay {
         self.current_params[channel] = *params;
         let shared_buffer = self.registry.read_buffer(channel).unwrap_or_default();
         self.engines[channel].load_buffer(shared_buffer);
+        if self.engines[channel].buffer_len() == 0 {
+            self.is_playing[channel] = false;
+            self.retrigs_remaining[channel] = 0;
+            return;
+        }
 
         self.trigger_internal(channel);
 
@@ -166,9 +171,13 @@ impl RamPlay {
             return 0.0;
         }
 
-        let buffer_len = self.engines[channel].buffer_len() as f64;
-        let end_norm = param_to_normalized(self.current_params[channel].end);
-        let end_pos = (end_norm as f64) * buffer_len;
+        let buffer_len = self.engines[channel].buffer_len();
+        let end_pos = if self.current_params[channel].end >= 127 {
+            buffer_len.saturating_sub(1) as f64
+        } else {
+            let end_norm = param_to_normalized(self.current_params[channel].end);
+            (end_norm as f64) * (buffer_len as f64)
+        };
 
         if self.engines[channel].is_finished(end_pos) {
             self.is_playing[channel] = false;
@@ -178,14 +187,21 @@ impl RamPlay {
         let pitch_ratio = pitch_to_ratio(self.current_params[channel].pitch);
         let sample = self.engines[channel]
             .read_sample_with_processing(pitch_ratio, self.current_params[channel].srr);
+        if self.engines[channel].position() >= end_pos {
+            self.is_playing[channel] = false;
+        }
 
-        if self.hold_counters[channel] < self.hold_time_samples[channel] {
-            self.hold_counters[channel] += 1;
-        } else {
-            self.envelopes[channel] =
-                (self.envelopes[channel] - self.decay_rates[channel]).max(0.0);
-            if self.envelopes[channel] <= 0.0 {
-                self.is_playing[channel] = false;
+        let is_minimal_one_shot =
+            self.current_params[channel].hold == 0 && self.current_params[channel].dec == 0;
+        if !is_minimal_one_shot {
+            if self.hold_counters[channel] < self.hold_time_samples[channel] {
+                self.hold_counters[channel] += 1;
+            } else {
+                self.envelopes[channel] =
+                    (self.envelopes[channel] - self.decay_rates[channel]).max(0.0);
+                if self.envelopes[channel] <= 0.0 {
+                    self.is_playing[channel] = false;
+                }
             }
         }
 
@@ -301,5 +317,50 @@ mod tests {
         player.trigger(&RamPlayParams::default(), 1);
         let sample1 = player.process(1);
         assert!(sample1.abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn test_trigger_on_empty_buffer_is_deterministic_silence() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut player = RamPlay::with_registry(44100.0, registry);
+
+        player.trigger(&RamPlayParams::default(), 2);
+
+        assert!(!player.is_playing(2));
+        assert!(player.process(2).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn test_minimal_one_shot_reaches_end_and_stops() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut player = RamPlay::with_registry(44100.0, registry);
+        player.load_buffer(vec![8192; 64], 0);
+
+        let params = RamPlayParams {
+            strt: 0,
+            end: 127,
+            pitch: 64,
+            hold: 0,
+            dec: 0,
+            rtrg: 0,
+            rtim: 0,
+            srr: 0,
+            vol: 127,
+        };
+        player.trigger(&params, 0);
+        let mut produced_non_zero = false;
+        for _ in 0..200 {
+            let sample = player.process(0);
+            if sample.abs() > 1.0e-6 {
+                produced_non_zero = true;
+            }
+            if !player.is_playing(0) {
+                break;
+            }
+        }
+
+        assert!(produced_non_zero);
+        assert!(!player.is_playing(0));
+        assert!(player.process(0).abs() < 1.0e-6);
     }
 }

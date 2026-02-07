@@ -2,7 +2,6 @@ use nih_plug::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::dsp::filter::ResonantFilter;
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
 use crate::params::RamPlayParams;
 use crate::standalone::play_editor;
@@ -10,9 +9,7 @@ use crate::standalone::play_editor;
 pub struct StandalonePlay {
     params: Arc<RamPlayParams>,
     editor_state: Arc<nih_plug_vizia::ViziaState>,
-    sample_rate: f32,
     ram_play: RamPlay,
-    filter: ResonantFilter,
     active_channel: usize,
 }
 
@@ -24,9 +21,7 @@ impl Default for StandalonePlay {
         Self {
             params: Arc::new(RamPlayParams::default()),
             editor_state: play_editor::default_state(),
-            sample_rate,
             ram_play,
-            filter: ResonantFilter::new(sample_rate),
             active_channel: 0,
         }
     }
@@ -70,9 +65,7 @@ impl Plugin for StandalonePlay {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        self.sample_rate = buffer_config.sample_rate;
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
-        self.filter.set_sample_rate(buffer_config.sample_rate);
         true
     }
 
@@ -83,50 +76,30 @@ impl Plugin for StandalonePlay {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
-            match event {
-                NoteEvent::NoteOn { velocity, .. } => {
-                    let chan = self.params.buffer.value() as usize;
-                    self.active_channel = chan;
-                    if self.ram_play.buffer_len(chan) > 0 {
-                        let play_params = RamPlayMachineParams {
-                            strt: self.params.strt.value(),
-                            end: self.params.end.value(),
-                            pitch: self.params.pitch.value(),
-                            hold: self.params.hold.value(),
-                            dec: self.params.dec.value(),
-                            rtrg: self.params.rtrg.value(),
-                            rtim: self.params.rtim.value(),
-                            srr: self.params.srr.value(),
-                            vol: ((velocity * 127.0) as i32).min(127),
-                        };
-                        self.ram_play.trigger(&play_params, chan);
-                    }
-                }
-                NoteEvent::NoteOff { .. } => {
-                    let chan = self.active_channel;
-                    self.ram_play.stop(chan);
-                }
-                _ => {}
+            if let NoteEvent::NoteOn { .. } = event {
+                let chan = self.params.buffer.value() as usize;
+                self.active_channel = chan;
+                let play_params = RamPlayMachineParams {
+                    strt: 0,
+                    end: 127,
+                    pitch: 64,
+                    hold: 0,
+                    dec: 0,
+                    rtrg: 0,
+                    rtim: 0,
+                    srr: 0,
+                    vol: 127,
+                };
+                self.ram_play.trigger(&play_params, chan);
             }
         }
-
-        // Update filter parameters (reusing srr and rtim for filter)
-        let filter_freq =
-            20.0 + (self.params.srr.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
-        let filter_resonance = self.params.rtim.value() as f32 / 127.0;
-        self.filter.set_params(
-            filter_freq,
-            filter_resonance,
-            crate::dsp::filter::FilterMode::LowPass,
-        );
 
         for channel_samples in buffer.iter_samples() {
             let chan = self.active_channel;
             let sample_out = self.ram_play.process(chan);
-            let (left, right) = self.filter.process_stereo(sample_out, sample_out);
 
-            for (out_idx, sample) in channel_samples.into_iter().enumerate() {
-                *sample = if out_idx == 0 { left } else { right };
+            for sample in channel_samples {
+                *sample = sample_out;
             }
         }
         ProcessStatus::Normal
