@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo build --release
+CARGO_BIN="${CARGO:-cargo}"
+"${CARGO_BIN}" build --release
