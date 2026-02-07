@@ -185,6 +185,16 @@ impl RamRecord {
         self.registry.buffer_len(channel)
     }
 
+    pub fn target_length(&self, channel: usize) -> usize {
+        let channel = Self::clamp_channel(channel);
+        self.target_lengths[channel]
+    }
+
+    pub fn recorded_samples(&self, channel: usize) -> usize {
+        let channel = Self::clamp_channel(channel);
+        self.samples_recorded[channel]
+    }
+
     pub fn clear(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.registry.clear_buffer(channel);
@@ -317,5 +327,58 @@ mod tests {
             .max(1);
 
         assert_eq!(registry.buffer_len(1), expected);
+    }
+
+    #[test]
+    fn recording_writes_only_to_selected_channel() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let params = basic_params();
+
+        rec.start_recording(&params, true, 2);
+        record_one_sample(&mut rec, &params, 2);
+
+        assert_eq!(registry.buffer_len(0), 0);
+        assert_eq!(registry.buffer_len(1), 0);
+        assert!(registry.buffer_len(2) > 0);
+        assert_eq!(registry.buffer_len(3), 0);
+    }
+
+    #[test]
+    fn target_length_matches_len_param() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry);
+        let params = RamRecordParams {
+            rec_len: 64,
+            ..Default::default()
+        };
+
+        rec.start_recording(&params, true, 0);
+        let normalized_len = param_to_normalized(params.rec_len);
+        let max_length = (SAMPLE_RATE * RamRecord::MAX_RECORD_SECONDS) as usize;
+        let expected = ((normalized_len * RamRecord::MAX_RECORD_SECONDS * SAMPLE_RATE) as usize)
+            .min(max_length)
+            .max(1);
+
+        assert_eq!(rec.target_length(0), expected);
+    }
+
+    #[test]
+    fn target_length_is_locked_against_retriggers() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let first_params = RamRecordParams {
+            rec_len: 10,
+            ..Default::default()
+        };
+        let second_params = RamRecordParams {
+            rec_len: 120,
+            ..Default::default()
+        };
+
+        rec.start_recording(&first_params, true, 1);
+        let initial_target = rec.target_length(1);
+        rec.start_recording(&second_params, true, 1);
+        assert_eq!(rec.target_length(1), initial_target);
     }
 }

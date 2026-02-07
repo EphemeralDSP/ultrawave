@@ -1,4 +1,6 @@
 use crate::dsp::sample_engine::{param_to_normalized, pitch_to_ratio, SampleEngine};
+use crate::machines::shared::{get_global_registry, BufferRegistry, CHANNEL_COUNT};
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 pub struct RamPlayParams {
@@ -30,44 +32,50 @@ impl Default for RamPlayParams {
 }
 
 pub struct RamPlay {
-    engines: [SampleEngine; 8],
-    envelopes: [f32; 8],
-    is_playing: [bool; 8],
-    hold_time_samples: [usize; 8],
-    hold_counters: [usize; 8],
-    decay_rates: [f32; 8],
+    registry: Arc<BufferRegistry>,
+    engines: [SampleEngine; CHANNEL_COUNT],
+    envelopes: [f32; CHANNEL_COUNT],
+    is_playing: [bool; CHANNEL_COUNT],
+    hold_time_samples: [usize; CHANNEL_COUNT],
+    hold_counters: [usize; CHANNEL_COUNT],
+    decay_rates: [f32; CHANNEL_COUNT],
     sample_rate: f32,
-    retrig_counters: [usize; 8],
-    retrig_intervals: [usize; 8],
-    retrigs_remaining: [usize; 8],
-    current_params: [RamPlayParams; 8],
+    retrig_counters: [usize; CHANNEL_COUNT],
+    retrig_intervals: [usize; CHANNEL_COUNT],
+    retrigs_remaining: [usize; CHANNEL_COUNT],
+    current_params: [RamPlayParams; CHANNEL_COUNT],
 }
 
 #[allow(dead_code)]
 impl RamPlay {
     pub fn new(sample_rate: f32) -> Self {
+        Self::with_registry(sample_rate, get_global_registry())
+    }
+
+    pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
         Self {
+            registry,
             engines: [
                 SampleEngine::new(sample_rate),
                 SampleEngine::new(sample_rate),
                 SampleEngine::new(sample_rate),
                 SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
             ],
-            envelopes: [0.0; 8],
-            is_playing: [false; 8],
-            hold_time_samples: [0; 8],
-            hold_counters: [0; 8],
-            decay_rates: [0.0; 8],
+            envelopes: [0.0; CHANNEL_COUNT],
+            is_playing: [false; CHANNEL_COUNT],
+            hold_time_samples: [0; CHANNEL_COUNT],
+            hold_counters: [0; CHANNEL_COUNT],
+            decay_rates: [0.0; CHANNEL_COUNT],
             sample_rate,
-            retrig_counters: [0; 8],
-            retrig_intervals: [0; 8],
-            retrigs_remaining: [0; 8],
-            current_params: [RamPlayParams::default(); 8],
+            retrig_counters: [0; CHANNEL_COUNT],
+            retrig_intervals: [0; CHANNEL_COUNT],
+            retrigs_remaining: [0; CHANNEL_COUNT],
+            current_params: [RamPlayParams::default(); CHANNEL_COUNT],
         }
+    }
+
+    fn clamp_channel(channel: usize) -> usize {
+        channel.min(CHANNEL_COUNT - 1)
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -78,19 +86,23 @@ impl RamPlay {
     }
 
     pub fn load_buffer(&mut self, samples: Vec<i16>, channel: usize) {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
+        let _ = self.registry.replace_buffer(channel, samples.clone());
         self.engines[channel].load_buffer(samples);
     }
 
-    pub fn load_all_buffers(&mut self, buffers: &[Vec<i16>; 8]) {
+    pub fn load_all_buffers(&mut self, buffers: &[Vec<i16>; CHANNEL_COUNT]) {
         for (i, buffer) in buffers.iter().enumerate() {
+            let _ = self.registry.replace_buffer(i, buffer.clone());
             self.engines[i].load_buffer(buffer.clone());
         }
     }
 
     pub fn trigger(&mut self, params: &RamPlayParams, channel: usize) {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
         self.current_params[channel] = *params;
+        let shared_buffer = self.registry.read_buffer(channel).unwrap_or_default();
+        self.engines[channel].load_buffer(shared_buffer);
 
         self.trigger_internal(channel);
 
@@ -126,20 +138,20 @@ impl RamPlay {
     }
 
     pub fn stop(&mut self, channel: usize) {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
         self.is_playing[channel] = false;
         self.envelopes[channel] = 0.0;
         self.retrigs_remaining[channel] = 0;
     }
 
     pub fn stop_all(&mut self) {
-        self.is_playing = [false; 8];
-        self.envelopes = [0.0; 8];
-        self.retrigs_remaining = [0; 8];
+        self.is_playing = [false; CHANNEL_COUNT];
+        self.envelopes = [0.0; CHANNEL_COUNT];
+        self.retrigs_remaining = [0; CHANNEL_COUNT];
     }
 
     pub fn process(&mut self, channel: usize) -> f32 {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
 
         if self.retrigs_remaining[channel] > 0 {
             self.retrig_counters[channel] += 1;
@@ -183,19 +195,19 @@ impl RamPlay {
 
     pub fn process_mix(&mut self) -> f32 {
         let mut mix = 0.0;
-        for ch in 0..8 {
+        for ch in 0..CHANNEL_COUNT {
             mix += self.process(ch);
         }
-        mix / 8.0
+        mix / CHANNEL_COUNT as f32
     }
 
     pub fn is_playing(&self, channel: usize) -> bool {
-        let channel = channel.min(7);
+        let channel = Self::clamp_channel(channel);
         self.is_playing[channel] || self.retrigs_remaining[channel] > 0
     }
 
     pub fn is_any_playing(&self) -> bool {
-        for ch in 0..8 {
+        for ch in 0..CHANNEL_COUNT {
             if self.is_playing(ch) {
                 return true;
             }
@@ -204,14 +216,16 @@ impl RamPlay {
     }
 
     pub fn buffer_len(&self, channel: usize) -> usize {
-        let channel = channel.min(7);
-        self.engines[channel].buffer_len()
+        let channel = Self::clamp_channel(channel);
+        self.registry.buffer_len(channel)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machines::shared::BufferRegistry;
+    use std::sync::Arc;
 
     fn make_test_buffer() -> Vec<i16> {
         (0..1000)
@@ -276,5 +290,16 @@ mod tests {
 
         assert!((-1.0..=1.0).contains(&sample0));
         assert!((-1.0..=1.0).contains(&sample3));
+    }
+
+    #[test]
+    fn test_cross_channel_isolation_from_shared_registry() {
+        let registry = Arc::new(BufferRegistry::new());
+        assert!(registry.replace_buffer(0, vec![2047; 64]));
+
+        let mut player = RamPlay::with_registry(44100.0, registry);
+        player.trigger(&RamPlayParams::default(), 1);
+        let sample1 = player.process(1);
+        assert!(sample1.abs() < 1.0e-6);
     }
 }

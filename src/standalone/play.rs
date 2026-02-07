@@ -13,23 +13,13 @@ pub struct StandalonePlay {
     sample_rate: f32,
     ram_play: RamPlay,
     filter: ResonantFilter,
-    test_buffer_loaded: bool,
+    active_channel: usize,
 }
 
 impl Default for StandalonePlay {
     fn default() -> Self {
         let sample_rate = 44100.0;
-        let mut ram_play = RamPlay::new(sample_rate);
-
-        // Load a test buffer (saw wave)
-        let test_buffer: Vec<i16> = (0..10000)
-            .map(|i| {
-                let phase = (i % 100) as f32 / 100.0;
-                (phase * 2.0 - 1.0) * 2047.0_f32
-            })
-            .map(|f| f as i16)
-            .collect();
-        ram_play.load_buffer(test_buffer, 0);
+        let ram_play = RamPlay::new(sample_rate);
 
         Self {
             params: Arc::new(RamPlayParams::default()),
@@ -37,7 +27,7 @@ impl Default for StandalonePlay {
             sample_rate,
             ram_play,
             filter: ResonantFilter::new(sample_rate),
-            test_buffer_loaded: true,
+            active_channel: 0,
         }
     }
 }
@@ -95,8 +85,9 @@ impl Plugin for StandalonePlay {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { velocity, .. } => {
-                    let chan = 0;
-                    if self.ram_play.buffer_len(chan) > 0 || self.test_buffer_loaded {
+                    let chan = self.params.buffer.value() as usize;
+                    self.active_channel = chan;
+                    if self.ram_play.buffer_len(chan) > 0 {
                         let play_params = RamPlayMachineParams {
                             strt: self.params.strt.value(),
                             end: self.params.end.value(),
@@ -112,7 +103,7 @@ impl Plugin for StandalonePlay {
                     }
                 }
                 NoteEvent::NoteOff { .. } => {
-                    let chan = 0;
+                    let chan = self.active_channel;
                     self.ram_play.stop(chan);
                 }
                 _ => {}
@@ -130,7 +121,7 @@ impl Plugin for StandalonePlay {
         );
 
         for channel_samples in buffer.iter_samples() {
-            let chan = 0;
+            let chan = self.active_channel;
             let sample_out = self.ram_play.process(chan);
             let (left, right) = self.filter.process_stereo(sample_out, sample_out);
 
