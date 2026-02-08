@@ -26,6 +26,10 @@ nul
 # Generated test screenshots
 ultrawave_gui_test.png
 *_gui_test.png
+screenshots/*.png
+
+# macOS Finder metadata
+.DS_Store
 
 # Gemini AI settings
 .gemini/
