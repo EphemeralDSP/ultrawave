@@ -2,6 +2,7 @@ use std::sync::atomic::AtomicBool;
 
 pub mod dsp;
 pub mod machines;
+pub mod offline;
 pub mod params;
 pub mod standalone;
 pub mod widgets;

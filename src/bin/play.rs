@@ -4,6 +4,15 @@ use ultrawave::standalone::StandalonePlay;
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
 
+    if let Some(config) = ultrawave::offline::parse_play_args(&args) {
+        ultrawave::NO_GUI.store(true, std::sync::atomic::Ordering::Relaxed);
+        ultrawave::offline::run_offline_play(&config).unwrap_or_else(|e| {
+            eprintln!("offline play error: {e}");
+            std::process::exit(1);
+        });
+        return;
+    }
+
     if let Some(pos) = args.iter().position(|a| a == "--no-gui") {
         args.remove(pos);
         ultrawave::NO_GUI.store(true, std::sync::atomic::Ordering::Relaxed);
