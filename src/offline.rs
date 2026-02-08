@@ -141,7 +141,10 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         let buffer = get_global_registry()
             .read_buffer(config.channel)
             .ok_or("failed to read buffer")?;
-        write_wav_i16(output, &buffer, SAMPLE_RATE)?;
+        // Scale 12-bit buffer values (-2048..2047) to 16-bit range so the WAV
+        // represents correct audio levels and round-trips through read_wav_as_i16_buffer.
+        let scaled: Vec<i16> = buffer.iter().map(|&s| s.saturating_mul(16)).collect();
+        write_wav_i16(output, &scaled, SAMPLE_RATE)?;
     }
 
     unregister_plugin_instance();

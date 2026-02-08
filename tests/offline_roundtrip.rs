@@ -177,3 +177,95 @@ fn wav_file_roundtrip() {
     // Cleanup
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn vinyl909_record_then_play() {
+    let input_wav = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("vinyl909.wav");
+    assert!(input_wav.exists(), "tests/vinyl909.wav must exist");
+
+    let dir = std::env::temp_dir().join("ultrawave_test_vinyl909");
+    let _ = std::fs::create_dir_all(&dir);
+    let record_output = dir.join("record_output.wav");
+    let play_output = dir.join("play_output.wav");
+
+    // Clear global registry before using it
+    get_global_registry().clear_all();
+
+    // Step 1: Record vinyl909.wav into the buffer, dump to record_output.wav
+    run_offline_record(&RecordConfig {
+        input: input_wav,
+        output: Some(record_output.clone()),
+        channel: 0,
+    })
+    .expect("offline record of vinyl909.wav should succeed");
+
+    // Verify record_output.wav
+    let record_samples: Vec<i16> = {
+        let reader = hound::WavReader::open(&record_output).unwrap();
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, 44100, "record output should be 44100 Hz");
+        assert_eq!(spec.channels, 1, "record output should be mono");
+        reader.into_samples::<i16>().map(|s| s.unwrap()).collect()
+    };
+    assert!(
+        !record_samples.is_empty(),
+        "record output should have samples"
+    );
+    assert!(
+        record_samples.iter().any(|&s| s != 0),
+        "record output should have non-zero samples"
+    );
+    // vinyl909.wav is ~10337 stereo frames; record should capture all of them
+    assert!(
+        record_samples.len() >= 10000,
+        "record output should capture most of the input ({} samples)",
+        record_samples.len()
+    );
+
+    // Step 2: Play record_output.wav back through the play engine
+    let input_duration_secs = record_samples.len() as f64 / 44100.0;
+    run_offline_play(&PlayConfig {
+        input: record_output,
+        output: play_output.clone(),
+        output_secs: Some(input_duration_secs + 0.5),
+        channel: 0,
+    })
+    .expect("offline play of record_output.wav should succeed");
+
+    // Verify play_output.wav
+    let play_samples: Vec<f32> = {
+        let reader = hound::WavReader::open(&play_output).unwrap();
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, 44100, "play output should be 44100 Hz");
+        assert_eq!(spec.channels, 1, "play output should be mono");
+        reader.into_samples::<f32>().map(|s| s.unwrap()).collect()
+    };
+    assert!(
+        !play_samples.is_empty(),
+        "play output should have samples"
+    );
+
+    // The first portion (covering the buffer) should contain non-silent audio
+    let active_region = &play_samples[..record_samples.len().min(play_samples.len())];
+    let peak = active_region.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    assert!(
+        peak > 0.01,
+        "play output should have audible content (peak={peak})"
+    );
+
+    // The tail (after buffer ends + some margin) should be silent
+    let tail_start = record_samples.len() + 2205; // buffer length + 50ms margin
+    if tail_start < play_samples.len() {
+        let tail = &play_samples[tail_start..];
+        let tail_peak = tail.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            tail_peak < 1e-6,
+            "play output tail should be silent (tail_peak={tail_peak})"
+        );
+    }
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&dir);
+}
