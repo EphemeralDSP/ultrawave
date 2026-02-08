@@ -1,6 +1,8 @@
 use crate::machines::ram_play::{RamPlay, RamPlayParams};
 use crate::machines::ram_record::{RamRecord, RamRecordParams};
-use crate::machines::shared::{get_global_registry, register_plugin_instance, unregister_plugin_instance};
+use crate::machines::shared::{
+    get_global_registry, register_plugin_instance, unregister_plugin_instance,
+};
 use std::path::{Path, PathBuf};
 
 const SAMPLE_RATE: u32 = 44100;
@@ -83,9 +85,13 @@ fn write_wav_i16(path: &Path, samples: &[i16], sample_rate: u32) -> Result<(), S
     let mut writer =
         hound::WavWriter::create(path, spec).map_err(|e| format!("create error: {e}"))?;
     for &s in samples {
-        writer.write_sample(s).map_err(|e| format!("write error: {e}"))?;
+        writer
+            .write_sample(s)
+            .map_err(|e| format!("write error: {e}"))?;
     }
-    writer.finalize().map_err(|e| format!("finalize error: {e}"))?;
+    writer
+        .finalize()
+        .map_err(|e| format!("finalize error: {e}"))?;
     Ok(())
 }
 
@@ -99,9 +105,13 @@ fn write_wav_f32(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), S
     let mut writer =
         hound::WavWriter::create(path, spec).map_err(|e| format!("create error: {e}"))?;
     for &s in samples {
-        writer.write_sample(s).map_err(|e| format!("write error: {e}"))?;
+        writer
+            .write_sample(s)
+            .map_err(|e| format!("write error: {e}"))?;
     }
-    writer.finalize().map_err(|e| format!("finalize error: {e}"))?;
+    writer
+        .finalize()
+        .map_err(|e| format!("finalize error: {e}"))?;
     Ok(())
 }
 
@@ -125,7 +135,7 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         mbal: 64,
         ilev: 127,
         ibal: 64,
-        rec_len: 127, // INF
+        rec_len: 127,  // INF
         rec_rate: 127, // HI (1:1)
     };
 

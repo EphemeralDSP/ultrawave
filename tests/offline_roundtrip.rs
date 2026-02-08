@@ -98,11 +98,7 @@ fn channel_isolation() {
 
     assert!(registry.buffer_len(2) > 0, "channel 2 should have data");
     for ch in [0, 1, 3] {
-        assert_eq!(
-            registry.buffer_len(ch),
-            0,
-            "channel {ch} should be empty"
-        );
+        assert_eq!(registry.buffer_len(ch), 0, "channel {ch} should be empty");
     }
 }
 
@@ -242,10 +238,7 @@ fn vinyl909_record_then_play() {
         assert_eq!(spec.channels, 1, "play output should be mono");
         reader.into_samples::<f32>().map(|s| s.unwrap()).collect()
     };
-    assert!(
-        !play_samples.is_empty(),
-        "play output should have samples"
-    );
+    assert!(!play_samples.is_empty(), "play output should have samples");
 
     // The first portion (covering the buffer) should contain non-silent audio
     let active_region = &play_samples[..record_samples.len().min(play_samples.len())];

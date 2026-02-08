@@ -21,12 +21,16 @@ path = "src/bin/play.rs"
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"] }
 nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+libc = "0.2"
 
 # DSP
 rubato = "1.0"
 biquad = "0.4"
 hound = "3.5"
 dasp_sample = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Memory"] }
 
 [dev-dependencies]
 audio-processor-testing-helpers = "2.7"

@@ -2,16 +2,47 @@ use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::machines::shared::get_global_registry;
 use crate::params::RamRecordParams;
-use crate::widgets::{RotaryKnob, VerticalSlider, WaveformDisplay};
+use crate::widgets::{waveform_display, RotaryKnob, VerticalSlider, WaveformData};
 
 #[derive(Lens)]
 struct EditorData {
     params: Arc<RamRecordParams>,
+    waveform: WaveformData,
+    status_text: String,
+    time_text: String,
 }
 
-impl Model for EditorData {}
+enum EditorEvent {
+    PollBuffer,
+}
+
+impl Model for EditorData {
+    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+        event.map(|editor_event, _| match editor_event {
+            EditorEvent::PollBuffer => {
+                let channel = self.params.buffer.value().clamp(0, 3) as usize;
+                let samples = get_global_registry()
+                    .read_buffer(channel)
+                    .unwrap_or_default();
+                let sample_count = samples.len();
+                let seconds = sample_count as f32 / 44_100.0;
+
+                self.waveform.samples = Arc::new(samples);
+                self.waveform.current_time = seconds.min(10.0);
+                self.status_text = if sample_count == 0 {
+                    "EMPTY | 0 smp | 0.00s".to_string()
+                } else {
+                    format!("READY | {sample_count} smp | {seconds:.2}s")
+                };
+                self.time_text = format!("TIME: {:.2}s / 10.0s", seconds.min(10.0));
+            }
+        });
+    }
+}
 
 pub fn default_state() -> Arc<ViziaState> {
     ViziaState::new(|| (700, 400))
@@ -22,6 +53,12 @@ pub fn create(
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
+        let poll_timer = cx.add_timer(Duration::from_millis(200), None, |cx, action| {
+            if matches!(action, TimerAction::Tick(_)) {
+                cx.emit(EditorEvent::PollBuffer);
+            }
+        });
+
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSans.ttf"));
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
         cx.set_default_font(&["DejaVu Sans", "SansSerif", "DejaVu Sans Mono"]);
@@ -120,8 +157,13 @@ pub fn create(
 
         EditorData {
             params: params.clone(),
+            waveform: WaveformData::default(),
+            status_text: "EMPTY | 0 smp | 0.00s".to_string(),
+            time_text: "TIME: 0.00s / 10.0s".to_string(),
         }
         .build(cx);
+        cx.start_timer(poll_timer);
+        cx.emit(EditorEvent::PollBuffer);
 
         VStack::new(cx, |cx| {
             Label::new(cx, "ULTRAWAVE RECORD")
@@ -206,7 +248,7 @@ pub fn create(
                     )
                     .color(Color::rgb(255, 255, 255))
                     .font_size(14.0);
-                    Label::new(cx, "READY")
+                    Label::new(cx, EditorData::status_text)
                         .color(Color::rgb(255, 255, 255))
                         .font_size(9.0);
                 })
@@ -315,12 +357,12 @@ pub fn create(
                     .row_between(Pixels(0.0));
 
                     HStack::new(cx, |cx| {
-                        WaveformDisplay::new(cx, false, true)
+                        waveform_display(cx, EditorData::waveform, false, true)
                             .width(Stretch(1.0))
                             .height(Pixels(40.0))
                             .class("waveform-display");
 
-                        Label::new(cx, "TIME: 0.0s / 10.0s")
+                        Label::new(cx, EditorData::time_text)
                             .color(Color::rgb(255, 255, 255))
                             .font_size(11.0);
                     })

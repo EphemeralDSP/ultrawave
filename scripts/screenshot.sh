@@ -16,6 +16,8 @@ SCREENSHOT_DIR="${SCREENSHOT_DIR:-$PROJECT_ROOT/screenshots}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 SCREEN_RES="${SCREEN_RES:-1280x720x24}"
 STARTUP_DELAY="${STARTUP_DELAY:-3}"
+PRELOAD_WAV="${PRELOAD_WAV:-$PROJECT_ROOT/tests/vinyl909.wav}"
+PRELOAD_CHANNEL="${PRELOAD_CHANNEL:-0}"
 
 RECORD_BIN="$PROJECT_ROOT/target/release/ultrawave_record"
 PLAY_BIN="$PROJECT_ROOT/target/release/ultrawave_play"
@@ -32,8 +34,14 @@ trap cleanup EXIT
 
 check_deps() {
     local missing=()
+    local has_capture_backend=0
     command -v Xvfb >/dev/null || missing+=("Xvfb")
-    command -v import >/dev/null || missing+=("ImageMagick")
+    if command -v import >/dev/null || command -v magick >/dev/null; then
+        has_capture_backend=1
+    elif command -v xwd >/dev/null && command -v ffmpeg >/dev/null; then
+        has_capture_backend=1
+    fi
+    [[ $has_capture_backend -eq 1 ]] || missing+=("ImageMagick or xwd+ffmpeg")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Missing dependencies: ${missing[*]}"
@@ -42,14 +50,53 @@ check_deps() {
     fi
 }
 
+capture_root_window() {
+    local output="$1"
+    if command -v import >/dev/null; then
+        import -window root "$output"
+    elif command -v magick >/dev/null; then
+        magick import -window root "$output"
+    else
+        local xwd_output="${output%.png}.xwd"
+        xwd -silent -root -display "$DISPLAY" -out "$xwd_output"
+        ffmpeg -y -loglevel error -i "$xwd_output" "$output"
+        rm -f "$xwd_output"
+    fi
+}
+
+crop_image() {
+    local input="$1"
+    local width="$2"
+    local height="$3"
+    local output="$4"
+    if command -v convert >/dev/null; then
+        convert "$input" -crop "${width}x${height}+0+0" "$output"
+    else
+        ffmpeg -y -loglevel error -i "$input" -vf "crop=${width}:${height}:0:0" "$output"
+    fi
+}
+
 start_xvfb() {
-    if [[ -z "${DISPLAY:-}" ]] || [[ "$DISPLAY" == ":$DISPLAY_NUM" ]]; then
+    local target_display="localhost:$DISPLAY_NUM"
+    local server_display=":$DISPLAY_NUM"
+    local display_ready=1
+    if command -v xdpyinfo >/dev/null; then
+        xdpyinfo -display "$target_display" >/dev/null 2>&1 || display_ready=0
+    else
+        display_ready=0
+    fi
+
+    if [[ $display_ready -eq 0 ]]; then
         echo "Starting Xvfb on :$DISPLAY_NUM..."
-        Xvfb ":$DISPLAY_NUM" -screen 0 "$SCREEN_RES" &
+        Xvfb "$server_display" -screen 0 "$SCREEN_RES" -nolisten unix -listen tcp &
         XVFB_PID=$!
         sleep 1
+        if command -v xdpyinfo >/dev/null && ! xdpyinfo -display "$target_display" >/dev/null 2>&1; then
+            echo "Failed to start Xvfb on $target_display"
+            exit 1
+        fi
     fi
-    export DISPLAY=":$DISPLAY_NUM"
+    export DISPLAY="$target_display"
 }
 
 screenshot_plugin() {
@@ -69,6 +116,8 @@ screenshot_plugin() {
     fi
 
     echo "Launching $name..."
+    ULTRAWAVE_SCREENSHOT_WAV="$PRELOAD_WAV" \
+    ULTRAWAVE_SCREENSHOT_CHANNEL="$PRELOAD_CHANNEL" \
     "$bin" &
     local pid=$!
 
@@ -77,14 +126,18 @@ screenshot_plugin() {
 
     echo "Capturing screenshot..."
     # Capture full screen first
-    import -window root "$temp_output"
+    capture_root_window "$temp_output"
 
     # Crop to plugin window size (top-left corner where window manager places it)
     # Most WMs place new windows at 0,0 or with small offset
-    convert "$temp_output" -crop "${plugin_width}x${plugin_height}+0+0" "$output"
+    crop_image "$temp_output" "$plugin_width" "$plugin_height" "$output"
     rm -f "$temp_output"
 
-    echo "Saved: $output ($(identify -format '%w x %h' "$output"))"
+    local image_dims=""
+    if command -v identify >/dev/null; then
+        image_dims="$(identify -format '%w x %h' "$output" 2>/dev/null || true)"
+    fi
+    echo "Saved: $output (${image_dims:-unknown})"
 
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -94,6 +147,10 @@ main() {
     local target="${1:-both}"
     
     check_deps
+    if [[ ! -f "$PRELOAD_WAV" ]]; then
+        echo "Preload WAV not found: $PRELOAD_WAV"
+        exit 1
+    fi
     mkdir -p "$SCREENSHOT_DIR"
     start_xvfb
     

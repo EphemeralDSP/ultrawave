@@ -4183,9 +4183,11 @@ dependencies = [
  "biquad",
  "dasp_sample",
  "hound",
+ "libc",
  "nih_plug",
  "nih_plug_vizia",
  "rubato",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

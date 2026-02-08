@@ -2,16 +2,54 @@ use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::machines::shared::get_global_registry;
 use crate::params::RamPlayParams;
-use crate::widgets::{RotaryKnob, VerticalSlider, WaveformDisplay};
+use crate::widgets::{waveform_display, RotaryKnob, VerticalSlider, WaveformData};
 
 #[derive(Lens)]
 struct EditorData {
     params: Arc<RamPlayParams>,
+    waveform: WaveformData,
+    status_text: String,
 }
 
-impl Model for EditorData {}
+enum EditorEvent {
+    PollBuffer,
+}
+
+impl Model for EditorData {
+    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+        event.map(|editor_event, _| match editor_event {
+            EditorEvent::PollBuffer => {
+                let channel = self.params.buffer.value().clamp(0, 3) as usize;
+                let samples = get_global_registry()
+                    .read_buffer(channel)
+                    .unwrap_or_default();
+                let sample_count = samples.len();
+                let seconds = sample_count as f32 / 44_100.0;
+
+                let raw_start = self.params.strt.value().clamp(0, 127) as f32 / 127.0;
+                let raw_end = self.params.end.value().clamp(0, 127) as f32 / 127.0;
+                let (start_pos, end_pos) = if raw_start <= raw_end {
+                    (raw_start, raw_end)
+                } else {
+                    (raw_end, raw_start)
+                };
+
+                self.waveform.samples = Arc::new(samples);
+                self.waveform.start_pos = start_pos;
+                self.waveform.end_pos = end_pos;
+                self.status_text = if sample_count == 0 {
+                    "EMPTY | 0 smp | 0.00s".to_string()
+                } else {
+                    format!("READY | {sample_count} smp | {seconds:.2}s")
+                };
+            }
+        });
+    }
+}
 
 pub fn default_state() -> Arc<ViziaState> {
     ViziaState::new(|| (700, 400))
@@ -22,6 +60,12 @@ pub fn create(
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
+        let poll_timer = cx.add_timer(Duration::from_millis(200), None, |cx, action| {
+            if matches!(action, TimerAction::Tick(_)) {
+                cx.emit(EditorEvent::PollBuffer);
+            }
+        });
+
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSans.ttf"));
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
         cx.set_default_font(&["DejaVu Sans", "SansSerif", "DejaVu Sans Mono"]);
@@ -128,8 +172,12 @@ pub fn create(
 
         EditorData {
             params: params.clone(),
+            waveform: WaveformData::default(),
+            status_text: "EMPTY | 0 smp | 0.00s".to_string(),
         }
         .build(cx);
+        cx.start_timer(poll_timer);
+        cx.emit(EditorEvent::PollBuffer);
 
         VStack::new(cx, |cx| {
             Label::new(cx, "ULTRAWAVE PLAY")
@@ -202,21 +250,9 @@ pub fn create(
                     Label::new(cx, "\u{258c}\u{258c} P01 \u{2590}\u{2590}")
                         .color(Color::rgb(255, 255, 255))
                         .font_size(14.0);
-                    Label::new(
-                        cx,
-                        EditorData::params.map(|p| {
-                            let buffer_name = match p.buffer.value() {
-                                0 => "R1",
-                                1 => "R2",
-                                2 => "R3",
-                                3 => "R4",
-                                _ => "R1",
-                            };
-                            format!("SRC: {}", buffer_name)
-                        }),
-                    )
-                    .color(Color::rgb(255, 255, 255))
-                    .font_size(9.0);
+                    Label::new(cx, EditorData::status_text)
+                        .color(Color::rgb(255, 255, 255))
+                        .font_size(9.0);
                 })
                 .class("sidebar");
 
@@ -321,7 +357,7 @@ pub fn create(
                     .row_between(Pixels(0.0));
 
                     HStack::new(cx, |cx| {
-                        WaveformDisplay::new(cx, true, false)
+                        waveform_display(cx, EditorData::waveform, true, false)
                             .width(Stretch(1.0))
                             .height(Pixels(40.0))
                             .class("waveform-display");

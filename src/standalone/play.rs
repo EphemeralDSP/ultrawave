@@ -13,6 +13,7 @@ pub struct StandalonePlay {
     ram_play: RamPlay,
     active_channel: usize,
     lifecycle_registered: bool,
+    preload_attempted: bool,
 }
 
 impl Default for StandalonePlay {
@@ -26,6 +27,7 @@ impl Default for StandalonePlay {
             ram_play,
             active_channel: 0,
             lifecycle_registered: false,
+            preload_attempted: false,
         }
     }
 }
@@ -71,6 +73,12 @@ impl Plugin for StandalonePlay {
         if !self.lifecycle_registered {
             register_plugin_instance();
             self.lifecycle_registered = true;
+        }
+        if !self.preload_attempted {
+            if let Err(error) = crate::standalone::maybe_preload_buffer_from_env() {
+                eprintln!("standalone preload failed: {error}");
+            }
+            self.preload_attempted = true;
         }
 
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
