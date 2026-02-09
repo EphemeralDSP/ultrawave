@@ -156,12 +156,10 @@ impl Plugin for RecordPlugin {
             self.ram_record
                 .record_sample(left, right, left, right, &machine_params, chan);
 
-            // Pass through with filtering
-            let (filtered_l, filtered_r) = self.filter.process_stereo(left, right);
-
-            // Write back filtered samples
-            for (idx, sample) in channel_samples.iter_mut().enumerate() {
-                *sample = if idx == 0 { filtered_l } else { filtered_r };
+            // No audio output - Record plugin is silent
+            // (Cue 1 and Cue 2 will be used for aux outputs in the future)
+            for sample in channel_samples.iter_mut() {
+                *sample = 0.0;
             }
         }
         self.midi_led_hold_samples = self.midi_led_hold_samples.saturating_sub(buffer.samples());
