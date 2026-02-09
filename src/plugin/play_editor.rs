@@ -67,12 +67,6 @@ pub fn create(
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
-        let poll_timer = cx.add_timer(Duration::from_millis(200), None, |cx, action| {
-            if matches!(action, TimerAction::Tick(_)) {
-                cx.emit(EditorEvent::PollBuffer);
-            }
-        });
-
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSans.ttf"));
         cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
         cx.set_default_font(&["DejaVu Sans", "SansSerif", "DejaVu Sans Mono"]);
@@ -95,7 +89,6 @@ pub fn create(
                 width: 6px;
                 height: 6px;
                 border: 1px solid #ffffff;
-                background-color: #000000;
             }
             .sidebar {
                 width: 140px;
@@ -194,8 +187,19 @@ pub fn create(
             midi_note_active: false,
         }
         .build(cx);
-        cx.start_timer(poll_timer);
         cx.emit(EditorEvent::PollBuffer);
+
+        // Vizia timers don't work in the baseview (plugin) backend because
+        // process_timers() is never called.  Use a background thread with the
+        // event proxy instead — events land in the proxy queue which
+        // on_frame_update() drains every frame.
+        let mut proxy = cx.get_proxy();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(200));
+            if proxy.emit(EditorEvent::PollBuffer).is_err() {
+                break;
+            }
+        });
 
         VStack::new(cx, |cx| {
             Label::new(cx, "ULTRAWAVE PLAY")
