@@ -9,7 +9,7 @@ use crate::machines::shared::{
 use crate::params::RamPlayParams;
 use crate::plugin::play_editor;
 
-pub struct StandalonePlay {
+pub struct PlayPlugin {
     params: Arc<RamPlayParams>,
     editor_state: Arc<nih_plug_vizia::ViziaState>,
     ram_play: RamPlay,
@@ -20,7 +20,7 @@ pub struct StandalonePlay {
     preload_attempted: bool,
 }
 
-impl Default for StandalonePlay {
+impl Default for PlayPlugin {
     fn default() -> Self {
         let sample_rate = 44100.0;
         let ram_play = RamPlay::new(sample_rate);
@@ -38,7 +38,7 @@ impl Default for StandalonePlay {
     }
 }
 
-impl Plugin for StandalonePlay {
+impl Plugin for PlayPlugin {
     const NAME: &'static str = "Ultrawave-Play";
     const VENDOR: &'static str = "EphemeralDSP";
     const URL: &'static str = "https://github.com/EphemeralDSP/ultrawave";
@@ -140,7 +140,7 @@ impl Plugin for StandalonePlay {
     }
 }
 
-impl ClapPlugin for StandalonePlay {
+impl ClapPlugin for PlayPlugin {
     const CLAP_ID: &'static str = "com.ephemeraldsp.ultrawave-play";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("Ultrawave RAM PLAY machine - standalone test");
@@ -149,13 +149,13 @@ impl ClapPlugin for StandalonePlay {
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Sampler];
 }
 
-impl Vst3Plugin for StandalonePlay {
+impl Vst3Plugin for PlayPlugin {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemUWavePlayS1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
 }
 
-impl Drop for StandalonePlay {
+impl Drop for PlayPlugin {
     fn drop(&mut self) {
         set_play_midi_note_active(false);
         if self.lifecycle_registered {
@@ -166,3 +166,119 @@ impl Drop for StandalonePlay {
 }
 
 // Standalone only - no plugin exports
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nih_plug::context::init::InitContext;
+    use nih_plug::context::process::{ProcessContext, Transport};
+    use nih_plug::context::PluginApi;
+    use std::collections::VecDeque;
+
+    use crate::machines::shared::{get_global_registry, play_midi_note_active};
+
+    struct TestInitContext;
+
+    impl InitContext<PlayPlugin> for TestInitContext {
+        fn plugin_api(&self) -> PluginApi {
+            PluginApi::Standalone
+        }
+
+        fn execute(&self, _task: <PlayPlugin as Plugin>::BackgroundTask) {}
+
+        fn set_latency_samples(&self, _samples: u32) {}
+
+        fn set_current_voice_capacity(&self, _capacity: u32) {}
+    }
+
+    struct TestProcessContext {
+        events: VecDeque<PluginNoteEvent<PlayPlugin>>,
+    }
+
+    impl TestProcessContext {
+        fn with_events(events: Vec<PluginNoteEvent<PlayPlugin>>) -> Self {
+            Self {
+                events: events.into(),
+            }
+        }
+    }
+
+    impl ProcessContext<PlayPlugin> for TestProcessContext {
+        fn plugin_api(&self) -> PluginApi {
+            PluginApi::Standalone
+        }
+
+        fn execute_background(&self, _task: <PlayPlugin as Plugin>::BackgroundTask) {}
+
+        fn execute_gui(&self, _task: <PlayPlugin as Plugin>::BackgroundTask) {}
+
+        fn transport(&self) -> &Transport {
+            panic!("transport is not used in this test")
+        }
+
+        fn next_event(&mut self) -> Option<PluginNoteEvent<PlayPlugin>> {
+            self.events.pop_front()
+        }
+
+        fn send_event(&mut self, _event: PluginNoteEvent<PlayPlugin>) {}
+
+        fn set_latency_samples(&self, _samples: u32) {}
+
+        fn set_current_voice_capacity(&self, _capacity: u32) {}
+    }
+
+    #[test]
+    fn note_on_sets_midi_led_active_flag() {
+        const BLOCK_SIZE: usize = 64;
+        const SAMPLE_RATE: f32 = 44_100.0;
+
+        get_global_registry().clear_all();
+        set_play_midi_note_active(false);
+        assert!(!play_midi_note_active());
+
+        let mut plugin = PlayPlugin::default();
+        let mut init_context = TestInitContext;
+        let buffer_config = BufferConfig {
+            sample_rate: SAMPLE_RATE,
+            min_buffer_size: Some(BLOCK_SIZE as u32),
+            max_buffer_size: BLOCK_SIZE as u32,
+            process_mode: ProcessMode::Realtime,
+        };
+        assert!(plugin.initialize(
+            &PlayPlugin::AUDIO_IO_LAYOUTS[0],
+            &buffer_config,
+            &mut init_context
+        ));
+
+        let mut left = vec![0.0f32; BLOCK_SIZE];
+        let mut right = vec![0.0f32; BLOCK_SIZE];
+        let mut buffer = Buffer::default();
+        unsafe {
+            buffer.set_slices(BLOCK_SIZE, |output_slices| {
+                *output_slices = vec![left.as_mut_slice(), right.as_mut_slice()];
+            });
+        }
+        let mut aux_inputs: [Buffer; 0] = [];
+        let mut aux_outputs: [Buffer; 0] = [];
+        let mut aux = AuxiliaryBuffers {
+            inputs: &mut aux_inputs,
+            outputs: &mut aux_outputs,
+        };
+
+        let note_on = NoteEvent::NoteOn {
+            timing: 0,
+            voice_id: None,
+            channel: 0,
+            note: 60,
+            velocity: 1.0,
+        };
+        let mut process_context = TestProcessContext::with_events(vec![note_on]);
+
+        let status = plugin.process(&mut buffer, &mut aux, &mut process_context);
+        assert_eq!(status, ProcessStatus::Normal);
+        assert!(
+            play_midi_note_active(),
+            "MIDI LED flag should be true after NoteOn"
+        );
+    }
+}

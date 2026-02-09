@@ -6,8 +6,8 @@ pub mod record_editor;
 use crate::machines::shared::{get_global_registry, CHANNEL_COUNT};
 use std::path::PathBuf;
 
-pub use play::StandalonePlay;
-pub use record::StandaloneRecord;
+pub use play::PlayPlugin;
+pub use record::RecordPlugin;
 
 pub fn maybe_preload_buffer_from_env() -> Result<Option<usize>, String> {
     let wav_path = match std::env::var("ULTRAWAVE_SCREENSHOT_WAV") {

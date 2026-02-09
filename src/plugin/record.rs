@@ -10,7 +10,7 @@ use crate::machines::shared::{
 use crate::params::RamRecordParams;
 use crate::plugin::record_editor;
 
-pub struct StandaloneRecord {
+pub struct RecordPlugin {
     params: Arc<RamRecordParams>,
     editor_state: Arc<nih_plug_vizia::ViziaState>,
     sample_rate: f32,
@@ -22,7 +22,7 @@ pub struct StandaloneRecord {
     preload_attempted: bool,
 }
 
-impl Default for StandaloneRecord {
+impl Default for RecordPlugin {
     fn default() -> Self {
         let sample_rate = 44100.0;
         Self {
@@ -39,7 +39,7 @@ impl Default for StandaloneRecord {
     }
 }
 
-impl Plugin for StandaloneRecord {
+impl Plugin for RecordPlugin {
     const NAME: &'static str = "Ultrawave-Record";
     const VENDOR: &'static str = "EphemeralDSP";
     const URL: &'static str = "https://github.com/EphemeralDSP/ultrawave";
@@ -176,7 +176,7 @@ impl Plugin for StandaloneRecord {
     }
 }
 
-impl ClapPlugin for StandaloneRecord {
+impl ClapPlugin for RecordPlugin {
     const CLAP_ID: &'static str = "com.ephemeraldsp.ultrawave-record";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("Ultrawave RAM RECORD machine - standalone test");
@@ -185,13 +185,13 @@ impl ClapPlugin for StandaloneRecord {
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Sampler];
 }
 
-impl Vst3Plugin for StandaloneRecord {
+impl Vst3Plugin for RecordPlugin {
     const VST3_CLASS_ID: [u8; 16] = *b"EphemUWaveRecSt1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
 }
 
-impl Drop for StandaloneRecord {
+impl Drop for RecordPlugin {
     fn drop(&mut self) {
         set_record_midi_note_active(false);
         if self.lifecycle_registered {
