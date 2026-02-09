@@ -101,7 +101,14 @@ impl Plugin for PlayPlugin {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
-            if let NoteEvent::NoteOn { .. } = event {
+            if let NoteEvent::NoteOn {
+                note, velocity, channel, ..
+            } = event
+            {
+                nih_log!(
+                    "MIDI NoteOn: note={note} vel={velocity:.2} ch={channel} buf={}",
+                    self.params.buffer.value()
+                );
                 let chan = self.params.buffer.value() as usize;
                 self.active_channel = chan;
                 self.midi_led_hold_samples = (self.sample_rate * 0.25) as usize;
