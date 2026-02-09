@@ -28,6 +28,7 @@ fn record_then_play_roundtrip() {
         ibal: 64,
         rec_len: 127,
         rec_rate: 127,
+        tempo_bpm: 120.0,
     };
 
     let sine = generate_sine(1000.0, 0.1, SR);
@@ -86,6 +87,7 @@ fn channel_isolation() {
         ibal: 64,
         rec_len: 127,
         rec_rate: 127,
+        tempo_bpm: 120.0,
     };
 
     let sine = generate_sine(440.0, 0.05, SR);

@@ -102,6 +102,8 @@ impl Plugin for RecordPlugin {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let tempo_bpm = context.transport().tempo.unwrap_or(120.0);
+
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { .. } => {
@@ -115,12 +117,9 @@ impl Plugin for RecordPlugin {
                         ibal: self.params.ibal.value(),
                         rec_len: self.params.rec_len.value(),
                         rec_rate: self.params.rec_rate.value(),
+                        tempo_bpm,
                     };
                     self.ram_record.start_recording(&machine_params, true, chan);
-                }
-                NoteEvent::NoteOff { .. } => {
-                    let chan = self.active_channel;
-                    self.ram_record.stop_recording(chan);
                 }
                 _ => {}
             }
@@ -145,6 +144,7 @@ impl Plugin for RecordPlugin {
                 ibal: self.params.ibal.value(),
                 rec_len: self.params.rec_len.value(),
                 rec_rate: self.params.rec_rate.value(),
+                tempo_bpm,
             };
 
             // Collect samples first

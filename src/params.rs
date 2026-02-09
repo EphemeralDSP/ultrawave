@@ -211,16 +211,16 @@ fn format_cue(value: i32) -> String {
     }
 }
 
-/// Format record length: bars based on value ranges
+/// Format record length: beat-synced durations
 fn format_rec_len(value: i32) -> String {
     match value {
-        0..=15 => "1/16".to_string(),
-        16..=31 => "1/8".to_string(),
-        32..=47 => "1/4".to_string(),
-        48..=63 => "1/2".to_string(),
-        64..=79 => "1 BAR".to_string(),
-        80..=95 => "2 BAR".to_string(),
-        96..=111 => "4 BAR".to_string(),
+        0..=15 => "1/8".to_string(),
+        16..=31 => "1/4".to_string(),
+        32..=47 => "1/2".to_string(),
+        48..=63 => "1 BAR".to_string(),
+        64..=79 => "2 BAR".to_string(),
+        80..=95 => "4 BAR".to_string(),
+        96..=111 => "8 BAR".to_string(),
         _ => "INF".to_string(),
     }
 }
@@ -377,7 +377,7 @@ impl Default for RamRecordParams {
             cue2: IntParam::new("CUE2", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_cue))
                 .with_string_to_value(Arc::new(parse_cue)),
-            rec_len: IntParam::new("Rec Length", 64, IntRange::Linear { min: 0, max: 127 })
+            rec_len: IntParam::new("Rec Length", 48, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_rec_len))
                 .with_string_to_value(Arc::new(parse_rec_len)),
             rec_rate: IntParam::new("Rec Rate", 127, IntRange::Linear { min: 0, max: 127 })

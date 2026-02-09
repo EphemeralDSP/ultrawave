@@ -135,8 +135,9 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         mbal: 64,
         ilev: 127,
         ibal: 64,
-        rec_len: 127,  // INF
-        rec_rate: 127, // HI (1:1)
+        rec_len: 127,      // INF
+        rec_rate: 127,      // HI (1:1)
+        tempo_bpm: 120.0,
     };
 
     rec.start_recording(&params, true, config.channel);

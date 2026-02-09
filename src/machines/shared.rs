@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::CString;
 use std::io;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicI16, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 pub const CHANNEL_COUNT: usize = 4;
@@ -512,6 +512,13 @@ static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
 static RECORD_MIDI_NOTE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static PLAY_MIDI_NOTE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+static RECORD_GENERATION: [AtomicU64; CHANNEL_COUNT] = [
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+];
+
 /// Get reference to the global buffer registry.
 #[allow(dead_code)]
 pub fn get_global_registry() -> Arc<BufferRegistry> {
@@ -547,6 +554,17 @@ pub fn set_play_midi_note_active(active: bool) {
 
 pub fn play_midi_note_active() -> bool {
     PLAY_MIDI_NOTE_ACTIVE.load(Ordering::Acquire)
+}
+
+/// Bump the recording generation for a channel, returning the new value.
+/// Used by record instances to claim ownership of a channel.
+pub fn bump_record_generation(channel: usize) -> u64 {
+    RECORD_GENERATION[channel].fetch_add(1, Ordering::AcqRel) + 1
+}
+
+/// Read the current recording generation for a channel.
+pub fn current_record_generation(channel: usize) -> u64 {
+    RECORD_GENERATION[channel].load(Ordering::Acquire)
 }
 
 #[cfg(unix)]
