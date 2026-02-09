@@ -553,7 +553,7 @@ pub fn play_midi_note_active() -> bool {
 mod platform {
     use super::*;
     use libc::{
-        c_int, close, fstat, ftruncate, mmap, munmap, off_t, shm_open, stat, MAP_FAILED,
+        close, fstat, ftruncate, mmap, munmap, off_t, shm_open, stat, MAP_FAILED,
         MAP_SHARED, O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE,
     };
     use std::os::fd::RawFd;
@@ -577,14 +577,14 @@ mod platform {
                 CString::new(name).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid shm name"))?;
 
             // SAFETY: `c_name` is a valid C string and flags/mode are valid.
-            let mut fd = unsafe { shm_open(c_name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, 0o600 as c_int) };
+            let mut fd = unsafe { shm_open(c_name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, 0o600 as libc::mode_t) };
             let created = if fd >= 0 {
                 true
             } else {
                 let err = io::Error::last_os_error();
                 if err.raw_os_error() == Some(libc::EEXIST) {
                     // SAFETY: `c_name` is a valid C string and flags are valid.
-                    fd = unsafe { shm_open(c_name.as_ptr(), O_RDWR, 0o600 as c_int) };
+                    fd = unsafe { shm_open(c_name.as_ptr(), O_RDWR, 0o600 as libc::mode_t) };
                     if fd < 0 {
                         let open_err = io::Error::last_os_error();
                         return Err(io::Error::new(
