@@ -8,6 +8,11 @@ use crate::machines::shared::{get_global_registry, play_midi_note_active};
 use crate::params::RamPlayParams;
 use crate::widgets::{waveform_display, RotaryKnob, VerticalSlider, WaveformData};
 
+const COMMIT_HASH: &str = match option_env!("ULTRAWAVE_GIT_HASH") {
+    Some(hash) => hash,
+    None => "unknown",
+};
+
 #[derive(Lens)]
 struct EditorData {
     params: Arc<RamPlayParams>,
@@ -173,6 +178,10 @@ pub fn create(
                 height: 35px;
                 background-color: #000000;
                 border-top: 2px solid #ffffff;
+            }
+            .commit-hash {
+                color: #777777;
+                font-size: 8px;
             }
         "#,
         )
@@ -430,6 +439,10 @@ pub fn create(
                             Color::rgb(0, 0, 0)
                         }
                     }));
+
+                Element::new(cx).width(Stretch(1.0));
+
+                Label::new(cx, COMMIT_HASH).class("commit-hash");
             })
             .col_between(Pixels(8.0))
             .class("footer");
