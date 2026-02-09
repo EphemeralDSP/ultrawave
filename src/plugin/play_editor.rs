@@ -430,6 +430,10 @@ pub fn create(
                 })
                 .col_between(Pixels(4.0));
 
+                Element::new(cx).width(Stretch(1.0));
+
+                Label::new(cx, COMMIT_HASH).class("commit-hash");
+
                 Element::new(cx)
                     .class("midi-led")
                     .background_color(EditorData::midi_note_active.map(|active| {
@@ -439,10 +443,6 @@ pub fn create(
                             Color::rgb(0, 0, 0)
                         }
                     }));
-
-                Element::new(cx).width(Stretch(1.0));
-
-                Label::new(cx, COMMIT_HASH).class("commit-hash");
             })
             .col_between(Pixels(8.0))
             .class("footer");
