@@ -13,7 +13,9 @@ pub struct StandalonePlay {
     params: Arc<RamPlayParams>,
     editor_state: Arc<nih_plug_vizia::ViziaState>,
     ram_play: RamPlay,
+    sample_rate: f32,
     active_channel: usize,
+    midi_led_hold_samples: usize,
     lifecycle_registered: bool,
     preload_attempted: bool,
 }
@@ -27,7 +29,9 @@ impl Default for StandalonePlay {
             params: Arc::new(RamPlayParams::default()),
             editor_state: play_editor::default_state(),
             ram_play,
+            sample_rate,
             active_channel: 0,
+            midi_led_hold_samples: 0,
             lifecycle_registered: false,
             preload_attempted: false,
         }
@@ -84,6 +88,8 @@ impl Plugin for StandalonePlay {
         }
 
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
+        self.sample_rate = buffer_config.sample_rate;
+        self.midi_led_hold_samples = 0;
         set_play_midi_note_active(false);
         true
     }
@@ -98,6 +104,7 @@ impl Plugin for StandalonePlay {
             if let NoteEvent::NoteOn { .. } = event {
                 let chan = self.params.buffer.value() as usize;
                 self.active_channel = chan;
+                self.midi_led_hold_samples = (self.sample_rate * 0.25) as usize;
                 let play_params = RamPlayMachineParams {
                     strt: 0,
                     end: 127,
@@ -121,7 +128,10 @@ impl Plugin for StandalonePlay {
                 *sample = sample_out;
             }
         }
-        set_play_midi_note_active(self.ram_play.is_playing(self.active_channel));
+        self.midi_led_hold_samples = self.midi_led_hold_samples.saturating_sub(buffer.samples());
+        set_play_midi_note_active(
+            self.midi_led_hold_samples > 0 || self.ram_play.is_playing(self.active_channel),
+        );
         ProcessStatus::Normal
     }
 

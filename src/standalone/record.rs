@@ -17,6 +17,7 @@ pub struct StandaloneRecord {
     ram_record: RamRecord,
     filter: ResonantFilter,
     active_channel: usize,
+    midi_led_hold_samples: usize,
     lifecycle_registered: bool,
     preload_attempted: bool,
 }
@@ -31,6 +32,7 @@ impl Default for StandaloneRecord {
             ram_record: RamRecord::new(sample_rate),
             filter: ResonantFilter::new(sample_rate),
             active_channel: 0,
+            midi_led_hold_samples: 0,
             lifecycle_registered: false,
             preload_attempted: false,
         }
@@ -89,6 +91,7 @@ impl Plugin for StandaloneRecord {
         self.sample_rate = buffer_config.sample_rate;
         self.ram_record.set_sample_rate(buffer_config.sample_rate);
         self.filter.set_sample_rate(buffer_config.sample_rate);
+        self.midi_led_hold_samples = 0;
         set_record_midi_note_active(false);
         true
     }
@@ -104,6 +107,7 @@ impl Plugin for StandaloneRecord {
                 NoteEvent::NoteOn { .. } => {
                     let chan = self.params.buffer.value() as usize;
                     self.active_channel = chan;
+                    self.midi_led_hold_samples = (self.sample_rate * 0.25) as usize;
                     let machine_params = RamRecordMachineParams {
                         mlev: self.params.mlev.value(),
                         mbal: self.params.mbal.value(),
@@ -160,7 +164,10 @@ impl Plugin for StandaloneRecord {
                 *sample = if idx == 0 { filtered_l } else { filtered_r };
             }
         }
-        set_record_midi_note_active(self.ram_record.is_recording(self.active_channel));
+        self.midi_led_hold_samples = self.midi_led_hold_samples.saturating_sub(buffer.samples());
+        set_record_midi_note_active(
+            self.midi_led_hold_samples > 0 || self.ram_record.is_recording(self.active_channel),
+        );
         ProcessStatus::Normal
     }
 
