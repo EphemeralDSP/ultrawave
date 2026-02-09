@@ -1,5 +1,5 @@
 use nih_plug::prelude::*;
-use ultrawave::standalone::StandalonePlay;
+use ultrawave::plugin::StandalonePlay;
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();

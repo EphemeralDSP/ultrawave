@@ -8,7 +8,7 @@ use crate::machines::shared::{
     register_plugin_instance, set_record_midi_note_active, unregister_plugin_instance,
 };
 use crate::params::RamRecordParams;
-use crate::standalone::record_editor;
+use crate::plugin::record_editor;
 
 pub struct StandaloneRecord {
     params: Arc<RamRecordParams>,
@@ -82,7 +82,7 @@ impl Plugin for StandaloneRecord {
             self.lifecycle_registered = true;
         }
         if !self.preload_attempted {
-            if let Err(error) = crate::standalone::maybe_preload_buffer_from_env() {
+            if let Err(error) = crate::plugin::maybe_preload_buffer_from_env() {
                 eprintln!("standalone preload failed: {error}");
             }
             self.preload_attempted = true;

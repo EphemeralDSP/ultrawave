@@ -1,5 +1,5 @@
 use nih_plug::prelude::*;
-use ultrawave::standalone::StandalonePlay;
+use ultrawave::plugin::StandalonePlay;
 
 // Re-export and rename for clarity
 pub type UltrawavePlay = StandalonePlay;

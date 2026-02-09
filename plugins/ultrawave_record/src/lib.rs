@@ -1,5 +1,5 @@
 use nih_plug::prelude::*;
-use ultrawave::standalone::StandaloneRecord;
+use ultrawave::plugin::StandaloneRecord;
 
 // Re-export and rename for clarity
 pub type UltrawaveRecord = StandaloneRecord;
