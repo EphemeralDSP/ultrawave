@@ -34,3 +34,7 @@ screenshots/*.png
 # Gemini AI settings
 .gemini/
 .beads/.jsonl.lock
+
+# Reaper garbage
+*.reapeaks
+*.rpp-bak
