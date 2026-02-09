@@ -3,7 +3,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
-use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
+use crate::machines::shared::{
+    register_plugin_instance, set_play_midi_note_active, unregister_plugin_instance,
+};
 use crate::params::RamPlayParams;
 use crate::standalone::play_editor;
 
@@ -82,6 +84,7 @@ impl Plugin for StandalonePlay {
         }
 
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
+        set_play_midi_note_active(false);
         true
     }
 
@@ -118,6 +121,7 @@ impl Plugin for StandalonePlay {
                 *sample = sample_out;
             }
         }
+        set_play_midi_note_active(self.ram_play.is_playing(self.active_channel));
         ProcessStatus::Normal
     }
 
@@ -143,6 +147,7 @@ impl Vst3Plugin for StandalonePlay {
 
 impl Drop for StandalonePlay {
     fn drop(&mut self) {
+        set_play_midi_note_active(false);
         if self.lifecycle_registered {
             unregister_plugin_instance();
             self.lifecycle_registered = false;

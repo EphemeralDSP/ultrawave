@@ -1,6 +1,12 @@
 #!/bin/bash
-# Automated screenshot capture for LLM feedback
-# Requires: Xvfb, ImageMagick (import), and built plugins
+# Automated screenshot capture for LLM feedback.
+#
+# Linux path:
+# - Requires: Xvfb and either ImageMagick (import/magick) or xwd+ffmpeg
+#
+# macOS path:
+# - Requires: screencapture (built-in) and osascript (built-in)
+# - Terminal may need Screen Recording + Accessibility permissions
 #
 # Usage:
 #   ./scripts/screenshot.sh                    # Both plugins
@@ -18,6 +24,7 @@ SCREEN_RES="${SCREEN_RES:-1280x720x24}"
 STARTUP_DELAY="${STARTUP_DELAY:-3}"
 PRELOAD_WAV="${PRELOAD_WAV:-$PROJECT_ROOT/tests/vinyl909.wav}"
 PRELOAD_CHANNEL="${PRELOAD_CHANNEL:-0}"
+OS_NAME="$(uname -s)"
 
 RECORD_BIN="$PROJECT_ROOT/target/release/ultrawave_record"
 PLAY_BIN="$PROJECT_ROOT/target/release/ultrawave_play"
@@ -34,23 +41,40 @@ trap cleanup EXIT
 
 check_deps() {
     local missing=()
-    local has_capture_backend=0
-    command -v Xvfb >/dev/null || missing+=("Xvfb")
-    if command -v import >/dev/null || command -v magick >/dev/null; then
-        has_capture_backend=1
-    elif command -v xwd >/dev/null && command -v ffmpeg >/dev/null; then
-        has_capture_backend=1
-    fi
-    [[ $has_capture_backend -eq 1 ]] || missing+=("ImageMagick or xwd+ffmpeg")
+    case "$OS_NAME" in
+        Linux)
+            local has_capture_backend=0
+            command -v Xvfb >/dev/null || missing+=("Xvfb")
+            if command -v import >/dev/null || command -v magick >/dev/null; then
+                has_capture_backend=1
+            elif command -v xwd >/dev/null && command -v ffmpeg >/dev/null; then
+                has_capture_backend=1
+            fi
+            [[ $has_capture_backend -eq 1 ]] || missing+=("ImageMagick or xwd+ffmpeg")
+            ;;
+        Darwin)
+            command -v screencapture >/dev/null || missing+=("screencapture")
+            command -v osascript >/dev/null || missing+=("osascript")
+            ;;
+        *)
+            echo "Unsupported OS: $OS_NAME"
+            echo "Supported: Linux, macOS"
+            exit 1
+            ;;
+    esac
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Missing dependencies: ${missing[*]}"
-        echo "Install with: sudo apt install xvfb imagemagick"
+        if [[ "$OS_NAME" == "Linux" ]]; then
+            echo "Install with: sudo apt install xvfb imagemagick"
+        else
+            echo "On macOS these tools are built-in; ensure PATH is standard system PATH."
+        fi
         exit 1
     fi
 }
 
-capture_root_window() {
+capture_root_window_linux() {
     local output="$1"
     if command -v import >/dev/null; then
         import -window root "$output"
@@ -64,7 +88,7 @@ capture_root_window() {
     fi
 }
 
-crop_image() {
+crop_image_linux() {
     local input="$1"
     local width="$2"
     local height="$3"
@@ -77,6 +101,10 @@ crop_image() {
 }
 
 start_xvfb() {
+    if [[ "$OS_NAME" != "Linux" ]]; then
+        return
+    fi
+
     local target_display="localhost:$DISPLAY_NUM"
     local server_display=":$DISPLAY_NUM"
     local display_ready=1
@@ -99,11 +127,61 @@ start_xvfb() {
     export DISPLAY="$target_display"
 }
 
+capture_macos_window() {
+    local process_name="$1"
+    local output="$2"
+    local plugin_width="$3"
+    local plugin_height="$4"
+
+    local bounds=""
+    if ! bounds="$(osascript 2>/dev/null <<OSA
+tell application "System Events"
+    if not (exists process "$process_name") then
+        return ""
+    end if
+    tell process "$process_name"
+        if (count of windows) is 0 then
+            return ""
+        end if
+        set p to position of window 1
+        set s to size of window 1
+        return (item 1 of p as text) & "," & (item 2 of p as text) & "," & (item 1 of s as text) & "," & (item 2 of s as text)
+    end tell
+end tell
+OSA
+    )"; then
+        echo "Warning: could not query window bounds via osascript."
+        echo "Hint: grant Accessibility access to your terminal in System Settings."
+    fi
+
+    if [[ -n "$bounds" && "$bounds" == *","* ]]; then
+        local x y w h
+        IFS=',' read -r x y w h <<<"$bounds"
+        if [[ -n "${x:-}" && -n "${y:-}" && -n "${w:-}" && -n "${h:-}" ]]; then
+            screencapture -x -R"${x},${y},${w},${h}" "$output"
+            return 0
+        fi
+    fi
+
+    # Fallback: capture top-left region of primary display.
+    if screencapture -x -R"0,0,${plugin_width},${plugin_height}" "$output" 2>/dev/null; then
+        return 0
+    fi
+
+    echo "Warning: region capture failed, falling back to full-screen capture."
+    if ! screencapture -x "$output" 2>/dev/null; then
+        echo "Error: macOS screencapture failed."
+        echo "Hint: grant Screen Recording permission to your terminal in System Settings."
+        return 1
+    fi
+}
+
 screenshot_plugin() {
     local name="$1"
     local bin="$2"
     local output="$SCREENSHOT_DIR/${name}.png"
-    local temp_output="$SCREENSHOT_DIR/${name}_temp.png"
+    local process_name
+    process_name="$(basename "$bin")"
 
     # Plugin window dimensions (must match default_state() in editor)
     local plugin_width=700
@@ -125,13 +203,20 @@ screenshot_plugin() {
     sleep "$STARTUP_DELAY"
 
     echo "Capturing screenshot..."
-    # Capture full screen first
-    capture_root_window "$temp_output"
-
-    # Crop to plugin window size (top-left corner where window manager places it)
-    # Most WMs place new windows at 0,0 or with small offset
-    crop_image "$temp_output" "$plugin_width" "$plugin_height" "$output"
-    rm -f "$temp_output"
+    if [[ "$OS_NAME" == "Linux" ]]; then
+        local temp_output="$SCREENSHOT_DIR/${name}_temp.png"
+        # Capture full virtual display and crop to plugin window size.
+        capture_root_window_linux "$temp_output"
+        crop_image_linux "$temp_output" "$plugin_width" "$plugin_height" "$output"
+        rm -f "$temp_output"
+    elif [[ "$OS_NAME" == "Darwin" ]]; then
+        capture_macos_window "$process_name" "$output" "$plugin_width" "$plugin_height"
+    else
+        echo "Unsupported OS: $OS_NAME"
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        return 1
+    fi
 
     local image_dims=""
     if command -v identify >/dev/null; then
@@ -152,6 +237,7 @@ main() {
         exit 1
     fi
     mkdir -p "$SCREENSHOT_DIR"
+    echo "Detected platform: $OS_NAME"
     start_xvfb
     
     case "$target" in

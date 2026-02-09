@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use crate::dsp::filter::ResonantFilter;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
-use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
+use crate::machines::shared::{
+    register_plugin_instance, set_record_midi_note_active, unregister_plugin_instance,
+};
 use crate::params::RamRecordParams;
 use crate::standalone::record_editor;
 
@@ -87,6 +89,7 @@ impl Plugin for StandaloneRecord {
         self.sample_rate = buffer_config.sample_rate;
         self.ram_record.set_sample_rate(buffer_config.sample_rate);
         self.filter.set_sample_rate(buffer_config.sample_rate);
+        set_record_midi_note_active(false);
         true
     }
 
@@ -157,6 +160,7 @@ impl Plugin for StandaloneRecord {
                 *sample = if idx == 0 { filtered_l } else { filtered_r };
             }
         }
+        set_record_midi_note_active(self.ram_record.is_recording(self.active_channel));
         ProcessStatus::Normal
     }
 
@@ -182,6 +186,7 @@ impl Vst3Plugin for StandaloneRecord {
 
 impl Drop for StandaloneRecord {
     fn drop(&mut self) {
+        set_record_midi_note_active(false);
         if self.lifecycle_registered {
             unregister_plugin_instance();
             self.lifecycle_registered = false;

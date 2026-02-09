@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::CString;
 use std::io;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicI16, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI16, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 pub const CHANNEL_COUNT: usize = 4;
@@ -509,6 +509,8 @@ fn shared_memory_key() -> String {
 /// Global singleton instance.
 #[allow(dead_code)]
 static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
+static RECORD_MIDI_NOTE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PLAY_MIDI_NOTE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Get reference to the global buffer registry.
 #[allow(dead_code)]
@@ -529,6 +531,22 @@ pub fn register_plugin_instance() {
 /// Unregister a plugin instance lifecycle.
 pub fn unregister_plugin_instance() {
     get_global_registry().unregister_instance();
+}
+
+pub fn set_record_midi_note_active(active: bool) {
+    RECORD_MIDI_NOTE_ACTIVE.store(active, Ordering::Release);
+}
+
+pub fn record_midi_note_active() -> bool {
+    RECORD_MIDI_NOTE_ACTIVE.load(Ordering::Acquire)
+}
+
+pub fn set_play_midi_note_active(active: bool) {
+    PLAY_MIDI_NOTE_ACTIVE.store(active, Ordering::Release);
+}
+
+pub fn play_midi_note_active() -> bool {
+    PLAY_MIDI_NOTE_ACTIVE.load(Ordering::Acquire)
 }
 
 #[cfg(unix)]

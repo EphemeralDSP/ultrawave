@@ -4,7 +4,7 @@ use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::machines::shared::get_global_registry;
+use crate::machines::shared::{get_global_registry, record_midi_note_active};
 use crate::params::RamRecordParams;
 use crate::widgets::{waveform_display, RotaryKnob, VerticalSlider, WaveformData};
 
@@ -14,6 +14,7 @@ struct EditorData {
     waveform: WaveformData,
     status_text: String,
     time_text: String,
+    midi_note_active: bool,
 }
 
 enum EditorEvent {
@@ -39,6 +40,7 @@ impl Model for EditorData {
                     format!("READY | {sample_count} smp | {seconds:.2}s")
                 };
                 self.time_text = format!("TIME: {:.2}s / 10.0s", seconds.min(10.0));
+                self.midi_note_active = record_midi_note_active();
             }
         });
     }
@@ -76,6 +78,12 @@ pub fn create(
                 color: #ffffff;
                 font-size: 18px;
                 height: 30px;
+            }
+            .midi-led {
+                width: 6px;
+                height: 6px;
+                border: 1px solid #ffffff;
+                background-color: #000000;
             }
             .sidebar {
                 width: 140px;
@@ -160,6 +168,7 @@ pub fn create(
             waveform: WaveformData::default(),
             status_text: "EMPTY | 0 smp | 0.00s".to_string(),
             time_text: "TIME: 0.00s / 10.0s".to_string(),
+            midi_note_active: false,
         }
         .build(cx);
         cx.start_timer(poll_timer);
@@ -410,7 +419,18 @@ pub fn create(
                     }
                 })
                 .col_between(Pixels(4.0));
+
+                Element::new(cx)
+                    .class("midi-led")
+                    .background_color(EditorData::midi_note_active.map(|active| {
+                        if *active {
+                            Color::rgb(255, 255, 255)
+                        } else {
+                            Color::rgb(0, 0, 0)
+                        }
+                    }));
             })
+            .col_between(Pixels(8.0))
             .class("footer");
         })
         .class("main-container");
