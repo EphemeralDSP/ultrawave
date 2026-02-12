@@ -379,17 +379,24 @@ pub fn create(
                     .row_between(Pixels(0.0));
 
                     HStack::new(cx, |cx| {
+                        Element::new(cx).width(Stretch(1.0));
+
                         waveform_display(cx, EditorData::waveform, true, false)
-                            .width(Stretch(1.0))
+                            .width(Pixels(420.0))
                             .height(Pixels(40.0))
                             .class("waveform-display");
 
+                        Element::new(cx).width(Stretch(1.0));
+                    })
+                    .height(Pixels(40.0));
+
+                    HStack::new(cx, |cx| {
+                        Element::new(cx).width(Stretch(1.0));
                         Label::new(cx, "[▌▐] STRT/END")
                             .color(Color::rgb(255, 255, 255))
                             .font_size(11.0);
-                    })
-                    .height(Pixels(40.0))
-                    .col_between(Pixels(8.0));
+                        Element::new(cx).width(Stretch(1.0));
+                    });
                 })
                 .row_between(Pixels(0.0))
                 .class("main-area");
