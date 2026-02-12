@@ -99,13 +99,16 @@ impl View for WaveformDisplay {
         border_path.rect(x, y, w, h);
         canvas.stroke_path(&border_path, &border_paint);
 
-        // Waveform area dimensions (leave room for time display)
-        let waveform_h = if self.show_time || self.show_markers {
-            h - 20.0
+        // Keep symmetric vertical padding so the waveform stays centered
+        // inside its display box regardless of mode.
+        let vertical_padding = if self.show_time || self.show_markers {
+            4.0
         } else {
-            h
+            2.0
         };
-        let center_y = y + waveform_h / 2.0;
+        let waveform_top = y + vertical_padding;
+        let waveform_h = (h - vertical_padding * 2.0).max(4.0);
+        let center_y = waveform_top + waveform_h / 2.0;
         let amplitude = waveform_h / 2.0 - 2.0;
 
         // Draw waveform - white for 1-bit monochrome
@@ -180,20 +183,20 @@ impl View for WaveformDisplay {
 
             // Draw vertical lines for start and end
             let mut start_path = vg::Path::new();
-            start_path.move_to(start_x, y + 2.0);
-            start_path.line_to(start_x, y + waveform_h - 2.0);
+            start_path.move_to(start_x, waveform_top + 2.0);
+            start_path.line_to(start_x, waveform_top + waveform_h - 2.0);
             canvas.stroke_path(&start_path, &marker_paint);
 
             let mut end_path = vg::Path::new();
-            end_path.move_to(end_x, y + 2.0);
-            end_path.line_to(end_x, y + waveform_h - 2.0);
+            end_path.move_to(end_x, waveform_top + 2.0);
+            end_path.line_to(end_x, waveform_top + waveform_h - 2.0);
             canvas.stroke_path(&end_path, &marker_paint);
 
             // Draw bracket indicators [▌ at start and ▐] at end
             // Using filled rectangles to create bracket shapes
             let bracket_width = 4.0;
             let bracket_height = waveform_h - 8.0;
-            let bracket_y = y + 4.0;
+            let bracket_y = waveform_top + 4.0;
 
             // Start bracket [▌ - left side
             let start_bracket_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
@@ -222,8 +225,8 @@ impl View for WaveformDisplay {
                 let mut time_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
                 time_paint.set_line_width(2.0);
                 let mut time_path = vg::Path::new();
-                time_path.move_to(time_x, y + 2.0);
-                time_path.line_to(time_x, y + waveform_h - 2.0);
+                time_path.move_to(time_x, waveform_top + 2.0);
+                time_path.line_to(time_x, waveform_top + waveform_h - 2.0);
                 canvas.stroke_path(&time_path, &time_paint);
             }
         }
