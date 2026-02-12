@@ -11,7 +11,7 @@ pub struct RamPlayParams {
     pub dec: i32,
     pub rtrg: i32,
     pub rtim: i32,
-    pub srr: i32,
+    pub srr: f32,
     pub vol: i32,
 }
 
@@ -25,7 +25,7 @@ impl Default for RamPlayParams {
             dec: 0,
             rtrg: 0,
             rtim: 0,
-            srr: 0,
+            srr: 0.0,
             vol: 100,
         }
     }
@@ -344,7 +344,7 @@ mod tests {
             dec: 0,
             rtrg: 0,
             rtim: 0,
-            srr: 0,
+            srr: 0.0,
             vol: 127,
         };
         player.trigger(&params, 0);

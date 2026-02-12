@@ -145,26 +145,6 @@ fn parse_hold(string: &str) -> Option<i32> {
     parse_0_127(trimmed)
 }
 
-fn parse_brr(string: &str) -> Option<i32> {
-    if let Some(value) = parse_from_formatter_lookup(string, 0, 127, format_brr) {
-        return Some(value);
-    }
-
-    let trimmed = string.trim();
-    if trimmed.eq_ignore_ascii_case("OFF") {
-        return Some(0);
-    }
-
-    let bit_part = trimmed.trim_end_matches(&[' ', 'b', 'B', 'i', 'I', 't', 'T']);
-    if let Ok(bits) = bit_part.parse::<i32>() {
-        let bits = clamp_i32(bits, 1, 16);
-        let canonical = if bits >= 16 { 1 } else { (16 - bits) * 8 };
-        return Some(clamp_i32(canonical, 0, 127));
-    }
-
-    parse_0_127(trimmed)
-}
-
 fn parse_percent(string: &str) -> Option<i32> {
     if let Some(value) = parse_from_formatter_lookup(string, 0, 127, format_percent) {
         return Some(value);
@@ -271,15 +251,6 @@ fn format_hold(value: i32) -> String {
     }
 }
 
-/// Format bit rate reduction: OFF at 0, otherwise bits
-fn format_brr(value: i32) -> String {
-    if value == 0 {
-        "OFF".to_string()
-    } else {
-        format!("{}bit", 16 - (value / 8).min(15))
-    }
-}
-
 /// Format percentage: 0% to 100%
 fn format_percent(value: i32) -> String {
     format!("{}%", value * 100 / 127)
@@ -317,7 +288,7 @@ pub struct RamRecordParams {
     #[id = "lev"]
     pub lev: FloatParam,
     #[id = "srr"]
-    pub srr: IntParam,
+    pub srr: FloatParam,
     #[id = "dist"]
     pub dist: IntParam,
     // Main grid
@@ -355,8 +326,16 @@ impl Default for RamRecordParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1))
             .with_string_to_value(Arc::new(parse_level_db)),
-            srr: IntParam::new("SRR", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_string_to_value(Arc::new(parse_0_127)),
+            srr: FloatParam::new(
+                "SRR",
+                0.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 0.9629,
+                    factor: 14.0,
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(3)),
             dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             mlev: IntParam::new("Main Level", 64, IntRange::Linear { min: 0, max: 127 })
@@ -396,7 +375,7 @@ pub struct RamPlayParams {
     #[id = "play_lev"]
     pub lev: FloatParam,
     #[id = "play_srr"]
-    pub srr: IntParam,
+    pub srr: FloatParam,
     #[id = "play_dist"]
     pub dist: IntParam,
     // Main grid
@@ -432,9 +411,16 @@ impl Default for RamPlayParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1))
             .with_string_to_value(Arc::new(parse_level_db)),
-            srr: IntParam::new("SRR", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_brr))
-                .with_string_to_value(Arc::new(parse_brr)),
+            srr: FloatParam::new(
+                "SRR",
+                0.0,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 0.9629,
+                    factor: 14.0,
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(3)),
             dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 })
@@ -495,7 +481,6 @@ mod tests {
         assert_roundtrip_stable(0, 127, format_pitch, parse_pitch);
         assert_roundtrip_stable(0, 127, format_decay, parse_decay);
         assert_roundtrip_stable(0, 127, format_hold, parse_hold);
-        assert_roundtrip_stable(0, 127, format_brr, parse_brr);
         assert_roundtrip_stable(0, 127, format_percent, parse_percent);
         assert_roundtrip_stable(0, 127, format_rtrg, parse_rtrg);
         assert_roundtrip_stable(0, 127, format_rtim, parse_rtim);

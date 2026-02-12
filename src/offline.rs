@@ -191,7 +191,7 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
         dec: 0,
         rtrg: 0,
         rtim: 0,
-        srr: 0,
+        srr: 0.0,
         vol: 127,
     };
 

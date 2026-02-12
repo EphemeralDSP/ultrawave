@@ -120,7 +120,7 @@ impl Plugin for PlayPlugin {
                     dec: 0,
                     rtrg: 0,
                     rtim: 0,
-                    srr: 0,
+                    srr: 0.0,
                     vol: 127,
                 };
                 self.ram_play.trigger(&play_params, chan);
