@@ -56,11 +56,11 @@ impl RotaryKnob {
         )
     }
 
-    /// Convert normalized value to angle in radians
-    /// 0.0 -> -135 degrees, 1.0 -> +135 degrees
+    /// Convert normalized value to angle in radians.
+    /// 0.0 -> bottom-left (135 deg), 0.5 -> top (270 deg / -90 deg), 1.0 -> bottom-right (45 deg)
     fn value_to_angle(normalized: f32) -> f32 {
-        let min_angle = -135.0f32.to_radians();
-        let max_angle = 135.0f32.to_radians();
+        let min_angle = 135.0f32.to_radians();
+        let max_angle = 405.0f32.to_radians();
         min_angle + normalized * (max_angle - min_angle)
     }
 }
@@ -95,9 +95,9 @@ impl View for RotaryKnob {
         outline_path.circle(center_x, center_y, radius);
         canvas.stroke_path(&outline_path, &outline_paint);
 
-        // Draw tick marks around the knob (11 ticks)
-        let tick_start_angle = -135.0f32.to_radians();
-        let tick_end_angle = 135.0f32.to_radians();
+        // Draw tick marks across the same active travel arc as the pointer.
+        let tick_start_angle = 135.0f32.to_radians();
+        let tick_end_angle = 405.0f32.to_radians();
         let num_ticks = 11;
         let tick_outer_radius = radius - 4.0;
         let tick_inner_radius = radius - 8.0;
