@@ -21,6 +21,9 @@ pub struct WaveformDisplay {
     show_time: bool,
 }
 
+const DISPLAY_FULL_SCALE_12BIT: f32 = 2048.0;
+const DISPLAY_DB_FLOOR: f32 = -60.0;
+
 impl WaveformDisplay {
     pub fn new(cx: &mut Context, show_markers: bool, show_time: bool) -> Handle<'_, Self> {
         Self {
@@ -37,7 +40,13 @@ impl WaveformDisplay {
 
     /// Update the waveform data from i16 samples
     pub fn set_samples(&mut self, samples: &[i16]) {
-        self.samples = samples.iter().map(|&s| s as f32 / 32768.0).collect();
+        self.samples = samples
+            .iter()
+            .map(|&s| {
+                let normalized = (s as f32 / DISPLAY_FULL_SCALE_12BIT).clamp(-1.0, 1.0);
+                Self::db_scaled_for_display(normalized)
+            })
+            .collect();
     }
 
     /// Set current recording time
@@ -49,6 +58,19 @@ impl WaveformDisplay {
     pub fn set_markers(&mut self, start: f32, end: f32) {
         self.start_pos = start.clamp(0.0, 1.0);
         self.end_pos = end.clamp(0.0, 1.0);
+    }
+
+    fn db_scaled_for_display(sample: f32) -> f32 {
+        let sign = sample.signum();
+        let magnitude = sample.abs();
+        if magnitude <= f32::EPSILON {
+            return 0.0;
+        }
+
+        let db = 20.0 * magnitude.log10();
+        let db_clamped = db.clamp(DISPLAY_DB_FLOOR, 0.0);
+        let normalized = (db_clamped - DISPLAY_DB_FLOOR) / -DISPLAY_DB_FLOOR;
+        sign * normalized
     }
 }
 

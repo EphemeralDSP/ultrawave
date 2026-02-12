@@ -44,7 +44,12 @@ impl Model for EditorData {
                 } else {
                     format!("READY | {sample_count} smp | {seconds:.2}s")
                 };
-                self.time_text = format!("TIME: {:.2}s / 10.0s", seconds.min(10.0));
+                let visible_seconds = if sample_count == 0 {
+                    10.0
+                } else {
+                    seconds.min(10.0)
+                };
+                self.time_text = format!("TIME: {:.2}s / {:.2}s", visible_seconds, visible_seconds);
                 self.midi_note_active = record_midi_note_active();
             }
         });
@@ -169,7 +174,7 @@ pub fn create(
             params: params.clone(),
             waveform: WaveformData::default(),
             status_text: "EMPTY | 0 smp | 0.00s".to_string(),
-            time_text: "TIME: 0.00s / 10.0s".to_string(),
+            time_text: "TIME: 0.00s / 10.00s".to_string(),
             midi_note_active: false,
         }
         .build(cx);
