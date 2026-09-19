@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## Compatibility Policy
+
+Until Jeff explicitly says otherwise, backward compatibility is not a requirement:
+there are no existing patches to preserve. When making changes, prioritize
+correctness and simplicity over preserving old presets/projects, parameter or
+plugin IDs, state/shared-memory formats, or APIs. Compatibility shims and
+migrations are unnecessary unless Jeff requests them.
+
 ## Project Overview
 
 **Ultrawave** is a pair of VST3/CLAP audio plugins for real-time RAM sampling, inspired by the Elektron Machinedrum UW RAM machines.
@@ -154,4 +162,3 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-
