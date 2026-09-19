@@ -117,7 +117,10 @@ local function run()
     assert(buffer:create_sample_data(48000, 32, 2, 96000))
     buffer:prepare_sample_data_changes()
     for frame = 1, 96000 do
-      buffer:set_sample_data(1, frame, 0.4 * math.sin(2 * math.pi * 440 * (frame - 1) / 48000))
+      -- A taper distinguishes each retrigger from simply continuing the tone;
+      -- a constant 440 Hz sine has identical phase at 6000/12000-frame offsets.
+      local gain = 0.4 - 0.2 * (frame - 1) / 96000
+      buffer:set_sample_data(1, frame, gain * math.sin(2 * math.pi * 440 * (frame - 1) / 48000))
       buffer:set_sample_data(2, frame, 0.0)
     end
     buffer:finalize_sample_data_changes()
@@ -173,9 +176,30 @@ local function run()
         parameter(play, "Start").value_string = "127"
         parameter(play, "End").value_string = "0"
       end},
-      {"play-r2.wav", function()
+      {"play-retrig-120.wav", function()
         parameter(play, "Start").value_string = "0"
         parameter(play, "End").value_string = "127"
+        parameter(play, "Retrigger").value_string = "2"
+        parameter(play, "Retrig Time").value_string = "127"
+      end},
+      {"play-retrig-60.wav", function()
+        -- Renoise restores transport BPM after the render callback returns.
+        -- A pattern command makes the next bounce's tempo explicit on its
+        -- first tick, rather than relying on a callback-time transport edit.
+        local tempo = song.patterns[1].tracks[2].lines[1].effect_columns[1]
+        tempo.number_string, tempo.amount_value = "ZT", 60
+      end},
+      {"play-retrig-infinite.wav", function()
+        local tempo = song.patterns[1].tracks[2].lines[1].effect_columns[1]
+        tempo.number_string, tempo.amount_value = "ZT", 120
+        parameter(play, "Retrigger").value_string = "127"
+        parameter(play, "Retrig Time").value_string = "32"
+      end},
+      {"play-retrig-off.wav", function()
+        parameter(play, "Retrig Time").value_string = "0"
+      end},
+      {"play-r2.wav", function()
+        parameter(play, "Retrigger").value_string = "0"
         play_buffer.value_string = "1"
       end},
     }, function()

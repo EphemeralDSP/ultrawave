@@ -17,6 +17,7 @@ pub struct PlayPlugin {
     ram_play: RamPlay,
     active_channel: usize,
     velocity: f32,
+    transport_was_playing: bool,
     instance_lease: Option<Arc<InstanceLease>>,
     preload_attempted: bool,
 }
@@ -33,6 +34,7 @@ impl Default for PlayPlugin {
             ram_play,
             active_channel: 0,
             velocity: 1.0,
+            transport_was_playing: false,
             instance_lease: None,
             preload_attempted: false,
         }
@@ -109,6 +111,12 @@ impl Plugin for PlayPlugin {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let transport = context.transport();
+        self.ram_play.set_tempo(transport.tempo.unwrap_or(120.0));
+        if self.transport_was_playing && !transport.playing {
+            self.ram_play.stop_all();
+        }
+        self.transport_was_playing = transport.playing;
         let play_params = RamPlayMachineParams {
             strt: self.params.strt.value(),
             end: self.params.end.value(),
@@ -164,6 +172,7 @@ impl Plugin for PlayPlugin {
 
     fn reset(&mut self) {
         self.ram_play.stop_all();
+        self.transport_was_playing = false;
         self.ui.active.store(false, Ordering::Relaxed);
         self.ui.peak.store(0, Ordering::Relaxed);
         self.ui.trigger.store(false, Ordering::Relaxed);
@@ -194,12 +203,14 @@ mod tests {
 
     struct TestProcessContext {
         events: VecDeque<PluginNoteEvent<PlayPlugin>>,
+        transport: Transport,
     }
 
     impl TestProcessContext {
         fn with_events(events: Vec<PluginNoteEvent<PlayPlugin>>) -> Self {
             Self {
                 events: events.into(),
+                transport: Transport::new(44100.0),
             }
         }
     }
@@ -214,7 +225,7 @@ mod tests {
         fn execute_gui(&self, _task: <PlayPlugin as Plugin>::BackgroundTask) {}
 
         fn transport(&self) -> &Transport {
-            panic!("transport is not used in this test")
+            &self.transport
         }
 
         fn next_event(&mut self) -> Option<PluginNoteEvent<PlayPlugin>> {
@@ -245,6 +256,16 @@ mod tests {
     }
 
     fn render(plugin: &mut PlayPlugin, len: usize, notes: &[(u32, f32)]) -> Vec<f32> {
+        render_at_tempo(plugin, len, notes, None, false)
+    }
+
+    fn render_at_tempo(
+        plugin: &mut PlayPlugin,
+        len: usize,
+        notes: &[(u32, f32)],
+        tempo: Option<f64>,
+        playing: bool,
+    ) -> Vec<f32> {
         let mut left = vec![0.0; len];
         let mut right = left.clone();
         let mut buffer = Buffer::default();
@@ -265,6 +286,8 @@ mod tests {
                 })
                 .collect(),
         );
+        context.transport.tempo = tempo;
+        context.transport.playing = playing;
         let mut aux = AuxiliaryBuffers {
             inputs: &mut [],
             outputs: &mut [],
@@ -275,6 +298,81 @@ mod tests {
         );
         assert_eq!(left, right);
         left
+    }
+
+    #[test]
+    fn retrigger_callback_follows_host_tempo_midi_and_block_boundaries() {
+        let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
+        registry.replace_buffer_at_rate(0, vec![1024], 1024.0);
+        for (tempo, interval) in [
+            (Some(60.0), 256),
+            (Some(120.0), 128),
+            (Some(240.0), 64),
+            (None, 128),
+        ] {
+            for block_size in [1, 7, 64, 129] {
+                let mut plugin = PlayPlugin {
+                    ram_play: RamPlay::with_registry(1024.0, registry.clone()),
+                    ..Default::default()
+                };
+                let params = Arc::get_mut(&mut plugin.params).unwrap();
+                params.rtrg = IntParam::new("Retrigger", 2, IntRange::Linear { min: 0, max: 127 });
+                params.rtim =
+                    IntParam::new("Retrig Time", 127, IntRange::Linear { min: 0, max: 127 });
+                let mut output = Vec::new();
+                for start in (0..900).step_by(block_size) {
+                    let len = block_size.min(900 - start);
+                    let notes: Vec<_> = [(3, 0.5), (300, 1.0)]
+                        .into_iter()
+                        .filter(|(t, _)| *t >= start && *t < start + len)
+                        .map(|(t, v)| ((t - start) as u32, v))
+                        .collect();
+                    output.extend(render_at_tempo(&mut plugin, len, &notes, tempo, true));
+                }
+                let mut expected = vec![0.0; 900];
+                for hit in 0..=2 {
+                    if 3 + hit * interval < 300 {
+                        expected[3 + hit * interval] = 0.25;
+                    }
+                    expected[300 + hit * interval] = 0.5;
+                }
+                assert_eq!(output, expected, "tempo={tempo:?} block={block_size}");
+            }
+        }
+    }
+
+    #[test]
+    fn retrigger_callback_retimes_running_voice_and_stops_infinite_train() {
+        let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
+        registry.replace_buffer_at_rate(0, vec![1024], 1024.0);
+        let mut plugin = PlayPlugin {
+            ram_play: RamPlay::with_registry(1024.0, registry),
+            ..Default::default()
+        };
+        let params = Arc::get_mut(&mut plugin.params).unwrap();
+        params.rtrg = IntParam::new("Retrigger", 127, IntRange::Linear { min: 0, max: 127 });
+        params.rtim = IntParam::new("Retrig Time", 127, IntRange::Linear { min: 0, max: 127 });
+        let first = render_at_tempo(&mut plugin, 64, &[(0, 1.0)], Some(120.0), true);
+        assert_eq!(first[0], 0.5);
+        assert!(first[1..].iter().all(|&v| v == 0.0));
+        assert_eq!(
+            render_at_tempo(&mut plugin, 32, &[], Some(240.0), true),
+            vec![0.0; 32]
+        );
+        assert_eq!(
+            render_at_tempo(&mut plugin, 1, &[], Some(240.0), true),
+            [0.5]
+        );
+        assert_eq!(
+            render_at_tempo(&mut plugin, 300, &[], Some(240.0), false),
+            vec![0.0; 300]
+        );
+        assert!(!plugin.ram_play.is_playing(0));
+        // Stopped transport does not prevent deliberate auditioning.
+        plugin.ui.trigger.store(true, Ordering::Relaxed);
+        assert_eq!(render(&mut plugin, 1, &[]), [0.5]);
+        plugin.reset();
+        assert_eq!(render(&mut plugin, 300, &[]), vec![0.0; 300]);
     }
 
     #[test]

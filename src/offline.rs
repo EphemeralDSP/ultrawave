@@ -22,6 +22,7 @@ pub struct PlayConfig {
     pub output: PathBuf,
     pub output_secs: Option<f64>,
     pub channel: usize,
+    pub tempo_bpm: f64,
     pub params: RamPlayParams,
 }
 
@@ -166,6 +167,9 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
+    if !config.tempo_bpm.is_finite() || config.tempo_bpm <= 0.0 {
+        return Err("tempo must be finite and positive".into());
+    }
     let (samples, sr) = read_wav_as_i16_buffer(&config.input)?;
     if sr != SAMPLE_RATE {
         return Err(format!(
@@ -185,6 +189,7 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
     let registry = Arc::new(BufferRegistry::new());
     registry.replace_buffer(config.channel, samples);
     let mut player = RamPlay::with_registry(SAMPLE_RATE_F, registry);
+    player.set_tempo(config.tempo_bpm);
     player.trigger(&config.params, config.channel);
 
     let mut output = Vec::with_capacity(output_samples);
@@ -260,6 +265,12 @@ pub fn parse_play_args(args: &[String]) -> Option<PlayConfig> {
             std::process::exit(1);
         })
     });
+    let tempo_bpm = get_arg(args, "--tempo").map_or(120.0, |s| {
+        s.parse::<f64>().unwrap_or_else(|_| {
+            eprintln!("error: invalid --tempo: {s}");
+            std::process::exit(1);
+        })
+    });
     let channel = parse_channel(args).unwrap_or_else(|e| {
         eprintln!("error: {e}");
         std::process::exit(1);
@@ -305,6 +316,7 @@ pub fn parse_play_args(args: &[String]) -> Option<PlayConfig> {
         output: PathBuf::from(output),
         output_secs,
         channel,
+        tempo_bpm,
         params,
     })
 }

@@ -92,11 +92,14 @@ fn trigger_and_process_do_not_allocate_or_free() {
         &RamPlayParams {
             strt: 127,
             end: 0,
+            rtrg: 127,
+            rtim: 32,
             ..params
         },
         0,
     );
-    for _ in 0..100 {
+    player.set_tempo(137.0);
+    for _ in 0..10_000 {
         std::hint::black_box(player.process(0));
     }
     recorder.stop_all_recording();

@@ -128,6 +128,8 @@ target/release/ultrawave_play --input target/capture.wav --output target/crunch.
   --pitch 52 --brr 32 --srr 0.5 --dist 16
 target/release/ultrawave_play --input target/capture.wav --output target/reverse.wav \
   --start 127 --end 0
+target/release/ultrawave_play --input target/capture.wav --output target/retrig.wav \
+  --retrigger 127 --retrig-time 127 --tempo 120 --output-secs 4
 cargo test --workspace
 ```
 
@@ -135,6 +137,8 @@ Offline Play accepts `--pitch`, `--brr`, `--dist`, `--start`, `--end`, `--hold`,
 `--decay`, `--retrigger`, and `--retrig-time` as integers 0–127. Pitch 64 is unity;
 52/76 are one octave down/up. `--srr` ranges from 0 to 0.9629. `--output-secs`
 sets render length; use it for long retrigger tails. `--channel 0..3` selects RAM.
+`--tempo` sets a positive BPM (default 120) for offline retriggers. Infinite
+retriggering still renders only the requested duration; it cannot hang the CLI.
 The WAV tools currently require **44.1 kHz** input and capture at most 10 seconds.
 
 The tests check actual sample values, clipping, the last sample, CLI renders,
@@ -209,6 +213,40 @@ the sidechain. Each bus is mixed to mono before LEV, SRR, DIST, RATE and 12-bit
 storage. CUE1 bypasses those effects; CUE2 monitors what reaches RAM. Avoid routing
 monitor output back into its own capture input unless you deliberately want feedback.
 
+### Tempo-synced retriggers
+
+RTRG 1–126 adds that many repeats after the initial note; 127 displays **INF**.
+RTRG 0 or RTIM 0 disables repeats. A repeat restarts the selected region and its
+envelope, forward or backward, including after a short sample has ended.
+RTIM follows host tempo; missing/invalid tempo falls back to 120 BPM. Fractional
+frame intervals retain their remainder rather than drifting on each repeat.
+Tempo changes preserve progress through the current interval.
+
+| RTIM raw value | Note interval |
+|---|---|
+| 127 | 1/16 |
+| 109 | 1/16 triplet |
+| 96 | 1/32 |
+| 77 | 1/32 triplet |
+| 64 | 1/64 |
+| 44 | 1/64 triplet |
+| 32 | 1/128 |
+
+These and the other reported landmarks follow Legofriendly's table in
+[Tarekith's Machinedrum tips](https://tarekith.com/assets/machinedrum_tipsandtricks.htm#Reference),
+not a firmware-derived timing law. Intermediate values use logarithmic
+interpolation; below 32 the doubling-per-32 trend is extrapolated. Hardware
+calibration is still needed. The editor shows musical lengths at the listed
+values and quarter-note beats (`bt`) elsewhere.
+
+Count/time controls latch on a new note, except setting either to OFF cancels
+pending repeats immediately without cutting the current hit. A new note replaces
+the old train. Host transport stop, plugin reset, or replacement of the sampled
+RAM cancels it; auditioning while transport is stopped is still available.
+NoteOff does not choke playback. **Compatibility:** saved parameter IDs and raw
+values are unchanged, but RTIM no longer uses the old 0–500 ms approximation,
+and RTRG 127 now means infinite. Existing retrigger patches will sound different.
+
 ### Record once, then keep the take
 
 Enable **ONE SHOT**, then use Capture, MIDI or Capture automation as usual. The
@@ -251,7 +289,8 @@ a left-only 440 Hz source **inside Renoise**, captures one bar through the Recor
 track effect, and verifies that repeated One Shot triggers with an 880 Hz source
 leave that take bit-for-bit unchanged. Reversed STRT/END must render every frame
 of that take in reverse order. R1/R2 routing, dual-mono output, monitoring, and
-five editor open/close cycles are also checked.
+five editor open/close cycles are also checked. Retrigger renders compare every
+sample at 60/120 BPM, with RTIM off, and through 256 infinite-mode hits.
 
 It then saves non-default controls, terminates that host, and opens the project
 in a fresh process with the **same RAM key**. Controls must survive, RAM must be

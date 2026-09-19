@@ -72,10 +72,47 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         assert_eq!(&rendered[..5], expected);
         assert!(rendered[5..].iter().all(|s| *s == 0.0));
     }
+    for (tempo, starts) in [("60", [0, 11025, 22050]), ("120", [0, 5513, 11025])] {
+        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave_play"))
+            .arg("--input")
+            .arg(&recorded)
+            .arg("--output")
+            .arg(&output)
+            .args([
+                "--tempo",
+                tempo,
+                "--retrigger",
+                "2",
+                "--retrig-time",
+                "127",
+                "--output-secs",
+                "1",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let rendered: Vec<_> = hound::WavReader::open(&output)
+            .unwrap()
+            .into_samples::<f32>()
+            .map(Result::unwrap)
+            .collect();
+        let mut expected = vec![0.0; 44100];
+        for start in starts {
+            expected[start..start + 5].copy_from_slice(&[0.125, 0.375, -0.125, -0.375, 0.1875]);
+        }
+        assert_eq!(rendered, expected, "tempo={tempo}");
+    }
     for options in [
         vec!["--brr", "128"],
         vec!["--srr", "NaN"],
         vec!["--output-secs", "inf"],
+        vec!["--tempo", "0"],
+        vec!["--tempo", "NaN"],
+        vec!["--tempo", "inf"],
         vec!["--brr"],
     ] {
         let result = Command::new(env!("CARGO_BIN_EXE_ultrawave_play"))

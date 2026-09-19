@@ -89,6 +89,24 @@ expected_reverse = [
 ]
 assert list(reverse_samples[:96000 * 2]) == expected_reverse, reverse
 assert all(sample == 0.0 for sample in reverse_samples[96000 * 2:]), reverse
+for name, interval, count in [
+    ("play-retrig-120.wav", 6000, 2),  # sixteenth note at 120 BPM / 48 kHz
+    ("play-retrig-60.wav", 12000, 2),
+    ("play-retrig-infinite.wav", 750, None),  # 256 hits, beyond the old 127 cap
+]:
+    channels, rate, values, _ = read_wav(out / name)
+    assert channels == 2 and rate == 48000, name
+    # Eight beats must last eight seconds at 60 BPM, four seconds at 120.
+    assert len(values) // 2 == (384000 if interval == 12000 else 192000), name
+    for frame in range(len(values) // 2):
+        hit = frame // interval
+        if count is not None:
+            hit = min(hit, count)
+        source_frame = frame - hit * interval
+        for channel in range(2):
+            expected = forward_samples[source_frame * 2 + channel] if source_frame < 96000 else 0.0
+            assert values[frame * 2 + channel] == expected, (name, frame, channel)
+assert read_wav(out / "play-retrig-off.wav") == read_wav(out / "play-r1.wav")
 reopened = metrics(out / "play-after-reopen.wav")
 assert reopened["peak"] < 1e-7, reopened  # RAM must not survive a full shutdown
 recaptured = metrics(out / "play-recaptured.wav")
@@ -114,6 +132,7 @@ summary = {
         "r2_did_not_receive_r1": True,
         "one_shot_ignored_repeated_880hz_capture": True,
         "reversed_markers_reverse_every_sample": True,
+        "retrigger_count_tempo_infinite_and_off_sample_exact": True,
         "project_controls_restored": True,
         "ram_empty_after_host_restart": True,
         "one_shot_rearmed_after_host_restart": True,

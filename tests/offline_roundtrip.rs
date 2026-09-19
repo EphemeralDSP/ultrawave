@@ -209,6 +209,7 @@ fn wav_file_roundtrip() {
         output: output_wav.clone(),
         output_secs: Some(0.2),
         channel: 0,
+        tempo_bpm: 120.0,
         params: RamPlayParams {
             vol: 127,
             ..Default::default()
@@ -233,6 +234,7 @@ fn wav_file_roundtrip() {
         output: reverse_wav.clone(),
         output_secs: Some(0.2),
         channel: 0,
+        tempo_bpm: 120.0,
         params: RamPlayParams {
             strt: 127,
             end: 0,
@@ -311,6 +313,7 @@ fn vinyl909_record_then_play() {
         output: play_output.clone(),
         output_secs: Some(input_duration_secs + 0.5),
         channel: 0,
+        tempo_bpm: 120.0,
         params: RamPlayParams {
             vol: 127,
             ..Default::default()

@@ -50,6 +50,21 @@ impl SampleEngine {
         (len != 0).then_some(rate)
     }
 
+    /// Also usable between retriggers, when no samples are being read.
+    pub fn source_is_current(&self) -> bool {
+        match &self.source {
+            SampleSource::Owned(_) => true,
+            SampleSource::Shared {
+                registry,
+                channel,
+                revision,
+                ..
+            } => registry
+                .snapshot(*channel)
+                .is_some_and(|(_, _, current)| current == *revision),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.source = SampleSource::Owned(Vec::new());

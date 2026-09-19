@@ -141,13 +141,15 @@ fn parse_rtrg(string: &str) -> Option<i32> {
     let trimmed = string.trim();
     if trimmed.eq_ignore_ascii_case("OFF") {
         Some(0)
+    } else if trimmed.eq_ignore_ascii_case("INF") {
+        Some(127)
     } else {
         parse_0_127(trimmed)
     }
 }
 
 fn parse_rtim(string: &str) -> Option<i32> {
-    parse_milliseconds(string, 500.0)
+    parse_from_formatter_lookup(string, 0, 127, format_rtim).or_else(|| parse_0_127(string))
 }
 
 /// Format balance value: L64 to R64 with CENTER at 64
@@ -216,18 +218,31 @@ fn format_percent(value: i32) -> String {
     format!("{}%", value * 100 / 127)
 }
 
-/// Format retrigger: OFF at 0, otherwise value
+/// Format additional repeats; the maximum is an infinite train.
 fn format_rtrg(value: i32) -> String {
-    if value == 0 {
-        "OFF".to_string()
-    } else {
-        format!("{}", value)
+    match value {
+        0 => "OFF".to_string(),
+        127 => "INF".to_string(),
+        _ => value.to_string(),
     }
 }
 
-/// Retrigger interval is currently measured in milliseconds, not beat divisions.
+/// Musical note lengths at known landmarks, quarter-note beats in between.
 fn format_rtim(value: i32) -> String {
-    format!("{} ms", (value as f32 * 500.0 / 127.0).round() as i32)
+    match value {
+        0 => "OFF".to_string(),
+        32 => "1/128".to_string(),
+        44 => "1/64T".to_string(),
+        64 => "1/64".to_string(),
+        77 => "1/32T".to_string(),
+        96 => "1/32".to_string(),
+        109 => "1/16T".to_string(),
+        127 => "1/16".to_string(),
+        _ => format!(
+            "{:.4} bt",
+            crate::machines::ram_play::retrig_interval_beats(value)
+        ),
+    }
 }
 
 #[derive(Params)]
@@ -467,7 +482,15 @@ mod tests {
         assert_eq!(format_decay(127), "4000 ms");
         assert_eq!(parse_decay("2000 ms"), Some(64));
         assert_eq!(format_hold(127), "2000 ms");
-        assert_eq!(format_rtim(127), "500 ms");
+        assert_eq!(format_rtim(127), "1/16");
+        assert_eq!(format_rtim(109), "1/16T");
+        assert_eq!(format_rtim(0), "OFF");
+        assert_eq!(format_rtrg(127), "INF");
+        assert_eq!(parse_rtrg("INF"), Some(127));
+        for value in 0..=127 {
+            assert_eq!(parse_rtim(&format_rtim(value)), Some(value));
+        }
+        assert_eq!(parse_rtim("500 ms"), None);
         assert_eq!(format_decay(0), "OFF");
     }
 }
