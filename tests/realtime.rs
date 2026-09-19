@@ -79,6 +79,9 @@ fn trigger_and_process_do_not_allocate_or_free() {
     let params = neutral();
     OPS.with(|n| n.set(0));
     COUNTING.with(|on| on.set(true));
+    let mut mixed = [0.0; 67];
+    ultrawave::dsp::mix::mix_inputs([&[0.25; 67]; 4], [0.25; 4], &mut mixed);
+    std::hint::black_box(mixed);
     player.trigger(&params, 0);
     recorder.start_recording(&rec_params, true, 1);
     for _ in 0..100 {

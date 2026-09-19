@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::dsp::effects::Distortion;
+use crate::dsp::mix::mix_inputs;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
 use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
 use crate::params::RamRecordParams;
@@ -165,49 +166,55 @@ impl RecordPlugin {
         let external = aux.inputs.first_mut().map(|input| input.as_slice());
         let mut peak = 0.0f32;
         let mut next_event = context.next_event();
-        for (sample_id, mut channel_samples) in buffer.iter_samples().enumerate() {
-            while let Some(event) = next_event {
-                if event.timing() > sample_id as u32 {
-                    break;
-                }
-                if let NoteEvent::NoteOn { velocity, .. } = event {
-                    if velocity > 0.0 {
-                        self.start_capture(&machine_params);
+        let frames = buffer.samples();
+        let main = buffer.as_slice();
+        let mut mixed = [0.0; 64];
+        let silence = [0.0; 64];
+        for start in (0..frames).step_by(mixed.len()) {
+            let end = (start + mixed.len()).min(frames);
+            let dry = &mut mixed[..end - start];
+            let silent = &silence[..dry.len()];
+            let left = main.first().map_or(silent, |s| &s[start..end]);
+            let right = main.get(1).map_or(left, |s| &s[start..end]);
+            let side = |channel| {
+                external
+                    .as_ref()
+                    .and_then(|bus| bus.get(channel))
+                    .and_then(|s: &&mut [f32]| s.get(start..end))
+                    .unwrap_or(silent)
+            };
+            // Read each chunk before overwriting the in-place main bus.
+            mix_inputs([left, right, side(0), side(1)], gains, dry);
+            for (offset, &dry) in dry.iter().enumerate() {
+                let sample_id = start + offset;
+                while let Some(event) = next_event {
+                    if event.timing() > sample_id as u32 {
+                        break;
                     }
+                    if let NoteEvent::NoteOn { velocity, .. } = event {
+                        if velocity > 0.0 {
+                            self.start_capture(&machine_params);
+                        }
+                    }
+                    next_event = context.next_event();
                 }
-                next_event = context.next_event();
-            }
-            let chan = self.active_channel;
-            let left = channel_samples.get_mut(0).copied().unwrap_or(0.0);
-            let right = channel_samples.get_mut(1).copied().unwrap_or(left);
-            let ext_l = external
-                .as_ref()
-                .and_then(|bus| bus.first())
-                .and_then(|samples| samples.get(sample_id))
-                .copied()
-                .unwrap_or(0.0);
-            let ext_r = external
-                .as_ref()
-                .and_then(|bus| bus.get(1))
-                .and_then(|samples| samples.get(sample_id))
-                .copied()
-                .unwrap_or(0.0);
-            let dry = left * gains[0] + right * gains[1] + ext_l * gains[2] + ext_r * gains[3];
-            let wet = self
-                .distortion
-                .process(self.decimator.process(dry * input_gain, srr));
-            peak = peak.max(wet.abs());
-            let capturing = self.ram_record.is_recording(chan);
-            self.ram_record.record_mono(wet, chan);
-            let monitor = dry * cue1
-                + if capturing {
-                    self.ram_record.monitor_sample(chan) * cue2
-                } else {
-                    0.0
-                };
-            // Monitoring is opt-in. Zero cue gains preserve the silent sampler output.
-            for sample in channel_samples.iter_mut() {
-                *sample = monitor;
+                let chan = self.active_channel;
+                let wet = self
+                    .distortion
+                    .process(self.decimator.process(dry * input_gain, srr));
+                peak = peak.max(wet.abs());
+                let capturing = self.ram_record.is_recording(chan);
+                self.ram_record.record_mono(wet, chan);
+                let monitor = dry * cue1
+                    + if capturing {
+                        self.ram_record.monitor_sample(chan) * cue2
+                    } else {
+                        0.0
+                    };
+                // Monitoring is opt-in. Zero cue gains preserve silent output.
+                for channel in main.iter_mut() {
+                    channel[sample_id] = monitor;
+                }
             }
         }
         self.ui
@@ -386,5 +393,46 @@ mod tests {
         render(&mut plugin, &[[0.5; 4]], Some(0));
         assert_eq!(registry.read_buffer(0).unwrap(), [2047]);
         assert!(f32::from_bits(plugin.ui.peak.load(Ordering::Relaxed)) > 0.9);
+    }
+
+    #[test]
+    fn midi_and_capture_are_independent_of_simd_and_host_block_boundaries() {
+        let frames: Vec<_> = (0..257)
+            .map(|i| {
+                let f = i as f32 / 2048.0;
+                [2.0 * f, -f, 0.5 * f, -0.25 * f]
+            })
+            .collect();
+        // Two centered stereo buses sum to 5/8 of f. Integer arithmetic gives
+        // independently rounded 12-bit codes, including half-step boundaries.
+        let codes: Vec<_> = (0..257).map(|i| ((5 * i + 4) / 8) as i16).collect();
+        for note in [0, 63, 64, 65, 256] {
+            for blocks in [&[257][..], &[1, 3, 61, 2, 64, 126][..]] {
+                let registry = Arc::new(BufferRegistry::new());
+                let mut plugin = RecordPlugin::default();
+                plugin.ram_record = RamRecord::with_registry(44100.0, registry.clone());
+                let p = Arc::get_mut(&mut plugin.params).unwrap();
+                p.ilev = int(127);
+                p.cue2 = int(127);
+                let mut offset = 0;
+                let mut output = Vec::new();
+                for &len in blocks {
+                    let event = (offset..offset + len)
+                        .contains(&note)
+                        .then(|| (note - offset) as u32);
+                    output.extend(render(&mut plugin, &frames[offset..offset + len], event));
+                    offset += len;
+                }
+                assert_eq!(registry.read_buffer(0).unwrap(), codes[note..]);
+                assert!(output[..note].iter().all(|&sample| sample == 0.0));
+                assert_eq!(
+                    output[note..],
+                    codes[note..]
+                        .iter()
+                        .map(|&code| code as f32 / 2048.0)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
     }
 }
