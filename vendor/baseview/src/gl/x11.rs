@@ -239,5 +239,18 @@ impl GlContext {
 }
 
 impl Drop for GlContext {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        unsafe {
+            errors::XErrorHandler::handle(self.display, |error_handler| {
+                if glx::glXGetCurrentContext() == self.context {
+                    let res = glx::glXMakeCurrent(self.display, 0, std::ptr::null_mut());
+                    error_handler.check().unwrap();
+                    assert_ne!(res, 0, "make_not_current failed while destroying GL context");
+                }
+
+                glx::glXDestroyContext(self.display, self.context);
+                error_handler.check().unwrap();
+            });
+        }
+    }
 }

@@ -13,7 +13,3 @@ pub use ephemeral_dsp::Decimator;
 pub static NO_GUI: AtomicBool = AtomicBool::new(false);
 
 // Core library - plugins are exported from separate crates in plugins/
-
-pub mod standalone {
-    pub use crate::plugin::*;
-}

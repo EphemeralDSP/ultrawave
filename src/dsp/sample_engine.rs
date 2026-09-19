@@ -1,7 +1,19 @@
+use crate::machines::shared::BufferRegistry;
 use crate::Decimator;
+use std::sync::Arc;
+
+enum SampleSource {
+    Owned(Vec<i16>),
+    Shared {
+        registry: Arc<BufferRegistry>,
+        channel: usize,
+        revision: u64,
+        len: usize,
+    },
+}
 
 pub struct SampleEngine {
-    buffer: Vec<i16>,
+    source: SampleSource,
     position: f64,
     sample_rate: f32,
     decimator: Decimator,
@@ -10,7 +22,7 @@ pub struct SampleEngine {
 impl SampleEngine {
     pub fn new(sample_rate: f32) -> Self {
         Self {
-            buffer: Vec::new(),
+            source: SampleSource::Owned(Vec::new()),
             position: 0.0,
             sample_rate,
             decimator: Decimator::new(),
@@ -22,28 +34,40 @@ impl SampleEngine {
     }
 
     pub fn load_buffer(&mut self, samples: Vec<i16>) {
-        self.buffer = samples;
+        self.source = SampleSource::Owned(samples);
         self.position = 0.0;
+    }
+
+    pub fn latch_shared(&mut self, registry: Arc<BufferRegistry>, channel: usize) -> Option<f32> {
+        let (len, rate, revision) = registry.snapshot(channel)?;
+        self.source = SampleSource::Shared {
+            registry,
+            channel,
+            revision,
+            len,
+        };
+        self.position = 0.0;
+        (len != 0).then_some(rate)
     }
 
     #[allow(dead_code)]
     pub fn clear(&mut self) {
-        self.buffer.clear();
+        self.source = SampleSource::Owned(Vec::new());
         self.position = 0.0;
         self.decimator = Decimator::new();
     }
 
     pub fn trigger(&mut self, start_position: f64) {
-        self.position = start_position.clamp(0.0, self.buffer.len() as f64);
+        self.position = start_position.clamp(0.0, self.buffer_len() as f64);
         self.decimator = Decimator::new();
     }
 
     pub fn read_sample_linear(&mut self, pitch_ratio: f64) -> f32 {
-        if self.buffer.is_empty() {
+        if self.buffer_len() == 0 {
             return 0.0;
         }
 
-        let len = self.buffer.len();
+        let len = self.buffer_len();
         let idx = self.position as usize;
 
         if idx >= len {
@@ -52,8 +76,24 @@ impl SampleEngine {
 
         let frac = (self.position - idx as f64) as f32;
         // RAM stores signed 12-bit codes in an i16 container, not 16-bit PCM.
-        let s0: f32 = self.buffer[idx] as f32 / 2048.0;
-        let s1: f32 = self.buffer[(idx + 1).min(len - 1)] as f32 / 2048.0;
+        let pair = match &self.source {
+            SampleSource::Owned(buffer) => Some((buffer[idx], buffer[(idx + 1).min(len - 1)])),
+            SampleSource::Shared {
+                registry,
+                channel,
+                revision,
+                ..
+            } => registry.read_sample_pair(*channel, idx, *revision, len),
+        };
+        let Some((a, b)) = pair else {
+            self.position = len as f64;
+            // SRR holds a previous sample; discard it when the latched shared
+            // revision is invalidated so a dead voice cannot leak old audio.
+            self.decimator = Decimator::new();
+            return 0.0;
+        };
+        let s0: f32 = a as f32 / 2048.0;
+        let s1: f32 = b as f32 / 2048.0;
         let interpolated = s0 + (s1 - s0) * frac;
 
         self.position += pitch_ratio;
@@ -68,11 +108,14 @@ impl SampleEngine {
     }
 
     pub fn is_finished(&self, end_position: f64) -> bool {
-        self.position >= end_position || self.position >= self.buffer.len() as f64
+        self.position >= end_position || self.position >= self.buffer_len() as f64
     }
 
     pub fn buffer_len(&self) -> usize {
-        self.buffer.len()
+        match &self.source {
+            SampleSource::Owned(buffer) => buffer.len(),
+            SampleSource::Shared { len, .. } => *len,
+        }
     }
 
     #[allow(dead_code)]
@@ -82,7 +125,10 @@ impl SampleEngine {
 
     #[allow(dead_code)]
     pub fn buffer(&self) -> &[i16] {
-        &self.buffer
+        match &self.source {
+            SampleSource::Owned(buffer) => buffer,
+            SampleSource::Shared { .. } => &[],
+        }
     }
 }
 

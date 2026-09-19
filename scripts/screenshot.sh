@@ -184,8 +184,8 @@ screenshot_plugin() {
     process_name="$(basename "$bin")"
 
     # Plugin window dimensions (must match default_state() in editor)
-    local plugin_width=700
-    local plugin_height=400
+    local plugin_width=760
+    local plugin_height=460
 
     if [[ ! -x "$bin" ]]; then
         echo "Binary not found: $bin"

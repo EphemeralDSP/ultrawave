@@ -1,13 +1,29 @@
+pub mod editor;
 pub mod play;
-pub mod play_editor;
 pub mod record;
-pub mod record_editor;
 
 use crate::machines::shared::{get_global_registry, CHANNEL_COUNT};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 pub use play::PlayPlugin;
 pub use record::RecordPlugin;
+
+/// Per-instance UI communication. No process-global LEDs or audio-thread locks.
+#[derive(Default)]
+pub struct UiState {
+    pub trigger: AtomicBool,
+    pub active: AtomicBool,
+    pub peak: AtomicU32,
+}
+
+impl UiState {
+    pub fn publish(&self, active: bool, peak: f32) {
+        self.active.store(active, Ordering::Relaxed);
+        // The UI consumes the maximum since its last poll, not one tiny block.
+        self.peak.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
+    }
+}
 
 pub fn maybe_preload_buffer_from_env() -> Result<Option<usize>, String> {
     let wav_path = match std::env::var("ULTRAWAVE_SCREENSHOT_WAV") {
@@ -52,6 +68,7 @@ pub fn maybe_preload_buffer_from_env() -> Result<Option<usize>, String> {
         })
         .collect();
 
-    get_global_registry().replace_buffer(channel, mono_buffer.clone());
-    Ok(Some(mono_buffer.len()))
+    let len = mono_buffer.len();
+    get_global_registry().replace_buffer_at_rate(channel, mono_buffer, spec.sample_rate as f32);
+    Ok(Some(len))
 }

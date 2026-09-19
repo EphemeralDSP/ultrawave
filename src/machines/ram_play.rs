@@ -50,6 +50,7 @@ pub struct RamPlay {
     retrigs_remaining: [usize; CHANNEL_COUNT],
     current_params: [RamPlayParams; CHANNEL_COUNT],
     distortion: [Distortion; CHANNEL_COUNT],
+    playback_ratios: [f64; CHANNEL_COUNT],
 }
 
 #[allow(dead_code)]
@@ -78,6 +79,7 @@ impl RamPlay {
             retrigs_remaining: [0; CHANNEL_COUNT],
             current_params: [RamPlayParams::default(); CHANNEL_COUNT],
             distortion: std::array::from_fn(|_| Distortion::new()),
+            playback_ratios: [1.0; CHANNEL_COUNT],
         }
     }
 
@@ -94,14 +96,12 @@ impl RamPlay {
 
     pub fn load_buffer(&mut self, samples: Vec<i16>, channel: usize) {
         let channel = Self::clamp_channel(channel);
-        let _ = self.registry.replace_buffer(channel, samples.clone());
-        self.engines[channel].load_buffer(samples);
+        let _ = self.registry.replace_buffer(channel, samples);
     }
 
     pub fn load_all_buffers(&mut self, buffers: &[Vec<i16>; CHANNEL_COUNT]) {
         for (i, buffer) in buffers.iter().enumerate() {
             let _ = self.registry.replace_buffer(i, buffer.clone());
-            self.engines[i].load_buffer(buffer.clone());
         }
     }
 
@@ -109,13 +109,14 @@ impl RamPlay {
         let channel = Self::clamp_channel(channel);
         self.current_params[channel] = *params;
         self.update_params(params, channel);
-        let shared_buffer = self.registry.read_buffer(channel).unwrap_or_default();
-        self.engines[channel].load_buffer(shared_buffer);
-        if self.engines[channel].buffer_len() == 0 {
+        let source_rate = self.engines[channel].latch_shared(Arc::clone(&self.registry), channel);
+        if source_rate.is_none() {
             self.is_playing[channel] = false;
             self.retrigs_remaining[channel] = 0;
             return;
         }
+        self.playback_ratios[channel] =
+            pitch_to_ratio(params.pitch) * source_rate.unwrap() as f64 / self.sample_rate as f64;
 
         self.trigger_internal(channel);
 
@@ -140,6 +141,10 @@ impl RamPlay {
         current.dist = params.dist;
         current.vol = params.vol;
         self.distortion[channel].set_drive(param_to_normalized(params.dist));
+        self.playback_ratios[channel] = pitch_to_ratio(params.pitch);
+        if let Some((_, source_rate, _)) = self.registry.snapshot(channel) {
+            self.playback_ratios[channel] *= source_rate as f64 / self.sample_rate as f64;
+        }
     }
 
     fn trigger_internal(&mut self, channel: usize) {
@@ -205,9 +210,8 @@ impl RamPlay {
             return 0.0;
         }
 
-        let pitch_ratio = pitch_to_ratio(self.current_params[channel].pitch);
         let sample = self.engines[channel].read_sample_with_processing(
-            pitch_ratio,
+            self.playback_ratios[channel],
             self.current_params[channel].srr,
             self.current_params[channel].brr,
         );
@@ -270,13 +274,17 @@ mod tests {
 
     fn make_test_buffer() -> Vec<i16> {
         (0..1000)
-            .map(|i| (i as f32 / 1000.0 * 32767.0) as i16)
+            .map(|i| (i as f32 / 1000.0 * 2047.0) as i16)
             .collect()
+    }
+
+    fn test_player() -> RamPlay {
+        RamPlay::with_registry(44100.0, Arc::new(BufferRegistry::new()))
     }
 
     #[test]
     fn test_trigger_starts_playback() {
-        let mut player = RamPlay::new(44100.0);
+        let mut player = test_player();
         player.load_buffer(make_test_buffer(), 0);
         player.trigger(&RamPlayParams::default(), 0);
         assert!(player.is_playing(0));
@@ -284,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_stop_halts_playback() {
-        let mut player = RamPlay::new(44100.0);
+        let mut player = test_player();
         player.load_buffer(make_test_buffer(), 0);
         player.trigger(&RamPlayParams::default(), 0);
         player.stop(0);
@@ -293,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_process_outputs_audio() {
-        let mut player = RamPlay::new(44100.0);
+        let mut player = test_player();
         player.load_buffer(make_test_buffer(), 0);
         player.trigger(&RamPlayParams::default(), 0);
         let sample = player.process(0);
@@ -302,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_retrigger_restarts_playback() {
-        let mut player = RamPlay::new(44100.0);
+        let mut player = test_player();
         player.load_buffer(make_test_buffer(), 0);
         let params = RamPlayParams {
             rtrg: 2,
@@ -315,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_multi_channel_playback() {
-        let mut player = RamPlay::new(44100.0);
+        let mut player = test_player();
         player.load_buffer(make_test_buffer(), 0);
         player.load_buffer(make_test_buffer(), 3);
 
@@ -359,7 +367,7 @@ mod tests {
     fn test_minimal_one_shot_reaches_end_and_stops() {
         let registry = Arc::new(BufferRegistry::new());
         let mut player = RamPlay::with_registry(44100.0, registry);
-        player.load_buffer(vec![8192; 64], 0);
+        player.load_buffer(vec![2047; 64], 0);
 
         let params = RamPlayParams {
             strt: 0,

@@ -16,14 +16,22 @@ fn main() -> ExitCode {
                 print_help();
                 ExitCode::SUCCESS
             }
-            _ => {
-                let _ = nih_plug_xtask::main();
-                ExitCode::SUCCESS
-            }
+            _ => match nih_plug_xtask::main() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("xtask failed: {err}");
+                    ExitCode::FAILURE
+                }
+            },
         }
     } else {
-        let _ = nih_plug_xtask::main();
-        ExitCode::SUCCESS
+        match nih_plug_xtask::main() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("xtask failed: {err}");
+                ExitCode::FAILURE
+            }
+        }
     }
 }
 
@@ -63,22 +71,35 @@ EXAMPLES:
 }
 
 fn ensure_bundled(skip_bundle: bool) -> bool {
-    let vst3_path = PathBuf::from("target/bundled/ultrawave.vst3");
-    let clap_path = PathBuf::from("target/bundled/ultrawave.clap");
-
-    if skip_bundle && vst3_path.exists() && clap_path.exists() {
+    let plugins = ["ultrawave-record", "ultrawave-play"];
+    if skip_bundle {
+        for plugin in plugins {
+            for ext in ["vst3", "clap"] {
+                let path = PathBuf::from(format!("target/bundled/{plugin}.{ext}"));
+                if !path.exists() {
+                    eprintln!("--skip-bundle requires existing {}", path.display());
+                    return false;
+                }
+            }
+        }
         return true;
     }
-
-    println!("Building and bundling plugins...");
-    let status = Command::new("cargo")
-        .args(["xtask", "bundle", "ultrawave", "--release"])
-        .status()
-        .expect("Failed to run cargo xtask bundle");
-
-    if !status.success() {
-        eprintln!("Bundle failed");
-        return false;
+    for plugin in plugins {
+        println!("Building and bundling {plugin}...");
+        match Command::new("cargo")
+            .args(["xtask", "bundle", plugin, "--release"])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(_) => {
+                eprintln!("Bundle failed for {plugin}");
+                return false;
+            }
+            Err(err) => {
+                eprintln!("Could not bundle {plugin}: {err}");
+                return false;
+            }
+        }
     }
     true
 }
@@ -94,66 +115,32 @@ fn run_validate_vst3(args: &[String]) -> ExitCode {
     let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
     let verbose = args.iter().any(|a| a == "--verbose");
 
-    let vst3_path = PathBuf::from("target/bundled/ultrawave.vst3");
-
-    if !skip_bundle || !vst3_path.exists() {
-        println!("Building and bundling VST3...");
-        let status = Command::new("cargo")
-            .args(["xtask", "bundle", "ultrawave", "--release"])
-            .status()
-            .expect("Failed to run cargo xtask bundle");
-
-        if !status.success() {
-            eprintln!("Bundle failed");
-            return ExitCode::FAILURE;
-        }
-    }
-
-    if !vst3_path.exists() {
-        eprintln!("VST3 bundle not found at {:?}", vst3_path);
+    if args.iter().any(|a| a == "--strictness")
+        && args.iter().position(|a| a == "--strictness").unwrap() + 1 == args.len()
+    {
+        eprintln!("missing value for --strictness");
         return ExitCode::FAILURE;
     }
-
-    println!();
-    println!("=========================================");
-    println!("VST3 Plugin Validation (pluginval)");
-    println!("=========================================");
-    println!("Plugin: {:?}", vst3_path);
-    println!("Strictness: {} (1=lenient, 10=strict)", strictness);
-    println!();
-
-    let mut cmd_args = vec![
-        "--validate-in-process".to_string(),
-        "--strictness-level".to_string(),
-        strictness.to_string(),
-    ];
-
-    if verbose {
-        cmd_args.push("--verbose".to_string());
+    if !ensure_bundled(skip_bundle) {
+        return ExitCode::FAILURE;
     }
-
-    cmd_args.push(vst3_path.to_string_lossy().to_string());
-
-    println!("Running: pluginval {}", cmd_args.join(" "));
-    println!();
-
-    let status = Command::new("pluginval")
-        .args(&cmd_args)
-        .status()
-        .expect("Failed to run pluginval. Is it installed and in PATH?");
-
-    println!();
-    if status.success() {
-        println!("=========================================");
-        println!("✓ VST3 VALIDATION PASSED");
-        println!("=========================================");
-        ExitCode::SUCCESS
-    } else {
-        println!("=========================================");
-        println!("✗ VST3 VALIDATION FAILED");
-        println!("=========================================");
-        ExitCode::FAILURE
+    for plugin in ["ultrawave-record", "ultrawave-play"] {
+        let mut command = Command::new("scripts/validate-vst3.sh");
+        command.args([
+            "--plugin",
+            &format!("target/bundled/{plugin}.vst3"),
+            "--strictness",
+            strictness,
+        ]);
+        if verbose {
+            command.arg("--verbose");
+        }
+        match command.status() {
+            Ok(status) if status.success() => {}
+            _ => return ExitCode::FAILURE,
+        }
     }
+    ExitCode::SUCCESS
 }
 
 fn run_validate_clap(args: &[String]) -> ExitCode {
@@ -166,71 +153,30 @@ fn run_validate_clap(args: &[String]) -> ExitCode {
     let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
     let verbose = args.iter().any(|a| a == "--verbose");
 
-    let clap_path = PathBuf::from("target/bundled/ultrawave.clap");
-
-    if !skip_bundle || !clap_path.exists() {
-        println!("Building and bundling CLAP...");
-        let status = Command::new("cargo")
-            .args(["xtask", "bundle", "ultrawave", "--release"])
-            .status()
-            .expect("Failed to run cargo xtask bundle");
-
-        if !status.success() {
-            eprintln!("Bundle failed");
-            return ExitCode::FAILURE;
-        }
-    }
-
-    if !clap_path.exists() {
-        eprintln!("CLAP bundle not found at {:?}", clap_path);
+    if args.iter().any(|a| a == "--tests")
+        && args.iter().position(|a| a == "--tests").unwrap() + 1 == args.len()
+    {
+        eprintln!("missing value for --tests");
         return ExitCode::FAILURE;
     }
-
-    println!();
-    println!("=========================================");
-    println!("CLAP Plugin Validation (clap-validator)");
-    println!("=========================================");
-    println!("Plugin: {:?}", clap_path);
-    if let Some(t) = tests {
-        println!("Tests: {}", t);
-    } else {
-        println!("Tests: all");
+    if !ensure_bundled(skip_bundle) {
+        return ExitCode::FAILURE;
     }
-    println!();
-
-    let mut cmd_args = vec!["validate".to_string()];
-
-    if verbose {
-        cmd_args.push("--verbose".to_string());
+    for plugin in ["ultrawave-record", "ultrawave-play"] {
+        let mut command = Command::new("scripts/validate-clap.sh");
+        command.args(["--plugin", &format!("target/bundled/{plugin}.clap")]);
+        if let Some(t) = tests {
+            command.args(["--tests", t]);
+        }
+        if verbose {
+            command.arg("--verbose");
+        }
+        match command.status() {
+            Ok(status) if status.success() => {}
+            _ => return ExitCode::FAILURE,
+        }
     }
-
-    if let Some(t) = tests {
-        cmd_args.push("--only".to_string());
-        cmd_args.push(t.to_string());
-    }
-
-    cmd_args.push(clap_path.to_string_lossy().to_string());
-
-    println!("Running: clap-validator {}", cmd_args.join(" "));
-    println!();
-
-    let status = Command::new("clap-validator")
-        .args(&cmd_args)
-        .status()
-        .expect("Failed to run clap-validator. Is it installed and in PATH?");
-
-    println!();
-    if status.success() {
-        println!("=========================================");
-        println!("✓ CLAP VALIDATION PASSED");
-        println!("=========================================");
-        ExitCode::SUCCESS
-    } else {
-        println!("=========================================");
-        println!("✗ CLAP VALIDATION FAILED");
-        println!("=========================================");
-        ExitCode::FAILURE
-    }
+    ExitCode::SUCCESS
 }
 
 fn run_validate_all(args: &[String]) -> ExitCode {
@@ -288,17 +234,14 @@ fn install_plugins() -> ExitCode {
     let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
     let system_install = args.iter().any(|a| a == "--system");
 
-    let plugins = [
-        ("ultrawave-record", "ultrawave_record"),
-        ("ultrawave-play", "ultrawave_play"),
-    ];
+    let plugins = ["ultrawave-record", "ultrawave-play"];
     let bundle_dir = PathBuf::from("target/bundled");
 
     if !skip_bundle {
-        for (primary, fallback) in plugins {
+        for primary in plugins {
             println!("Building and bundling {}...", primary);
-            if !bundle_plugin(primary, fallback) {
-                eprintln!("Bundle failed for {} ({})", primary, fallback);
+            if !bundle_plugin(primary) {
+                eprintln!("Bundle failed for {}", primary);
                 return ExitCode::FAILURE;
             }
         }
@@ -317,9 +260,9 @@ fn install_plugins() -> ExitCode {
     }
 
     let mut had_errors = false;
-    for (primary, fallback) in plugins {
+    for primary in plugins {
         // Install VST3 bundle
-        if let Some(vst3_src) = find_artifact(&bundle_dir, primary, fallback, "vst3") {
+        if let Some(vst3_src) = find_artifact(&bundle_dir, primary, "vst3") {
             let dest = vst3_dest.join(
                 vst3_src
                     .file_name()
@@ -333,15 +276,12 @@ fn install_plugins() -> ExitCode {
                 println!("✓ VST3 installed for {}", primary);
             }
         } else {
-            eprintln!(
-                "VST3 bundle not found for {} (checked {} and {})",
-                primary, primary, fallback
-            );
+            eprintln!("VST3 bundle not found for {}", primary);
             had_errors = true;
         }
 
         // Install CLAP bundle/binary
-        if let Some(clap_src) = find_artifact(&bundle_dir, primary, fallback, "clap") {
+        if let Some(clap_src) = find_artifact(&bundle_dir, primary, "clap") {
             let dest = clap_dest.join(
                 clap_src
                     .file_name()
@@ -355,10 +295,7 @@ fn install_plugins() -> ExitCode {
                 println!("✓ CLAP installed for {}", primary);
             }
         } else {
-            eprintln!(
-                "CLAP bundle not found for {} (checked {} and {})",
-                primary, primary, fallback
-            );
+            eprintln!("CLAP bundle not found for {}", primary);
             had_errors = true;
         }
     }
@@ -370,33 +307,19 @@ fn install_plugins() -> ExitCode {
     }
 }
 
-fn bundle_plugin(primary: &str, fallback: &str) -> bool {
+fn bundle_plugin(primary: &str) -> bool {
     let status = Command::new("cargo")
         .args(["xtask", "bundle", primary, "--release"])
         .status()
         .expect("Failed to run cargo xtask bundle");
 
-    if status.success() {
-        return true;
-    }
-
-    let fallback_status = Command::new("cargo")
-        .args(["xtask", "bundle", fallback, "--release"])
-        .status()
-        .expect("Failed to run cargo xtask bundle");
-
-    fallback_status.success()
+    status.success()
 }
 
-fn find_artifact(bundle_dir: &Path, primary: &str, fallback: &str, ext: &str) -> Option<PathBuf> {
+fn find_artifact(bundle_dir: &Path, primary: &str, ext: &str) -> Option<PathBuf> {
     let primary_path = bundle_dir.join(format!("{primary}.{ext}"));
     if primary_path.exists() {
         return Some(primary_path);
-    }
-
-    let fallback_path = bundle_dir.join(format!("{fallback}.{ext}"));
-    if fallback_path.exists() {
-        return Some(fallback_path);
     }
 
     None

@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::CString;
 use std::io;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicI16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 pub const CHANNEL_COUNT: usize = 4;
@@ -17,20 +17,23 @@ const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 pub const MAX_BUFFER_SAMPLES: usize = (DEFAULT_SAMPLE_RATE * MAX_RECORD_SECONDS) as usize;
 
 const SHARED_MAGIC: u32 = 0x5557_524D; // "UWRM"
-const SHARED_VERSION: u32 = 1;
+const SHARED_VERSION: u32 = 2;
 const INIT_UNINITIALIZED: u32 = 0;
 const INIT_IN_PROGRESS: u32 = 1;
 const INIT_READY: u32 = 2;
 
 #[cfg(unix)]
-const DEFAULT_SHM_KEY: &str = "/ultrawave_global_buffers_v1";
+const DEFAULT_SHM_KEY: &str = "/ultrawave_global_buffers_v2";
 #[cfg(windows)]
-const DEFAULT_SHM_KEY: &str = "Local\\UltrawaveGlobalBuffersV1";
+const DEFAULT_SHM_KEY: &str = "Local\\UltrawaveGlobalBuffersV2";
 
 #[repr(C, align(64))]
 struct SharedChannelLayout {
     write_position: AtomicUsize,
     length: AtomicUsize,
+    sample_rate_bits: AtomicU32,
+    revision: AtomicU64,
+    writer: AtomicU64,
     samples: [AtomicI16; MAX_BUFFER_SAMPLES],
 }
 
@@ -39,7 +42,7 @@ struct SharedLayout {
     magic: AtomicU32,
     version: AtomicU32,
     init_state: AtomicU32,
-    _reserved: AtomicU32,
+    next_writer_id: AtomicU32,
     active_instances: AtomicUsize,
     channels: [SharedChannelLayout; CHANNEL_COUNT],
 }
@@ -51,9 +54,14 @@ struct SharedMemory {
 impl SharedMemory {
     fn open() -> io::Result<Self> {
         let key = shared_memory_key();
-        let mapping = platform::SharedMapping::open(&key)?;
+        Self::open_key(&key)
+    }
+
+    fn open_key(key: &str) -> io::Result<Self> {
+        let mapping = platform::SharedMapping::open(key)?;
         let memory = Self { mapping };
-        memory.ensure_initialized();
+        memory.ensure_initialized()?;
+        memory.recover_dead_writers();
         Ok(memory)
     }
 
@@ -63,8 +71,9 @@ impl SharedMemory {
         unsafe { &*self.mapping.as_ptr() }
     }
 
-    fn ensure_initialized(&self) {
+    fn ensure_initialized(&self) -> io::Result<()> {
         let layout = self.layout();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 
         loop {
             let state = layout.init_state.load(Ordering::Acquire);
@@ -72,22 +81,12 @@ impl SharedMemory {
                 let magic = layout.magic.load(Ordering::Acquire);
                 let version = layout.version.load(Ordering::Acquire);
                 if magic == SHARED_MAGIC && version == SHARED_VERSION {
-                    return;
+                    return Ok(());
                 }
-                if layout
-                    .init_state
-                    .compare_exchange(
-                        INIT_READY,
-                        INIT_IN_PROGRESS,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
-                {
-                    self.initialize_layout();
-                    return;
-                }
-                continue;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "incompatible Ultrawave RAM layout; use a distinct ULTRAWAVE_SHM_KEY",
+                ));
             }
 
             if state == INIT_UNINITIALIZED {
@@ -102,12 +101,18 @@ impl SharedMemory {
                     .is_ok()
                 {
                     self.initialize_layout();
-                    return;
+                    return Ok(());
                 }
                 continue;
             }
 
-            std::thread::yield_now();
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Ultrawave RAM initializer did not finish",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 
@@ -116,98 +121,88 @@ impl SharedMemory {
         for channel in &layout.channels {
             channel.length.store(0, Ordering::Release);
             channel.write_position.store(0, Ordering::Release);
+            channel
+                .sample_rate_bits
+                .store(DEFAULT_SAMPLE_RATE.to_bits(), Ordering::Release);
+            channel.revision.store(0, Ordering::Release);
+            channel.writer.store(0, Ordering::Release);
             for sample in &channel.samples {
                 sample.store(0, Ordering::Release);
             }
         }
         layout.active_instances.store(0, Ordering::Release);
+        layout.next_writer_id.store(1, Ordering::Relaxed);
         layout.magic.store(SHARED_MAGIC, Ordering::Release);
         layout.version.store(SHARED_VERSION, Ordering::Release);
         layout.init_state.store(INIT_READY, Ordering::Release);
+    }
+
+    fn recover_dead_writers(&self) {
+        #[cfg(unix)]
+        for channel in &self.layout().channels {
+            let token = channel.writer.load(Ordering::Acquire);
+            if token != 0 {
+                let pid = (token >> 32) as libc::pid_t;
+                // kill(pid, 0) performs no signalling; ESRCH means the owner died.
+                if unsafe { libc::kill(pid, 0) } != 0
+                    && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    let recovery_token = ((std::process::id() as u64) << 32)
+                        | self.layout().next_writer_id.fetch_add(1, Ordering::Relaxed) as u64;
+                    if channel
+                        .writer
+                        .compare_exchange(
+                            token,
+                            recovery_token,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        // The dead process may have stopped after making the
+                        // revision odd. Keep readers invalidated while restoring
+                        // a coherent empty channel under exclusive ownership.
+                        let revision = channel.revision.load(Ordering::Acquire);
+                        if revision & 1 == 0 {
+                            channel.revision.store(revision + 1, Ordering::Release);
+                        }
+                        channel.length.store(0, Ordering::Release);
+                        channel.write_position.store(0, Ordering::Release);
+                        channel
+                            .sample_rate_bits
+                            .store(DEFAULT_SAMPLE_RATE.to_bits(), Ordering::Release);
+                        channel
+                            .revision
+                            .store((revision | 1) + 1, Ordering::Release);
+                        channel.writer.store(0, Ordering::Release);
+                    }
+                }
+            }
+        }
     }
 }
 
 /// Local lock-free buffer implementation used for explicit `BufferRegistry::new()`.
 /// The plugin/global path uses `SharedMemory`.
-struct LocalBuffer {
-    samples: Box<[AtomicI16]>,
-    write_position: AtomicUsize,
-    length: AtomicUsize,
-    max_length: usize,
-}
+struct LocalBuffer(Box<SharedChannelLayout>);
 
 impl LocalBuffer {
     fn new() -> Self {
-        let samples = std::iter::repeat_with(|| AtomicI16::new(0))
-            .take(MAX_BUFFER_SAMPLES)
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-
-        Self {
-            samples,
-            write_position: AtomicUsize::new(0),
-            length: AtomicUsize::new(0),
-            max_length: MAX_BUFFER_SAMPLES,
-        }
-    }
-
-    fn clear(&self) {
-        self.length.store(0, Ordering::Release);
-        self.write_position.store(0, Ordering::Release);
-    }
-
-    fn len(&self) -> usize {
-        self.length.load(Ordering::Acquire)
-    }
-
-    fn write_sample(&self, sample: i16) -> bool {
-        let position = loop {
-            let current = self.write_position.load(Ordering::Acquire);
-            if current >= self.max_length {
-                return false;
-            }
-
-            if self
-                .write_position
-                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                break current;
-            }
-        };
-
-        self.samples[position].store(sample, Ordering::Release);
-        self.length.fetch_max(position + 1, Ordering::AcqRel);
-        true
-    }
-
-    fn read_buffer(&self) -> Vec<i16> {
-        let len = self.len();
-        let mut out = Vec::with_capacity(len);
-        for sample in self.samples.iter().take(len) {
-            out.push(sample.load(Ordering::Acquire));
-        }
-        out
-    }
-
-    fn replace_buffer(&self, samples: &[i16]) {
-        let len = samples.len().min(self.max_length);
-        for (idx, sample) in samples.iter().take(len).enumerate() {
-            self.samples[idx].store(*sample, Ordering::Release);
-        }
-        self.length.store(len, Ordering::Release);
-        self.write_position.store(len, Ordering::Release);
-    }
-
-    fn reset_write_position(&self) {
-        self.write_position.store(0, Ordering::Release);
+        // SAFETY: All fields are integer atomics, for which the all-zero bit
+        // pattern is valid. Allocation is performed directly on the heap so
+        // this ~0.9 MiB value is never materialized on the thread stack.
+        let buffer = unsafe { Box::<SharedChannelLayout>::new_zeroed().assume_init() };
+        buffer
+            .sample_rate_bits
+            .store(DEFAULT_SAMPLE_RATE.to_bits(), Ordering::Relaxed);
+        Self(buffer)
     }
 }
 
 struct LocalRegistry {
     buffers: [LocalBuffer; CHANNEL_COUNT],
     active_instances: AtomicUsize,
-    record_generations: [AtomicU64; CHANNEL_COUNT],
+    next_writer_id: AtomicU32,
 }
 
 impl LocalRegistry {
@@ -220,7 +215,7 @@ impl LocalRegistry {
                 LocalBuffer::new(),
             ],
             active_instances: AtomicUsize::new(0),
-            record_generations: std::array::from_fn(|_| AtomicU64::new(0)),
+            next_writer_id: AtomicU32::new(1),
         }
     }
 }
@@ -233,110 +228,111 @@ enum RegistryBackend {
 /// Global registry for shared buffers R1-R4.
 pub struct BufferRegistry {
     backend: RegistryBackend,
+    process_id: u32,
 }
 
-#[allow(dead_code)]
 impl BufferRegistry {
-    // Local/offline registries must not cancel writers using other registries.
-    // Shared-memory writers retain the existing process-local ownership guard;
-    // arbitration across separate host processes is not yet guaranteed.
-    pub fn bump_record_generation(&self, channel: usize) -> u64 {
-        let generations = match &self.backend {
-            RegistryBackend::Local(local) => &local.record_generations,
-            RegistryBackend::Shared(_) => &RECORD_GENERATION,
+    /// IDs come from RAM, not a dylib-local static: CLAP and VST3 may coexist.
+    pub(crate) fn writer_token(&self) -> u64 {
+        let counter = match &self.backend {
+            RegistryBackend::Local(local) => &local.next_writer_id,
+            RegistryBackend::Shared(shared) => &shared.layout().next_writer_id,
         };
-        generations[channel].fetch_add(1, Ordering::AcqRel) + 1
-    }
-
-    pub fn current_record_generation(&self, channel: usize) -> u64 {
-        let generations = match &self.backend {
-            RegistryBackend::Local(local) => &local.record_generations,
-            RegistryBackend::Shared(_) => &RECORD_GENERATION,
-        };
-        generations[channel].load(Ordering::Acquire)
+        ((self.process_id as u64) << 32) | counter.fetch_add(1, Ordering::Relaxed) as u64
     }
 
     /// Creates an isolated local registry (primarily for tests and offline flows).
     pub fn new() -> Self {
         Self {
             backend: RegistryBackend::Local(LocalRegistry::new()),
+            process_id: std::process::id(),
         }
     }
 
     fn new_shared() -> io::Result<Self> {
         Ok(Self {
             backend: RegistryBackend::Shared(SharedMemory::open()?),
+            process_id: std::process::id(),
         })
     }
 
     fn new_global() -> Self {
-        #[cfg(test)]
-        {
+        if cfg!(test) {
             return Self::new();
         }
-        #[cfg(not(test))]
-        {
-            match Self::new_shared() {
-                Ok(registry) => registry,
-                Err(err) => {
-                    eprintln!(
-                        "Ultrawave shared memory unavailable, falling back to local RAM: {err}"
-                    );
-                    Self::new()
-                }
+        match Self::new_shared() {
+            Ok(registry) => registry,
+            Err(err) => {
+                eprintln!("Ultrawave shared memory unavailable, falling back to local RAM: {err}");
+                Self::new()
             }
         }
     }
 
-    fn shared_channel(layout: &SharedLayout, channel: usize) -> Option<&SharedChannelLayout> {
-        layout.channels.get(channel)
+    fn channel(&self, channel: usize) -> Option<&SharedChannelLayout> {
+        match &self.backend {
+            RegistryBackend::Local(local) => local.buffers.get(channel).map(|buffer| &*buffer.0),
+            RegistryBackend::Shared(shared) => shared.layout().channels.get(channel),
+        }
     }
 
     fn shared_len(channel: &SharedChannelLayout) -> usize {
         channel.length.load(Ordering::Acquire)
     }
 
-    fn shared_read_buffer(channel: &SharedChannelLayout) -> Vec<i16> {
-        let len = Self::shared_len(channel);
-        let mut out = Vec::with_capacity(len);
-        for sample in channel.samples.iter().take(len) {
-            out.push(sample.load(Ordering::Acquire));
+    fn with_writer(
+        &self,
+        channel: usize,
+        action: impl FnOnce(&SharedChannelLayout) -> bool,
+    ) -> bool {
+        let Some(ch) = self.channel(channel) else {
+            return false;
+        };
+        let token = self.writer_token();
+        if ch
+            .writer
+            .compare_exchange(0, token, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return false;
         }
-        out
+        let result = action(ch);
+        ch.writer.store(0, Ordering::Release);
+        result
     }
 
-    fn shared_write_sample(channel: &SharedChannelLayout, sample: i16) -> bool {
-        let position = loop {
-            let current = channel.write_position.load(Ordering::Acquire);
-            if current >= MAX_BUFFER_SAMPLES {
-                return false;
-            }
-            if channel
-                .write_position
-                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                break current;
-            }
-        };
-
+    fn append(channel: &SharedChannelLayout, sample: i16) -> bool {
+        let position = channel.write_position.load(Ordering::Relaxed);
+        if position >= MAX_BUFFER_SAMPLES {
+            return false;
+        }
         channel.samples[position].store(sample, Ordering::Release);
-        channel.length.fetch_max(position + 1, Ordering::AcqRel);
+        channel
+            .write_position
+            .store(position + 1, Ordering::Relaxed);
+        channel.length.store(position + 1, Ordering::Release);
         true
     }
 
-    fn shared_replace_buffer(channel: &SharedChannelLayout, samples: &[i16]) {
+    fn shared_replace_buffer(channel: &SharedChannelLayout, samples: &[i16], sample_rate: f32) {
+        channel.revision.fetch_add(1, Ordering::AcqRel);
         let len = samples.len().min(MAX_BUFFER_SAMPLES);
         for (idx, sample) in samples.iter().take(len).enumerate() {
             channel.samples[idx].store(*sample, Ordering::Release);
         }
         channel.length.store(len, Ordering::Release);
         channel.write_position.store(len, Ordering::Release);
+        channel
+            .sample_rate_bits
+            .store(sample_rate.max(1.0).to_bits(), Ordering::Release);
+        channel.revision.fetch_add(1, Ordering::Release);
     }
 
     fn shared_clear_buffer(channel: &SharedChannelLayout) {
+        channel.revision.fetch_add(1, Ordering::AcqRel);
         channel.length.store(0, Ordering::Release);
         channel.write_position.store(0, Ordering::Release);
+        channel.revision.fetch_add(1, Ordering::Release);
     }
 
     fn register_instance(&self) {
@@ -380,127 +376,145 @@ impl BufferRegistry {
 
     /// Get a clone of the buffer data for reading.
     pub fn read_buffer(&self, channel: usize) -> Option<Vec<i16>> {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                local.buffers.get(channel).map(LocalBuffer::read_buffer)
-            }
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                Self::shared_channel(layout, channel).map(Self::shared_read_buffer)
-            }
-        }
+        let (len, _, revision) = self.snapshot(channel)?;
+        let ch = self.channel(channel)?;
+        let samples = ch.samples[..len]
+            .iter()
+            .map(|s| s.load(Ordering::Acquire))
+            .collect();
+        (ch.revision.load(Ordering::Acquire) == revision).then_some(samples)
     }
 
     /// Write a sample to the buffer.
     pub fn write_sample(&self, channel: usize, sample: i16) -> bool {
-        match &self.backend {
-            RegistryBackend::Local(local) => local
-                .buffers
-                .get(channel)
-                .is_some_and(|buffer| buffer.write_sample(sample)),
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                Self::shared_channel(layout, channel)
-                    .is_some_and(|ch| Self::shared_write_sample(ch, sample))
-            }
-        }
+        self.with_writer(channel, |ch| Self::append(ch, sample))
     }
 
     /// Replace entire buffer contents.
     pub fn replace_buffer(&self, channel: usize, samples: Vec<i16>) -> bool {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                if let Some(buffer) = local.buffers.get(channel) {
-                    buffer.replace_buffer(&samples);
-                    true
-                } else {
-                    false
-                }
-            }
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                if let Some(ch) = Self::shared_channel(layout, channel) {
-                    Self::shared_replace_buffer(ch, &samples);
-                    true
-                } else {
-                    false
-                }
-            }
+        self.replace_buffer_at_rate(channel, samples, DEFAULT_SAMPLE_RATE)
+    }
+
+    pub fn replace_buffer_at_rate(
+        &self,
+        channel: usize,
+        samples: Vec<i16>,
+        sample_rate: f32,
+    ) -> bool {
+        if !sample_rate.is_finite() || sample_rate <= 0.0 {
+            return false;
         }
+        self.with_writer(channel, |ch| {
+            Self::shared_replace_buffer(ch, &samples, sample_rate);
+            true
+        })
     }
 
     /// Get current buffer length.
     pub fn buffer_len(&self, channel: usize) -> usize {
-        match &self.backend {
-            RegistryBackend::Local(local) => local.buffers.get(channel).map_or(0, LocalBuffer::len),
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                Self::shared_channel(layout, channel).map_or(0, Self::shared_len)
-            }
-        }
+        self.channel(channel).map_or(0, Self::shared_len)
     }
 
     /// Clear a specific buffer.
     pub fn clear_buffer(&self, channel: usize) -> bool {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                if let Some(buffer) = local.buffers.get(channel) {
-                    buffer.clear();
-                    true
-                } else {
-                    false
-                }
-            }
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                if let Some(ch) = Self::shared_channel(layout, channel) {
-                    Self::shared_clear_buffer(ch);
-                    true
-                } else {
-                    false
-                }
-            }
-        }
+        self.with_writer(channel, |ch| {
+            Self::shared_clear_buffer(ch);
+            true
+        })
     }
 
     /// Clear all buffers.
     pub fn clear_all(&self) {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                for buffer in &local.buffers {
-                    buffer.clear();
-                }
-            }
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                for channel in &layout.channels {
-                    Self::shared_clear_buffer(channel);
-                }
-            }
+        for channel in 0..CHANNEL_COUNT {
+            self.clear_buffer(channel);
         }
     }
 
-    /// Reset write position for recording (without clearing data).
+    /// Reset write position and truncate the readable buffer.
     pub fn reset_write_position(&self, channel: usize) -> bool {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                if let Some(buffer) = local.buffers.get(channel) {
-                    buffer.reset_write_position();
-                    true
-                } else {
-                    false
-                }
-            }
-            RegistryBackend::Shared(shared) => {
-                let layout = shared.layout();
-                if let Some(ch) = Self::shared_channel(layout, channel) {
-                    ch.write_position.store(0, Ordering::Release);
-                    true
-                } else {
-                    false
-                }
-            }
+        self.with_writer(channel, |ch| {
+            ch.revision.fetch_add(1, Ordering::AcqRel);
+            ch.write_position.store(0, Ordering::Relaxed);
+            ch.length.store(0, Ordering::Release);
+            ch.revision.fetch_add(1, Ordering::Release);
+            true
+        })
+    }
+
+    pub(crate) fn claim_writer(
+        &self,
+        channel: usize,
+        token: u64,
+        _clear: bool,
+        sample_rate: f32,
+    ) -> bool {
+        let Some(ch) = self.channel(channel) else {
+            return false;
+        };
+        if ch
+            .writer
+            .compare_exchange(0, token, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
         }
+        ch.revision.fetch_add(1, Ordering::AcqRel);
+        ch.write_position.store(0, Ordering::Relaxed);
+        // A new take always starts with an empty readable prefix. Retaining a
+        // stale tail while overwriting it would violate the reader revision.
+        ch.length.store(0, Ordering::Release);
+        ch.sample_rate_bits
+            .store(sample_rate.max(1.0).to_bits(), Ordering::Release);
+        ch.revision.fetch_add(1, Ordering::Release);
+        true
+    }
+
+    pub(crate) fn write_sample_owned(&self, channel: usize, token: u64, sample: i16) -> bool {
+        let Some(ch) = self.channel(channel) else {
+            return false;
+        };
+        ch.writer.load(Ordering::Acquire) == token && Self::append(ch, sample)
+    }
+
+    pub(crate) fn release_writer(&self, channel: usize, token: u64) {
+        if let Some(ch) = self.channel(channel) {
+            let _ = ch
+                .writer
+                .compare_exchange(token, 0, Ordering::Release, Ordering::Relaxed);
+        }
+    }
+
+    /// O(1) consistent metadata snapshot for real-time readers.
+    pub fn snapshot(&self, channel: usize) -> Option<(usize, f32, u64)> {
+        let ch = self.channel(channel)?;
+        let revision = ch.revision.load(Ordering::Acquire);
+        if revision & 1 != 0 {
+            return None;
+        }
+        let len = ch.length.load(Ordering::Acquire).min(MAX_BUFFER_SAMPLES);
+        let rate = f32::from_bits(ch.sample_rate_bits.load(Ordering::Acquire));
+        (ch.revision.load(Ordering::Acquire) == revision).then_some((len, rate, revision))
+    }
+
+    #[inline]
+    pub fn read_sample_pair(
+        &self,
+        channel: usize,
+        index: usize,
+        revision: u64,
+        latched_len: usize,
+    ) -> Option<(i16, i16)> {
+        let ch = self.channel(channel)?;
+        if ch.revision.load(Ordering::Acquire) != revision {
+            return None;
+        }
+        let len = ch.length.load(Ordering::Acquire).min(latched_len);
+        if index >= len {
+            return None;
+        }
+        let a = ch.samples[index].load(Ordering::Acquire);
+        let b = ch.samples[(index + 1).min(len - 1)].load(Ordering::Acquire);
+        (ch.revision.load(Ordering::Acquire) == revision).then_some((a, b))
     }
 }
 
@@ -531,20 +545,9 @@ fn shared_memory_key() -> String {
 }
 
 /// Global singleton instance.
-#[allow(dead_code)]
 static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
-static RECORD_MIDI_NOTE_ACTIVE: AtomicBool = AtomicBool::new(false);
-static PLAY_MIDI_NOTE_ACTIVE: AtomicBool = AtomicBool::new(false);
-
-static RECORD_GENERATION: [AtomicU64; CHANNEL_COUNT] = [
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-    AtomicU64::new(0),
-];
 
 /// Get reference to the global buffer registry.
-#[allow(dead_code)]
 pub fn get_global_registry() -> Arc<BufferRegistry> {
     GLOBAL_REGISTRY
         .get_or_init(|| Arc::new(BufferRegistry::new_global()))
@@ -562,22 +565,6 @@ pub fn register_plugin_instance() {
 /// Unregister a plugin instance lifecycle.
 pub fn unregister_plugin_instance() {
     get_global_registry().unregister_instance();
-}
-
-pub fn set_record_midi_note_active(active: bool) {
-    RECORD_MIDI_NOTE_ACTIVE.store(active, Ordering::Release);
-}
-
-pub fn record_midi_note_active() -> bool {
-    RECORD_MIDI_NOTE_ACTIVE.load(Ordering::Acquire)
-}
-
-pub fn set_play_midi_note_active(active: bool) {
-    PLAY_MIDI_NOTE_ACTIVE.store(active, Ordering::Release);
-}
-
-pub fn play_midi_note_active() -> bool {
-    PLAY_MIDI_NOTE_ACTIVE.load(Ordering::Acquire)
 }
 
 #[cfg(unix)]
@@ -700,7 +687,7 @@ mod platform {
             }
 
             let ptr = NonNull::new(raw_ptr as *mut SharedLayout)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "mmap returned null"))?;
+                .ok_or_else(|| io::Error::other("mmap returned null"))?;
 
             Ok(Self { ptr, len, fd })
         }
@@ -888,7 +875,37 @@ mod tests {
         registry.write_sample(2, 10);
         registry.write_sample(2, 20);
         assert!(registry.reset_write_position(2));
-        assert_eq!(registry.buffer_len(2), 2);
+        assert_eq!(registry.buffer_len(2), 0);
+        assert!(registry.write_sample(2, 30));
+        assert_eq!(registry.read_buffer(2).unwrap(), [30]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_backend_initializes_and_recovers_odd_dead_writer() {
+        let key = format!("/uw-unit-{}-{:p}", std::process::id(), &());
+        let memory = SharedMemory::open_key(&key).unwrap();
+        let channel = &memory.layout().channels[0];
+        let mut dead = std::process::Command::new("true").spawn().unwrap();
+        let dead_pid = dead.id();
+        dead.wait().unwrap();
+        channel.length.store(12, Ordering::Release);
+        channel.write_position.store(7, Ordering::Release);
+        channel.revision.store(3, Ordering::Release);
+        channel
+            .writer
+            .store((dead_pid as u64) << 32 | 1, Ordering::Release);
+
+        memory.recover_dead_writers();
+        assert_eq!(channel.writer.load(Ordering::Acquire), 0);
+        assert_eq!(channel.length.load(Ordering::Acquire), 0);
+        assert_eq!(channel.write_position.load(Ordering::Acquire), 0);
+        assert_eq!(channel.revision.load(Ordering::Acquire) & 1, 0);
+
+        drop(memory);
+        let name = CString::new(key).unwrap();
+        // SAFETY: name is a valid, uniquely owned POSIX shared-memory key.
+        assert_eq!(unsafe { libc::shm_unlink(name.as_ptr()) }, 0);
     }
 
     #[test]

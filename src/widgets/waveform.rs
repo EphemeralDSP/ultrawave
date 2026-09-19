@@ -146,21 +146,6 @@ impl View for WaveformDisplay {
             }
 
             canvas.stroke_path(&waveform_path, &waveform_paint);
-        } else {
-            // Draw placeholder line when no data - white for 1-bit monochrome
-            let mut placeholder_paint = vg::Paint::color(vg::Color::rgb(255, 255, 255));
-            placeholder_paint.set_line_width(1.0);
-            let mut placeholder_path = vg::Path::new();
-            placeholder_path.move_to(x + 10.0, center_y);
-
-            // Draw a simple sine-like placeholder
-            for i in 0..w as usize - 20 {
-                let px = x + 10.0 + i as f32;
-                let py = center_y + (i as f32 * 0.1).sin() * 5.0;
-                placeholder_path.line_to(px, py);
-            }
-
-            canvas.stroke_path(&placeholder_path, &placeholder_paint);
         }
 
         // Draw center line - white for 1-bit monochrome

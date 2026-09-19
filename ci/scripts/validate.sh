@@ -3,6 +3,7 @@ set -euo pipefail
 
 STRICTNESS="${VALIDATION_STRICTNESS:-5}"
 export PATH="${HOME}/.local/bin:${PATH}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 require_file() {
     local path="$1"
@@ -12,18 +13,12 @@ require_file() {
     fi
 }
 
-require_file "target/bundled/ultrawave-record.vst3"
-require_file "target/bundled/ultrawave-play.vst3"
-require_file "target/bundled/ultrawave-record.clap"
-require_file "target/bundled/ultrawave-play.clap"
+require_file "$ROOT/target/bundled/ultrawave-record.vst3"
+require_file "$ROOT/target/bundled/ultrawave-play.vst3"
+require_file "$ROOT/target/bundled/ultrawave-record.clap"
+require_file "$ROOT/target/bundled/ultrawave-play.clap"
 
-if [[ "$(uname -s)" == "Linux" ]]; then
-    xvfb-run -a pluginval --validate-in-process --strictness-level "${STRICTNESS}" target/bundled/ultrawave-record.vst3
-    xvfb-run -a pluginval --validate-in-process --strictness-level "${STRICTNESS}" target/bundled/ultrawave-play.vst3
-else
-    pluginval --validate-in-process --strictness-level "${STRICTNESS}" target/bundled/ultrawave-record.vst3
-    pluginval --validate-in-process --strictness-level "${STRICTNESS}" target/bundled/ultrawave-play.vst3
-fi
-
-clap-validator validate target/bundled/ultrawave-record.clap
-clap-validator validate target/bundled/ultrawave-play.clap
+for plugin in ultrawave-record ultrawave-play; do
+    "$ROOT/scripts/validate-vst3.sh" --plugin "$ROOT/target/bundled/$plugin.vst3" --strictness "$STRICTNESS"
+    "$ROOT/scripts/validate-clap.sh" --plugin "$ROOT/target/bundled/$plugin.clap"
+done

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.2</ApiVersion>
+  <Id>com.ephemeraldsp.UltrawaveHostTest</Id>
+  <Name>Ultrawave Host Test</Name>
+  <Version>1.0</Version>
+  <Author>EphemeralDSP</Author>
+  <AutoUpgraded>true</AutoUpgraded>
+</RenoiseScriptingTool>

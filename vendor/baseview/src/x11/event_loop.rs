@@ -74,6 +74,30 @@ impl EventLoop {
         self.event_loop_running = true;
 
         while self.event_loop_running {
+            // A host is allowed to destroy the parent immediately after WindowHandle::close()
+            // returns. Observe that request before issuing another frame, then let close() wait
+            // for this event loop and its rendering resources to be fully torn down.
+            if let Some(parent_handle) = &self.parent_handle {
+                if parent_handle.parent_did_drop() {
+                    self.handle_must_close();
+                }
+            }
+
+            if self.window.close_requested.replace(false) {
+                self.handle_must_close();
+            }
+
+            if !self.event_loop_running {
+                break;
+            }
+
+            // Process DestroyNotify before drawing. This also handles hosts that destroy their X11
+            // parent without first closing the baseview handle.
+            self.drain_xcb_events()?;
+            if !self.event_loop_running {
+                break;
+            }
+
             // We'll try to keep a consistent frame pace. If the last frame couldn't be processed in
             // the expected frame time, this will throttle down to prevent multiple frames from
             // being queued up. The conditional here is needed because event handling and frame
@@ -88,10 +112,6 @@ impl EventLoop {
 
             let mut fds = [PollFd::new(xcb_fd, PollFlags::POLLIN)];
 
-            // Check for any events in the internal buffers
-            // before going to sleep:
-            self.drain_xcb_events()?;
-
             // FIXME: handle errors
             poll(&mut fds, next_frame.duration_since(Instant::now()).subsec_millis() as i32)
                 .unwrap();
@@ -104,25 +124,6 @@ impl EventLoop {
                 if revents.contains(PollFlags::POLLIN) {
                     self.drain_xcb_events()?;
                 }
-            }
-
-            // Check if the parents's handle was dropped (such as when the host
-            // requested the window to close)
-            //
-            // FIXME: This will need to be changed from just setting an atomic to somehow
-            // synchronizing with the window being closed (using a synchronous channel, or
-            // by joining on the event loop thread).
-            if let Some(parent_handle) = &self.parent_handle {
-                if parent_handle.parent_did_drop() {
-                    self.handle_must_close();
-                    self.window.close_requested.set(false);
-                }
-            }
-
-            // Check if the user has requested the window to close
-            if self.window.close_requested.get() {
-                self.handle_must_close();
-                self.window.close_requested.set(false);
             }
         }
 
@@ -171,6 +172,11 @@ impl EventLoop {
                 {
                     self.new_physical_size = Some(new_physical_size);
                 }
+            }
+
+            XEvent::DestroyNotify(event) if event.window == self.window.window_id => {
+                self.window.window_destroyed.set(true);
+                self.handle_must_close();
             }
 
             ////

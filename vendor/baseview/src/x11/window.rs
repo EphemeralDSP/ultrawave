@@ -3,7 +3,7 @@ use std::error::Error;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 
 use raw_window_handle::{
@@ -33,21 +33,35 @@ pub struct WindowHandle {
     raw_window_handle: Option<RawWindowHandle>,
     close_requested: Arc<AtomicBool>,
     is_open: Arc<AtomicBool>,
+    event_thread: Arc<OnceLock<thread::ThreadId>>,
+    closed: Option<mpsc::Receiver<()>>,
 }
 
 impl WindowHandle {
     pub fn close(&mut self) {
         if self.raw_window_handle.take().is_some() {
-            // FIXME: This will need to be changed from just setting an atomic to somehow
-            // synchronizing with the window being closed (using a synchronous channel, or
-            // by joining on the event loop thread).
+            self.close_requested.store(true, Ordering::Release);
 
-            self.close_requested.store(true, Ordering::Relaxed);
+            // A plugin host may destroy the parent as soon as close() returns. Wait until the
+            // event thread has stopped rendering and released all X11 resources first. Never
+            // wait on the event thread itself, since that would deadlock a callback closing its
+            // own window.
+            if self.event_thread.get().copied() != Some(thread::current().id()) {
+                if let Some(closed) = self.closed.take() {
+                    let _ = closed.recv();
+                }
+            }
         }
     }
 
     pub fn is_open(&self) -> bool {
         self.is_open.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for WindowHandle {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -66,24 +80,28 @@ unsafe impl HasRawWindowHandle for WindowHandle {
 pub(crate) struct ParentHandle {
     close_requested: Arc<AtomicBool>,
     is_open: Arc<AtomicBool>,
+    event_thread: Arc<OnceLock<thread::ThreadId>>,
 }
 
 impl ParentHandle {
-    pub fn new() -> (Self, WindowHandle) {
+    pub fn new(closed: mpsc::Receiver<()>) -> (Self, WindowHandle) {
         let close_requested = Arc::new(AtomicBool::new(false));
         let is_open = Arc::new(AtomicBool::new(true));
+        let event_thread = Arc::new(OnceLock::new());
 
         let handle = WindowHandle {
             raw_window_handle: None,
             close_requested: Arc::clone(&close_requested),
             is_open: Arc::clone(&is_open),
+            event_thread: Arc::clone(&event_thread),
+            closed: Some(closed),
         };
 
-        (Self { close_requested, is_open }, handle)
+        (Self { close_requested, is_open, event_thread }, handle)
     }
 
     pub fn parent_did_drop(&self) -> bool {
-        self.close_requested.load(Ordering::Relaxed)
+        self.close_requested.load(Ordering::Acquire)
     }
 }
 
@@ -95,15 +113,29 @@ impl Drop for ParentHandle {
 
 pub(crate) struct WindowInner {
     pub(crate) xcb_connection: XcbConnection,
-    window_id: XWindow,
+    pub(crate) window_id: XWindow,
     pub(crate) window_info: WindowInfo,
     visual_id: Visualid,
     mouse_cursor: Cell<MouseCursor>,
+    pub(crate) window_destroyed: Cell<bool>,
 
     pub(crate) close_requested: Cell<bool>,
 
     #[cfg(feature = "opengl")]
     gl_context: Option<GlContext>,
+}
+
+impl Drop for WindowInner {
+    fn drop(&mut self) {
+        // GLX resources must be released while the drawable and Display are still valid.
+        #[cfg(feature = "opengl")]
+        drop(self.gl_context.take());
+
+        if !self.window_destroyed.get() {
+            let _ = self.xcb_connection.conn.destroy_window(self.window_id);
+            let _ = self.xcb_connection.conn.flush();
+        }
+    }
 }
 
 pub struct Window<'a> {
@@ -134,11 +166,13 @@ impl<'a> Window<'a> {
 
         let (tx, rx) = mpsc::sync_channel::<WindowOpenResult>(1);
 
-        let (parent_handle, mut window_handle) = ParentHandle::new();
-
+        let (closed_tx, closed_rx) = mpsc::channel();
+        let (parent_handle, mut window_handle) = ParentHandle::new(closed_rx);
         thread::spawn(move || {
+            let _ = parent_handle.event_thread.set(thread::current().id());
             Self::window_thread(Some(parent_id), options, build, tx.clone(), Some(parent_handle))
                 .unwrap();
+            let _ = closed_tx.send(());
         });
 
         let raw_window_handle = rx.recv().unwrap().unwrap();
@@ -277,6 +311,7 @@ impl<'a> Window<'a> {
             window_info,
             visual_id: visual_info.visual_id,
             mouse_cursor: Cell::new(MouseCursor::default()),
+            window_destroyed: Cell::new(false),
 
             close_requested: Cell::new(false),
 

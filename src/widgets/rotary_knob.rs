@@ -233,10 +233,10 @@ impl View for RotaryKnob {
                 }
             }
 
-            WindowEvent::KeyUp(code, _) => {
-                if *code == Code::ShiftLeft || *code == Code::ShiftRight {
-                    self.granular_drag_status = None;
-                }
+            WindowEvent::KeyUp(code, _)
+                if (*code == Code::ShiftLeft || *code == Code::ShiftRight) =>
+            {
+                self.granular_drag_status = None;
             }
 
             _ => {}

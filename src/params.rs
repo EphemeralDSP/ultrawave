@@ -41,16 +41,12 @@ fn parse_buffer(string: &str) -> Option<i32> {
 
 fn parse_level_db(string: &str) -> Option<f32> {
     let trimmed = string.trim();
-    let stripped = trimmed.trim_end_matches(&[' ', 'd', 'D', 'b', 'B']);
+    let stripped = trimmed.trim_end_matches([' ', 'd', 'D', 'b', 'B']);
     parse_f32_clamped(stripped, -60.0, 12.0)
 }
 
 fn parse_0_127(string: &str) -> Option<i32> {
     parse_i32_clamped(string, 0, 127)
-}
-
-fn parse_level_offset(string: &str) -> Option<i32> {
-    parse_i32_clamped(string, -64, 63).map(|offset| clamp_i32(offset + 64, 0, 127))
 }
 
 fn parse_balance(string: &str) -> Option<i32> {
@@ -101,48 +97,30 @@ fn parse_rate(string: &str) -> Option<i32> {
 }
 
 fn parse_pitch(string: &str) -> Option<i32> {
-    if let Some(value) = parse_from_formatter_lookup(string, 0, 127, format_pitch) {
-        return Some(value);
-    }
-
-    parse_f32_clamped(string, -64.0, 64.0).map(|semitones| {
-        let value = (semitones * 5.33 + 64.0).round() as i32;
-        clamp_i32(value, 0, 127)
-    })
+    parse_f32_clamped(string.trim().trim_end_matches("st").trim(), -64.0, 63.0)
+        .map(|semitones| (semitones.round() as i32 + 64).clamp(0, 127))
 }
 
-fn parse_decay(string: &str) -> Option<i32> {
-    if let Some(value) = parse_from_formatter_lookup(string, 0, 127, format_decay) {
-        return Some(value);
-    }
-
-    let trimmed = string.trim();
-    let ms_part = trimmed.trim_end_matches(&[' ', 'm', 'M', 's', 'S']);
-    ms_part.parse::<i32>().ok().map(|ms| {
-        let value = ((ms - 10) as f32 / 2.36).round() as i32;
-        clamp_i32(value, 0, 127)
-    })
-}
-
-fn parse_hold(string: &str) -> Option<i32> {
-    if let Some(value) = parse_from_formatter_lookup(string, 0, 127, format_hold) {
-        return Some(value);
-    }
-
+fn parse_milliseconds(string: &str, max_ms: f32) -> Option<i32> {
     let trimmed = string.trim();
     if trimmed.eq_ignore_ascii_case("OFF") {
         return Some(0);
     }
-    if trimmed.eq_ignore_ascii_case("INF") {
-        return Some(127);
-    }
+    parse_f32_clamped(
+        trimmed.trim_end_matches([' ', 'm', 'M', 's', 'S']),
+        0.0,
+        max_ms,
+    )
+    .filter(|v| v.is_finite())
+    .map(|ms| (ms / max_ms * 127.0).round() as i32)
+}
 
-    if let Some(percent_str) = trimmed.strip_suffix('%') {
-        return parse_i32_clamped(percent_str, 0, 100)
-            .map(|percent| clamp_i32((percent as f32 / 100.0 * 127.0).round() as i32, 0, 127));
-    }
+fn parse_decay(string: &str) -> Option<i32> {
+    parse_milliseconds(string, 4000.0)
+}
 
-    parse_0_127(trimmed)
+fn parse_hold(string: &str) -> Option<i32> {
+    parse_milliseconds(string, 2000.0)
 }
 
 fn parse_percent(string: &str) -> Option<i32> {
@@ -169,7 +147,7 @@ fn parse_rtrg(string: &str) -> Option<i32> {
 }
 
 fn parse_rtim(string: &str) -> Option<i32> {
-    parse_from_formatter_lookup(string, 0, 127, format_rtim).or_else(|| parse_0_127(string))
+    parse_milliseconds(string, 500.0)
 }
 
 /// Format balance value: L64 to R64 with CENTER at 64
@@ -182,7 +160,7 @@ fn format_balance(value: i32) -> String {
     }
 }
 
-/// Format CUE level: -inf at 0, otherwise dB value
+/// Format CUE level: -inf at zero, otherwise a linear 0–127 gain control.
 fn format_cue(value: i32) -> String {
     if value == 0 {
         "-inf".to_string()
@@ -214,41 +192,23 @@ fn format_rate(value: i32) -> String {
     }
 }
 
-/// Format main/input level: signed offset from center (64)
-fn format_level_offset(value: i32) -> String {
-    let offset = value - 64;
-    if offset == 0 {
-        "0".to_string()
-    } else if offset > 0 {
-        format!("+{}", offset)
-    } else {
-        format!("{}", offset)
-    }
-}
-
 /// Format pitch: semitones from center (64)
 fn format_pitch(value: i32) -> String {
-    let semitones = (value as f32 - 64.0) / 5.33;
-    if semitones == 0.0 {
-        "+0.00".to_string()
-    } else {
-        format!("{:+.2}", semitones)
-    }
+    format!("{:+} st", value - 64)
 }
 
 /// Format decay: ms value based on 0-127 range
 fn format_decay(value: i32) -> String {
-    let ms = 10 + (value as f32 * 2.36) as i32;
-    format!("{}ms", ms)
+    if value == 0 {
+        "OFF".into()
+    } else {
+        format!("{} ms", (value as f32 * 4000.0 / 127.0).round() as i32)
+    }
 }
 
-/// Format hold: OFF at 0, INF at max, otherwise time
+/// Hold duration; the envelope bypasses only when both HOLD and DEC are zero.
 fn format_hold(value: i32) -> String {
-    match value {
-        0 => "OFF".to_string(),
-        127 => "INF".to_string(),
-        _ => format!("{}%", value * 100 / 127),
-    }
+    format!("{} ms", (value as f32 * 2000.0 / 127.0).round() as i32)
 }
 
 /// Format percentage: 0% to 100%
@@ -265,18 +225,9 @@ fn format_rtrg(value: i32) -> String {
     }
 }
 
-/// Format retrigger timing: note divisions
+/// Retrigger interval is currently measured in milliseconds, not beat divisions.
 fn format_rtim(value: i32) -> String {
-    match value {
-        0..=15 => "1/64".to_string(),
-        16..=31 => "1/32".to_string(),
-        32..=47 => "1/16".to_string(),
-        48..=63 => "1/8".to_string(),
-        64..=79 => "1/4".to_string(),
-        80..=95 => "1/2".to_string(),
-        96..=111 => "1/1".to_string(),
-        _ => "2/1".to_string(),
-    }
+    format!("{} ms", (value as f32 * 500.0 / 127.0).round() as i32)
 }
 
 #[derive(Params)]
@@ -284,6 +235,9 @@ pub struct RamRecordParams {
     // Buffer selector (R1-R4)
     #[id = "rec_buf"]
     pub buffer: IntParam,
+    /// Rising edge starts a timed capture, falling edge does not truncate it.
+    #[id = "capture"]
+    pub capture: BoolParam,
     // Sidebar - Output/Effects
     #[id = "lev"]
     pub lev: FloatParam,
@@ -315,6 +269,7 @@ impl Default for RamRecordParams {
         Self {
             buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
                 .with_string_to_value(Arc::new(parse_buffer)),
+            capture: BoolParam::new("Capture", false),
             lev: FloatParam::new(
                 "Level",
                 0.0,
@@ -338,22 +293,24 @@ impl Default for RamRecordParams {
             .with_value_to_string(formatters::v2s_f32_rounded(3)),
             dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
-            mlev: IntParam::new("Main Level", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_level_offset))
-                .with_string_to_value(Arc::new(parse_level_offset)),
+            mlev: IntParam::new("Main Level", 127, IntRange::Linear { min: 0, max: 127 })
+                .with_string_to_value(Arc::new(parse_0_127)),
             mbal: IntParam::new("Main Balance", 64, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_balance))
                 .with_string_to_value(Arc::new(parse_balance)),
-            ilev: IntParam::new("Input Level", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_level_offset))
-                .with_string_to_value(Arc::new(parse_level_offset)),
-            ibal: IntParam::new("Input Balance", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_balance))
-                .with_string_to_value(Arc::new(parse_balance)),
-            cue1: IntParam::new("CUE1", 0, IntRange::Linear { min: 0, max: 127 })
+            ilev: IntParam::new("Sidechain Level", 0, IntRange::Linear { min: 0, max: 127 })
+                .with_string_to_value(Arc::new(parse_0_127)),
+            ibal: IntParam::new(
+                "Sidechain Balance",
+                64,
+                IntRange::Linear { min: 0, max: 127 },
+            )
+            .with_value_to_string(Arc::new(format_balance))
+            .with_string_to_value(Arc::new(parse_balance)),
+            cue1: IntParam::new("Dry Monitor", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_cue))
                 .with_string_to_value(Arc::new(parse_cue)),
-            cue2: IntParam::new("CUE2", 0, IntRange::Linear { min: 0, max: 127 })
+            cue2: IntParam::new("Capture Monitor", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_cue))
                 .with_string_to_value(Arc::new(parse_cue)),
             rec_len: IntParam::new("Rec Length", 48, IntRange::Linear { min: 0, max: 127 })
@@ -473,7 +430,6 @@ mod tests {
 
     #[test]
     fn record_formatters_roundtrip_stable() {
-        assert_roundtrip_stable(0, 127, format_level_offset, parse_level_offset);
         assert_roundtrip_stable(0, 127, format_balance, parse_balance);
         assert_roundtrip_stable(0, 127, format_cue, parse_cue);
         assert_roundtrip_stable(0, 127, format_rec_len, parse_rec_len);
@@ -499,66 +455,15 @@ mod tests {
         assert_eq!(parse_level_db("-999 dB"), Some(-60.0));
         assert_eq!(parse_level_db("999 dB"), Some(12.0));
     }
-}
 
-#[derive(Params)]
-pub struct UltrawaveParams {
-    /// The output's level in dB.
-    #[id = "gain"]
-    pub gain: FloatParam,
-
-    /// Channel selector (0-7)
-    #[id = "chan"]
-    pub channel: IntParam,
-
-    #[nested(group = "RAM Record")]
-    pub record: RamRecordParams,
-
-    #[nested(group = "RAM Play")]
-    pub play: RamPlayParams,
-
-    // Filter Parameters
-    #[id = "fltf"]
-    pub fltf: IntParam,
-    #[id = "fltq"]
-    pub fltq: IntParam,
-    #[id = "fltw"]
-    pub fltw: IntParam,
-
-    // Output
-    #[id = "vol"]
-    pub vol: IntParam,
-    #[id = "pan"]
-    pub pan: IntParam,
-}
-
-impl Default for UltrawaveParams {
-    fn default() -> Self {
-        Self {
-            gain: FloatParam::new(
-                "Gain",
-                0.0,
-                FloatRange::Linear {
-                    min: -80.0,
-                    max: 0.0,
-                },
-            )
-            .with_unit(" dB")
-            .with_value_to_string(formatters::v2s_f32_rounded(2)),
-
-            channel: IntParam::new("Channel", 0, IntRange::Linear { min: 0, max: 7 }),
-
-            record: RamRecordParams::default(),
-            play: RamPlayParams::default(),
-
-            // Filter (0-127)
-            fltf: IntParam::new("Filter Freq", 64, IntRange::Linear { min: 0, max: 127 }),
-            fltq: IntParam::new("Filter Q", 0, IntRange::Linear { min: 0, max: 127 }),
-            fltw: IntParam::new("Filter Width", 0, IntRange::Linear { min: 0, max: 127 }),
-
-            // Output (0-127)
-            vol: IntParam::new("Volume", 100, IntRange::Linear { min: 0, max: 127 }),
-            pan: IntParam::new("Pan", 64, IntRange::Linear { min: 0, max: 127 }),
-        }
+    #[test]
+    fn displayed_units_match_the_sampler() {
+        assert_eq!(format_pitch(76), "+12 st");
+        assert_eq!(parse_pitch("-12 st"), Some(52));
+        assert_eq!(format_decay(127), "4000 ms");
+        assert_eq!(parse_decay("2000 ms"), Some(64));
+        assert_eq!(format_hold(127), "2000 ms");
+        assert_eq!(format_rtim(127), "500 ms");
+        assert_eq!(format_decay(0), "OFF");
     }
 }

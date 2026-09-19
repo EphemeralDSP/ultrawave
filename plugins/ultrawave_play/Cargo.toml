@@ -11,11 +11,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 ultrawave = { path = "../.." }
-
-# DSP
-rubato = "1.0"
-biquad = "0.4"
-hound = "3.5"
-dasp_sample = "0.11"

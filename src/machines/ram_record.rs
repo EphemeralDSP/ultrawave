@@ -28,6 +28,24 @@ impl Default for RamRecordParams {
     }
 }
 
+impl RamRecordParams {
+    /// Stereo-to-mono gains for the main and external buses. Center is exactly 50/50.
+    pub fn input_gains(&self) -> [f32; 4] {
+        let balance = |value: i32| {
+            if value <= 64 {
+                value as f32 / 128.0
+            } else {
+                0.5 + (value - 64) as f32 / 126.0
+            }
+        };
+        let main = param_to_normalized(self.mlev);
+        let input = param_to_normalized(self.ilev);
+        let mb = balance(self.mbal);
+        let ib = balance(self.ibal);
+        [(1.0 - mb) * main, mb * main, (1.0 - ib) * input, ib * input]
+    }
+}
+
 /// Convert a rec_len parameter value (0-127) to a beat count.
 /// Returns `None` for INF mode (record until buffer full).
 pub fn rec_len_to_beats(rec_len: i32) -> Option<f64> {
@@ -53,7 +71,8 @@ pub struct RamRecord {
     is_recording: [bool; CHANNEL_COUNT],
     rec_rate_counters: [f32; CHANNEL_COUNT],
     rec_rate_divisors: [f32; CHANNEL_COUNT],
-    local_generations: [u64; CHANNEL_COUNT],
+    monitor: [f32; CHANNEL_COUNT],
+    owner_token: u64,
 }
 
 impl RamRecord {
@@ -65,6 +84,7 @@ impl RamRecord {
 
     pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
         let max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
+        let owner_token = registry.writer_token();
 
         Self {
             registry,
@@ -76,7 +96,8 @@ impl RamRecord {
             is_recording: [false; CHANNEL_COUNT],
             rec_rate_counters: [0.0; CHANNEL_COUNT],
             rec_rate_divisors: [1.0; CHANNEL_COUNT],
-            local_generations: [0; CHANNEL_COUNT],
+            monitor: [0.0; CHANNEL_COUNT],
+            owner_token,
         }
     }
 
@@ -96,12 +117,7 @@ impl RamRecord {
     /// Retriggering while recording restarts from the beginning.
     pub fn start_recording(&mut self, params: &RamRecordParams, clear: bool, channel: usize) {
         let channel = Self::clamp_channel(channel);
-
-        if clear {
-            self.registry.clear_buffer(channel);
-        } else {
-            self.registry.reset_write_position(channel);
-        }
+        self.stop_recording(channel);
 
         let target_length = match rec_len_to_beats(params.rec_len) {
             Some(beats) => {
@@ -119,21 +135,23 @@ impl RamRecord {
         let rate_normalized = param_to_normalized(params.rec_rate);
         self.rec_rate_divisors[channel] = 1.0 + (1.0 - rate_normalized) * 15.0;
         self.rec_rate_counters[channel] = 0.0;
+        self.monitor[channel] = 0.0;
 
-        let gen = self.registry.bump_record_generation(channel);
-        self.local_generations[channel] = gen;
-
-        self.is_recording[channel] = true;
+        let stored_rate = self.sample_rate / self.rec_rate_divisors[channel].ceil();
+        self.is_recording[channel] =
+            self.registry
+                .claim_writer(channel, self.owner_token, clear, stored_rate);
     }
 
     pub fn stop_recording(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.is_recording[channel] = false;
+        self.registry.release_writer(channel, self.owner_token);
     }
 
     pub fn stop_all_recording(&mut self) {
         for channel in 0..CHANNEL_COUNT {
-            self.is_recording[channel] = false;
+            self.stop_recording(channel);
         }
     }
 
@@ -155,15 +173,16 @@ impl RamRecord {
         params: &RamRecordParams,
         channel: usize,
     ) {
+        let gains = params.input_gains();
+        let mono = main_l * gains[0] + main_r * gains[1] + input_l * gains[2] + input_r * gains[3];
+        self.record_mono(mono, channel);
+    }
+
+    /// Capture an already mixed/processed sample without repeating input mixing.
+    pub fn record_mono(&mut self, mono: f32, channel: usize) {
         let channel = Self::clamp_channel(channel);
 
         if !self.is_recording[channel] {
-            return;
-        }
-
-        // Check if another instance has taken over this channel.
-        if self.registry.current_record_generation(channel) != self.local_generations[channel] {
-            self.is_recording[channel] = false;
             return;
         }
 
@@ -172,39 +191,35 @@ impl RamRecord {
             self.elapsed_samples[channel] += 1;
             if self.elapsed_samples[channel] >= self.target_lengths[channel] {
                 self.is_recording[channel] = false;
+                self.registry.release_writer(channel, self.owner_token);
             }
             return;
         }
         self.rec_rate_counters[channel] = 0.0;
 
-        let mlev = param_to_normalized(params.mlev);
-        let ilev = param_to_normalized(params.ilev);
+        let sample_12bit = (mono * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
 
-        let mbal = param_to_normalized(params.mbal);
-        let main_l_gain = (1.0 - mbal).min(1.0);
-        let main_r_gain = mbal.min(1.0);
-
-        let ibal = param_to_normalized(params.ibal);
-        let input_l_gain = (1.0 - ibal).min(1.0);
-        let input_r_gain = ibal.min(1.0);
-
-        let main_mix = (main_l * main_l_gain + main_r * main_r_gain) * mlev;
-        let input_mix = (input_l * input_l_gain + input_r * input_r_gain) * ilev;
-        let combined = (main_mix + input_mix).clamp(-1.0, 1.0);
-
-        let sample_12bit = (combined * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
-
-        if !self.registry.write_sample(channel, sample_12bit) {
+        if !self
+            .registry
+            .write_sample_owned(channel, self.owner_token, sample_12bit)
+        {
             self.is_recording[channel] = false;
+            self.registry.release_writer(channel, self.owner_token);
             return;
         }
 
+        self.monitor[channel] = sample_12bit as f32 / 2048.0;
         self.samples_recorded[channel] += 1;
         self.elapsed_samples[channel] += 1;
 
         if self.elapsed_samples[channel] >= self.target_lengths[channel] {
             self.is_recording[channel] = false;
+            self.registry.release_writer(channel, self.owner_token);
         }
+    }
+
+    pub fn monitor_sample(&self, channel: usize) -> f32 {
+        self.monitor[Self::clamp_channel(channel)]
     }
 
     pub fn get_buffer(&self, channel: usize) -> Vec<i16> {
@@ -232,6 +247,7 @@ impl RamRecord {
 
     pub fn clear(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
+        self.registry.release_writer(channel, self.owner_token);
         self.registry.clear_buffer(channel);
         self.samples_recorded[channel] = 0;
         self.elapsed_samples[channel] = 0;
@@ -241,6 +257,7 @@ impl RamRecord {
     }
 
     pub fn clear_all(&mut self) {
+        self.stop_all_recording();
         self.registry.clear_all();
         for channel in 0..CHANNEL_COUNT {
             self.samples_recorded[channel] = 0;
@@ -258,6 +275,12 @@ impl RamRecord {
             return 0.0;
         }
         self.elapsed_samples[channel] as f32 / target as f32
+    }
+}
+
+impl Drop for RamRecord {
+    fn drop(&mut self) {
+        self.stop_all_recording();
     }
 }
 
@@ -443,21 +466,20 @@ mod tests {
     }
 
     #[test]
-    fn generation_mismatch_stops_recording() {
+    fn second_recorder_cannot_take_active_channel() {
         let registry = Arc::new(BufferRegistry::new());
         let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let mut contender = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
         let params = basic_params();
 
         rec.start_recording(&params, true, 0);
         record_one_sample(&mut rec, &params, 0);
         assert!(rec.is_recording(0));
-
-        // Simulate another instance bumping the generation
-        registry.bump_record_generation(0);
-
-        // Next record_sample should detect the mismatch and stop
+        contender.start_recording(&params, true, 0);
+        assert!(!contender.is_recording(0));
+        assert_eq!(registry.buffer_len(0), 1);
         record_one_sample(&mut rec, &params, 0);
-        assert!(!rec.is_recording(0));
+        assert_eq!(registry.buffer_len(0), 2);
     }
 
     #[test]
