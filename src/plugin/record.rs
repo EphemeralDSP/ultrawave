@@ -163,8 +163,12 @@ impl RecordPlugin {
         self.ui
             .bank_status
             .store(self.pairing.status() as u32, Ordering::Relaxed);
-        if self.pairing.status() == crate::plugin::pairing::CONNECTING {
+        if matches!(
+            self.pairing.status(),
+            crate::plugin::pairing::CONNECTING | crate::plugin::pairing::FAILED
+        ) {
             self.ui.trigger.store(false, Ordering::Relaxed);
+            self.capture_was_high = self.params.capture.value();
             for channel in buffer.as_slice() {
                 channel.fill(0.0);
             }

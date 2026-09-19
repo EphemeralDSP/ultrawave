@@ -49,6 +49,8 @@ cleanup() {
     wait "$XVFB_PID" 2>/dev/null || true
   fi
   rm -f "/dev/shm${SHM_KEY}" 2>/dev/null || true
+  rm -f "/dev/shm${SHM_KEY}-bank-1" 2>/dev/null || true
+  rm -rf "/tmp/ultrawave-$(id -u)/${SHM_KEY#/}-bank-1"
 }
 trap cleanup EXIT INT TERM
 
@@ -59,9 +61,13 @@ sleep 0.5
 run_host() {
   local phase="$1" marker="$2"
   shift 2
+  # Prepare the initial bank during activation, before offline rendering races
+  # the connector worker. Reopen starts OFF to prove the project restores it.
+  local initial_bank=0
+  if [[ "$phase" == capture ]]; then initial_bank=1; fi
   HOME="$HOME_DIR" XDG_CONFIG_HOME="$CONFIG_DIR" XDG_DATA_HOME="$DATA_DIR" \
   XDG_CACHE_HOME="$CACHE_DIR" DISPLAY="$DISPLAY_NUMBER" \
-  VST3_PATH="$ROOT/target/bundled" ULTRAWAVE_SHM_KEY="$SHM_KEY" \
+  VST3_PATH="$ROOT/target/bundled" ULTRAWAVE_SHM_KEY="$SHM_KEY" ULTRAWAVE_BANK="$initial_bank" \
   ULTRAWAVE_RENOISE_TEST_ROOT="$OUT" ULTRAWAVE_RENOISE_PHASE="$phase" \
     /usr/bin/renoise "$@" >>"$OUT/renoise.stdout.log" 2>>"$OUT/renoise.stderr.log" &
   RENOISE_PID=$!

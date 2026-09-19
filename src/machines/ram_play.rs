@@ -129,6 +129,9 @@ impl RamPlay {
     /// returned for non-audio-thread retirement.
     pub fn rebind_registry(&mut self, registry: Arc<BufferRegistry>) -> Arc<BufferRegistry> {
         self.stop_all();
+        // Engines only latch this registry. Release their references while
+        // self.registry still guards the allocation; no final drop occurs here.
+        self.engines = std::array::from_fn(|_| SampleEngine::new());
         std::mem::replace(&mut self.registry, registry)
     }
 
@@ -357,6 +360,25 @@ mod tests {
         player.trigger(&RamPlayParams::default(), 0);
         player.stop(0);
         assert!(!player.is_playing(0));
+    }
+
+    #[test]
+    fn rebinding_releases_all_latched_sources_before_old_guard_is_retired() {
+        let registry = Arc::new(BufferRegistry::new());
+        let weak = Arc::downgrade(&registry);
+        registry.replace_buffer(0, vec![1024; 4]);
+        let mut player = RamPlay::with_registry(44100.0, registry);
+        player.trigger(&RamPlayParams::default(), 0);
+        let guard = player.rebind_registry(Arc::new(BufferRegistry::new()));
+        assert!(!player.is_any_playing());
+        assert_eq!(player.process(0), 0.0);
+        assert_eq!(
+            weak.strong_count(),
+            1,
+            "only the retirement guard may remain"
+        );
+        drop(guard);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]

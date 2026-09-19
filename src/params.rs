@@ -44,7 +44,7 @@ fn parse_bank(string: &str) -> Option<i32> {
     if value.eq_ignore_ascii_case("OFF") {
         Some(0)
     } else {
-        parse_i32_clamped(value, 1, 16)
+        parse_i32_clamped(value, 0, 16)
     }
 }
 
@@ -504,6 +504,9 @@ mod tests {
 
     #[test]
     fn parsers_clamp_numeric_ranges() {
+        assert_eq!(parse_bank("0"), Some(0));
+        assert_eq!(parse_bank("off"), Some(0));
+        assert_roundtrip_stable(0, 16, format_bank, parse_bank);
         assert_eq!(parse_buffer("-1"), Some(0));
         assert_eq!(parse_buffer("99"), Some(3));
         assert_eq!(parse_0_127("-5"), Some(0));

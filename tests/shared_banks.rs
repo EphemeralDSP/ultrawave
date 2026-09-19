@@ -1,9 +1,31 @@
 use std::sync::Arc;
 use ultrawave::machines::shared::BufferRegistry;
 
+struct Fixture(String);
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        for bank in [1, 2] {
+            let key = format!("/{}-bank-{bank}", self.0);
+            let name = std::ffi::CString::new(key.clone()).unwrap();
+            // SAFETY: only this test's generated namespace, after all leases exit.
+            unsafe {
+                libc::shm_unlink(name.as_ptr());
+            }
+            let _ = std::fs::remove_dir_all(format!(
+                "/tmp/ultrawave-{}/{}",
+                unsafe { libc::geteuid() },
+                key.trim_start_matches('/')
+            ));
+        }
+    }
+}
+
 #[test]
 fn explicit_banks_pair_isolate_disconnect_and_clear_independently() {
     let prefix = format!("ultrawave-bank-test-{}", std::process::id());
+    let _fixture = Fixture(prefix.clone());
     std::env::set_var("ULTRAWAVE_SHM_KEY", prefix);
 
     let bank1a = BufferRegistry::open_bank(1).unwrap();
