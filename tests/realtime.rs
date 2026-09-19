@@ -88,6 +88,17 @@ fn trigger_and_process_do_not_allocate_or_free() {
         std::hint::black_box(player.process(0));
         recorder.record_sample(0.25, 0.25, 0.0, 0.0, &rec_params, 1);
     }
+    player.trigger(
+        &RamPlayParams {
+            strt: 127,
+            end: 0,
+            ..params
+        },
+        0,
+    );
+    for _ in 0..100 {
+        std::hint::black_box(player.process(0));
+    }
     recorder.stop_all_recording();
     player.stop_all();
     COUNTING.with(|on| on.set(false));

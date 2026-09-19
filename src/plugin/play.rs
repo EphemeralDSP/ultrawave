@@ -319,6 +319,35 @@ mod tests {
     }
 
     #[test]
+    fn reversed_markers_honor_midi_velocity_offsets_and_host_block_boundaries() {
+        let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
+        registry.replace_buffer(0, vec![512, -1024, 1536, 256, -512]);
+        let expected = [
+            0.0, 0.0, -0.125, 0.0625, 0.375, -0.25, 0.125, 0.75, -0.5, 0.25, 0.0,
+        ];
+        for block_size in [1, 3, 4, 11] {
+            let mut plugin = PlayPlugin {
+                ram_play: RamPlay::with_registry(44100.0, registry.clone()),
+                ..Default::default()
+            };
+            let params = Arc::get_mut(&mut plugin.params).unwrap();
+            params.strt = IntParam::new("Start", 127, IntRange::Linear { min: 0, max: 127 });
+            params.end = IntParam::new("End", 0, IntRange::Linear { min: 0, max: 127 });
+            let mut output = Vec::new();
+            for start in (0..expected.len()).step_by(block_size) {
+                let len = block_size.min(expected.len() - start);
+                let notes: Vec<_> = [(2, 0.5), (5, 1.0)]
+                    .into_iter()
+                    .filter(|(t, _)| *t >= start && *t < start + len)
+                    .map(|(t, velocity)| ((t - start) as u32, velocity))
+                    .collect();
+                output.extend(render(&mut plugin, len, &notes));
+            }
+            assert_eq!(output, expected, "block size {block_size}");
+        }
+    }
+
+    #[test]
     fn brr_srr_distortion_and_level_are_independent_live_controls() {
         let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
         registry.replace_buffer(0, vec![256, 768, -256, -768, 256, 768, -256, -768]);

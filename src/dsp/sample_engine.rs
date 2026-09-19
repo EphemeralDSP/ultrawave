@@ -62,19 +62,23 @@ impl SampleEngine {
         self.decimator = Decimator::new();
     }
 
+    /// Position is a boundary in 0..=len. A negative ratio reads just below that
+    /// boundary, then steps backwards. At unity rate, swapping integral region
+    /// boundaries reverses its samples exactly, without skipping either endpoint.
     pub fn read_sample_linear(&mut self, pitch_ratio: f64) -> f32 {
-        if self.buffer_len() == 0 {
-            return 0.0;
-        }
-
         let len = self.buffer_len();
-        let idx = self.position as usize;
-
-        if idx >= len {
+        let reverse = pitch_ratio < 0.0;
+        if self.is_finished(if reverse { 0.0 } else { len as f64 }, pitch_ratio) {
             return 0.0;
         }
 
-        let frac = (self.position - idx as f64) as f32;
+        let read_position = if reverse {
+            (self.position - 1.0).max(0.0)
+        } else {
+            self.position
+        };
+        let idx = read_position as usize;
+        let frac = (read_position - idx as f64) as f32;
         // RAM stores signed 12-bit codes in an i16 container, not 16-bit PCM.
         let pair = match &self.source {
             SampleSource::Owned(buffer) => Some((buffer[idx], buffer[(idx + 1).min(len - 1)])),
@@ -86,7 +90,7 @@ impl SampleEngine {
             } => registry.read_sample_pair(*channel, idx, *revision, len),
         };
         let Some((a, b)) = pair else {
-            self.position = len as f64;
+            self.position = if reverse { 0.0 } else { len as f64 };
             // SRR holds a previous sample; discard it when the latched shared
             // revision is invalidated so a dead voice cannot leak old audio.
             self.decimator = Decimator::new();
@@ -107,8 +111,12 @@ impl SampleEngine {
         self.decimator.process(quantized, srr)
     }
 
-    pub fn is_finished(&self, end_position: f64) -> bool {
-        self.position >= end_position || self.position >= self.buffer_len() as f64
+    pub fn is_finished(&self, end_position: f64, pitch_ratio: f64) -> bool {
+        if pitch_ratio < 0.0 {
+            self.position <= end_position || self.position <= 0.0
+        } else {
+            self.position >= end_position || self.position >= self.buffer_len() as f64
+        }
     }
 
     pub fn buffer_len(&self) -> usize {

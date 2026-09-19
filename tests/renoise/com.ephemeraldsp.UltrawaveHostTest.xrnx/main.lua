@@ -169,7 +169,15 @@ local function run()
         source_note:clear()
         play_note.note_string, play_note.instrument_value, play_note.volume_value = "C-4", 1, 127
       end},
-      {"play-r2.wav", function() play_buffer.value_string = "1" end},
+      {"play-reverse.wav", function()
+        parameter(play, "Start").value_string = "127"
+        parameter(play, "End").value_string = "0"
+      end},
+      {"play-r2.wav", function()
+        parameter(play, "Start").value_string = "0"
+        parameter(play, "End").value_string = "127"
+        play_buffer.value_string = "1"
+      end},
     }, function()
       local step = 0
       local function cycle_editors()

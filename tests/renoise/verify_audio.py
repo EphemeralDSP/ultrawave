@@ -76,6 +76,19 @@ second_input = metrics(out / "second-capture.wav")
 assert 875 < second_input["estimated_frequency_hz"] < 885, second_input
 protected = metrics(out / "play-one-shot.wav")
 assert read_wav(out / "play-r1.wav") == read_wav(out / "play-one-shot.wav"), protected
+reverse = metrics(out / "play-reverse.wav")
+assert reverse["channels"] == 2 and reverse["sample_rate"] == 48000, reverse
+# One captured bar at 120 BPM and 48 kHz is exactly 96000 frames. Compare
+# every stereo frame in reverse order, not just frequency/energy or audibility.
+forward_samples = read_wav(out / "play-r1.wav")[2]
+reverse_samples = read_wav(out / "play-reverse.wav")[2]
+expected_reverse = [
+    sample
+    for frame in reversed(range(96000))
+    for sample in forward_samples[frame * 2 : frame * 2 + 2]
+]
+assert list(reverse_samples[:96000 * 2]) == expected_reverse, reverse
+assert all(sample == 0.0 for sample in reverse_samples[96000 * 2:]), reverse
 reopened = metrics(out / "play-after-reopen.wav")
 assert reopened["peak"] < 1e-7, reopened  # RAM must not survive a full shutdown
 recaptured = metrics(out / "play-recaptured.wav")
@@ -90,6 +103,7 @@ summary = {
     "r2": r2,
     "second_input": second_input,
     "protected_take": protected,
+    "reverse": reverse,
     "after_reopen": reopened,
     "recaptured": recaptured,
     "assertions": {
@@ -99,6 +113,7 @@ summary = {
         "play_is_dual_mono": True,
         "r2_did_not_receive_r1": True,
         "one_shot_ignored_repeated_880hz_capture": True,
+        "reversed_markers_reverse_every_sample": True,
         "project_controls_restored": True,
         "ram_empty_after_host_restart": True,
         "one_shot_rearmed_after_host_restart": True,

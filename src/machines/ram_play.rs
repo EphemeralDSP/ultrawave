@@ -51,6 +51,7 @@ pub struct RamPlay {
     current_params: [RamPlayParams; CHANNEL_COUNT],
     distortion: [Distortion; CHANNEL_COUNT],
     playback_ratios: [f64; CHANNEL_COUNT],
+    reverse: [bool; CHANNEL_COUNT],
 }
 
 #[allow(dead_code)]
@@ -80,6 +81,7 @@ impl RamPlay {
             current_params: [RamPlayParams::default(); CHANNEL_COUNT],
             distortion: std::array::from_fn(|_| Distortion::new()),
             playback_ratios: [1.0; CHANNEL_COUNT],
+            reverse: [false; CHANNEL_COUNT],
         }
     }
 
@@ -130,7 +132,8 @@ impl RamPlay {
         }
     }
 
-    /// Live playback controls. Envelope and retrigger timing are latched on trigger.
+    /// Live playback controls. Start, direction, envelope and retrigger timing
+    /// are latched on trigger; End remains live within the selected direction.
     pub fn update_params(&mut self, params: &RamPlayParams, channel: usize) {
         let channel = Self::clamp_channel(channel);
         let current = &mut self.current_params[channel];
@@ -149,8 +152,10 @@ impl RamPlay {
 
     fn trigger_internal(&mut self, channel: usize) {
         let buffer_len = self.engines[channel].buffer_len() as f64;
-        let start_norm = param_to_normalized(self.current_params[channel].strt);
-        let start_pos = (start_norm as f64) * buffer_len;
+        let start = self.current_params[channel].strt;
+        // Multiply before dividing so exact sample boundaries stay exact.
+        let start_pos = start as f64 * buffer_len / 127.0;
+        self.reverse[channel] = start > self.current_params[channel].end;
         self.engines[channel].trigger(start_pos);
 
         self.envelopes[channel] = 1.0;
@@ -198,25 +203,25 @@ impl RamPlay {
         }
 
         let buffer_len = self.engines[channel].buffer_len();
-        let end_pos = if self.current_params[channel].end >= 127 {
-            buffer_len as f64
+        let end_pos = self.current_params[channel].end as f64 * buffer_len as f64 / 127.0;
+        let ratio = if self.reverse[channel] {
+            -self.playback_ratios[channel]
         } else {
-            let end_norm = param_to_normalized(self.current_params[channel].end);
-            (end_norm as f64) * (buffer_len as f64)
+            self.playback_ratios[channel]
         };
 
-        if self.engines[channel].is_finished(end_pos) {
+        if self.engines[channel].is_finished(end_pos, ratio) {
             self.is_playing[channel] = false;
             return 0.0;
         }
 
         let sample = self.engines[channel].read_sample_with_processing(
-            self.playback_ratios[channel],
+            ratio,
             self.current_params[channel].srr,
             self.current_params[channel].brr,
         );
         let sample = self.distortion[channel].process(sample);
-        if self.engines[channel].position() >= end_pos {
+        if self.engines[channel].is_finished(end_pos, ratio) {
             self.is_playing[channel] = false;
         }
 
@@ -361,6 +366,128 @@ mod tests {
 
         assert!(!player.is_playing(2));
         assert!(player.process(2).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn reversed_markers_play_the_selected_region_last_sample_to_first() {
+        let mut player = test_player();
+        for codes in [vec![512, -1024, 1536, 256], vec![-768]] {
+            player.load_buffer(codes.clone(), 0);
+            player.trigger(
+                &RamPlayParams {
+                    strt: 127,
+                    end: 0,
+                    vol: 127,
+                    ..Default::default()
+                },
+                0,
+            );
+            for code in codes.into_iter().rev() {
+                assert_eq!(player.process(0), code as f32 / 2048.0);
+            }
+            assert!(!player.is_playing(0));
+            assert_eq!(player.process(0), 0.0);
+        }
+
+        // Exact interior boundaries: [31, 95) traversed in either direction.
+        let codes: Vec<_> = (0..127).map(|i| i * 16 - 1000).collect();
+        player.load_buffer(codes.clone(), 0);
+        for (start, end, indices) in [
+            (31, 95, (31..95).collect::<Vec<_>>()),
+            (95, 31, (31..95).rev().collect()),
+        ] {
+            player.trigger(
+                &RamPlayParams {
+                    strt: start,
+                    end,
+                    vol: 127,
+                    ..Default::default()
+                },
+                0,
+            );
+            for i in indices {
+                assert_eq!(player.process(0), codes[i] as f32 / 2048.0);
+            }
+            assert!(!player.is_playing(0));
+            assert_eq!(player.process(0), 0.0);
+        }
+        for point in [0, 63, 127] {
+            player.trigger(
+                &RamPlayParams {
+                    strt: point,
+                    end: point,
+                    ..Default::default()
+                },
+                0,
+            );
+            assert_eq!(player.process(0), 0.0);
+            assert!(!player.is_playing(0));
+        }
+    }
+
+    #[test]
+    fn reverse_pitch_and_sample_rate_conversion_keep_interpolation_and_duration() {
+        let registry = Arc::new(BufferRegistry::new());
+        assert!(registry.replace_buffer_at_rate(0, vec![-512, 1024, 1536], 44_100.0));
+        for (output_rate, pitch, expected) in [
+            (44_100.0, 52, vec![0.75, 0.625, 0.5, 0.125, -0.25, -0.25]),
+            (88_200.0, 64, vec![0.75, 0.625, 0.5, 0.125, -0.25, -0.25]),
+            (44_100.0, 76, vec![0.75, -0.25]),
+        ] {
+            let mut player = RamPlay::with_registry(output_rate, registry.clone());
+            player.trigger(
+                &RamPlayParams {
+                    strt: 127,
+                    end: 0,
+                    pitch,
+                    vol: 127,
+                    ..Default::default()
+                },
+                0,
+            );
+            for sample in expected {
+                assert_eq!(player.process(0), sample);
+            }
+            assert!(!player.is_playing(0));
+            assert_eq!(player.process(0), 0.0);
+        }
+    }
+
+    #[test]
+    fn reverse_retriggers_restart_at_start_and_replacement_stops_held_audio() {
+        let registry = Arc::new(BufferRegistry::new());
+        // RTIM 1 = four frames at this output rate. The source runs at unity.
+        assert!(registry.replace_buffer_at_rate(0, vec![256, 512, 768, 1024], 1024.0));
+        let mut player = RamPlay::with_registry(1024.0, registry.clone());
+        let params = RamPlayParams {
+            strt: 127,
+            end: 0,
+            vol: 127,
+            rtrg: 1,
+            rtim: 1,
+            ..Default::default()
+        };
+        player.trigger(&params, 0);
+        let rendered: Vec<_> = (0..8).map(|_| player.process(0)).collect();
+        assert_eq!(rendered, [0.5, 0.375, 0.25, 0.5, 0.375, 0.25, 0.125, 0.0]);
+        assert!(!player.is_playing(0));
+
+        player.trigger(
+            &RamPlayParams {
+                rtrg: 0,
+                srr: 0.5,
+                ..params
+            },
+            0,
+        );
+        assert_eq!(player.process(0), 0.0);
+        assert_eq!(player.process(0), 0.375);
+        assert!(registry.replace_buffer(0, vec![-1024; 4]));
+        assert_eq!(player.process(0), 0.0);
+        assert!(
+            !player.is_playing(0),
+            "invalidated reverse voice must stop, not hold or loop"
+        );
     }
 
     #[test]

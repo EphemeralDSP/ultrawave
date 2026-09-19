@@ -31,6 +31,7 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 - Record One Shot captures once until re-armed; its mode is saved, its latch is volatile
 - Separate bit-depth reduction (BRR), sample-and-hold rate reduction (SRR), and distortion
 - Varispeed pitch with linear interpolation, start/end, hold/decay, and retriggers
+- Reverse playback when STRT is greater than END
 - MIDI-triggered playback with velocity sensitivity
 - Capture/Audition buttons, automatable Capture trigger, clickable R1–R4 tabs,
   per-instance activity/peak meters, and source-rate-aware waveform duration
@@ -125,6 +126,8 @@ For individual renders:
 target/release/ultrawave_record --input tests/vinyl909.wav --output target/capture.wav
 target/release/ultrawave_play --input target/capture.wav --output target/crunch.wav \
   --pitch 52 --brr 32 --srr 0.5 --dist 16
+target/release/ultrawave_play --input target/capture.wav --output target/reverse.wav \
+  --start 127 --end 0
 cargo test --workspace
 ```
 
@@ -194,6 +197,12 @@ an ARM run. Allocation tests cover mixing, first trigger, recording and stopping
    out of order during an offline bounce; the shared RAM is not a DAW routing edge.
    Saving a project does **not** save RAM: recapture after all instances reload.
 
+**Flip STRT and END to play backwards.** STRT 100%, END 0% reverses the whole
+sample; inverted interior markers reverse a slice. Equal markers are silent.
+Direction is chosen on each note or retrigger. STRT is latched on the note;
+END remains live within the chosen direction. Pitch, retriggers, envelopes and
+12-bit effects work in either direction.
+
 For external capture, route a stereo send to Record's **sidechain**, set ILEV
 above zero, and adjust IBAL. MLEV/MBAL control the main input; ILEV/IBAL control
 the sidechain. Each bus is mixed to mono before LEV, SRR, DIST, RATE and 12-bit
@@ -240,8 +249,9 @@ cargo xtask bundle ultrawave-play --release
 The fixture uses Xvfb, an isolated HOME, and a unique shared-RAM key. It generates
 a left-only 440 Hz source **inside Renoise**, captures one bar through the Record
 track effect, and verifies that repeated One Shot triggers with an 880 Hz source
-leave that take bit-for-bit unchanged. R1/R2 routing, dual-mono output, monitoring,
-and five editor open/close cycles are also checked.
+leave that take bit-for-bit unchanged. Reversed STRT/END must render every frame
+of that take in reverse order. R1/R2 routing, dual-mono output, monitoring, and
+five editor open/close cycles are also checked.
 
 It then saves non-default controls, terminates that host, and opens the project
 in a fresh process with the **same RAM key**. Controls must survive, RAM must be

@@ -227,6 +227,36 @@ fn wav_file_roundtrip() {
         );
     }
 
+    let reverse_wav = dir.join("reverse.wav");
+    run_offline_play(&PlayConfig {
+        input: buffer_wav.clone(),
+        output: reverse_wav.clone(),
+        output_secs: Some(0.2),
+        channel: 0,
+        params: RamPlayParams {
+            strt: 127,
+            end: 0,
+            vol: 127,
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let recorded: Vec<_> = hound::WavReader::open(&buffer_wav)
+        .unwrap()
+        .into_samples::<i16>()
+        .map(|s| s.unwrap() as f32 / 32768.0)
+        .collect();
+    let reversed: Vec<_> = hound::WavReader::open(reverse_wav)
+        .unwrap()
+        .into_samples::<f32>()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        &reversed[..recorded.len()],
+        recorded.into_iter().rev().collect::<Vec<_>>()
+    );
+    assert!(reversed[4410..].iter().all(|&sample| sample == 0.0));
+
     // Cleanup
     let _ = std::fs::remove_dir_all(&dir);
 }
