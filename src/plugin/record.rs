@@ -1,4 +1,4 @@
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use crate::plugin::{
 
 pub struct RecordPlugin {
     params: Arc<RamRecordParams>,
-    editor_state: Arc<nih_plug_vizia::ViziaState>,
+    editor_state: Arc<nice_plug_egui::EguiEditorState>,
     sample_rate: f32,
     ram_record: RamRecord,
     active_channel: usize,
@@ -67,12 +67,13 @@ impl Plugin for RecordPlugin {
 
     type SysExMessage = ();
     type BackgroundTask = ();
+    type Editor = editor::PluginEditor;
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
         if crate::NO_GUI.load(Ordering::Relaxed) {
             return None;
         }
@@ -83,11 +84,11 @@ impl Plugin for RecordPlugin {
         )
     }
 
-    fn initialize(
+    fn activate(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        _context: &mut impl ActivateContext<Self>,
     ) -> bool {
         if self.instance_lease.is_none() {
             match register_plugin_instance() {
@@ -275,7 +276,7 @@ impl Drop for RecordPlugin {
 mod tests {
     use super::*;
     use crate::machines::shared::BufferRegistry;
-    use nih_plug::context::{process::Transport, PluginApi};
+    use nice_plug::context::{process::Transport, PluginApi};
     use std::collections::VecDeque;
 
     struct Context(VecDeque<PluginNoteEvent<RecordPlugin>>);
@@ -291,8 +292,23 @@ mod tests {
         fn next_event(&mut self) -> Option<PluginNoteEvent<RecordPlugin>> {
             self.0.pop_front()
         }
-        fn send_event(&mut self, _: PluginNoteEvent<RecordPlugin>) {}
+        fn try_send_event(
+            &mut self,
+            event: PluginNoteEvent<RecordPlugin>,
+        ) -> Result<
+            (),
+            (
+                PluginNoteEvent<RecordPlugin>,
+                nice_plug::context::process::SendEventError,
+            ),
+        > {
+            Err((
+                event,
+                nice_plug::context::process::SendEventError::NoOutputBuffer,
+            ))
+        }
         fn set_latency_samples(&self, _: u32) {}
+        fn request_restart(&self) {}
         fn set_current_voice_capacity(&self, _: u32) {}
     }
 
@@ -322,9 +338,9 @@ mod tests {
             note.into_iter()
                 .map(|timing| NoteEvent::NoteOn {
                     timing,
-                    voice_id: None,
-                    channel: 0,
-                    note: 60,
+                    voice_id: nice_plug::midi::VoiceID::Wildcard,
+                    channel: nice_plug::midi::Channel::Number(0),
+                    key: nice_plug::midi::Key::MIDDLE_C,
                     velocity: 1.0,
                 })
                 .collect(),

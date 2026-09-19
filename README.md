@@ -2,7 +2,7 @@
 
 [Buildkite CI](https://buildkite.com/jmlynn/ultrawave)
 
-Real-time RAM recording and playback plugins inspired by the Elektron Machinedrum UW RAM machines. Built with Rust and [NIH-plug](https://github.com/robbert-vdh/nih-plug).
+Real-time RAM recording and playback plugins inspired by the Elektron Machinedrum UW RAM machines. Built with Rust and [NICE-plug](https://codeberg.org/RustAudio/nice-plug), with the official egui editor adapter.
 
 ## Overview
 
@@ -46,10 +46,17 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 
 ## Building
 
-Building requires SSH access to `EphemeralDSP/ephemeral`. Its allocation-free
-Rust DSP is pinned to a Git revision; no sibling checkout or C++ build is needed.
+Building requires Rust 1.95 or newer and SSH access to `EphemeralDSP/ephemeral`.
+Its allocation-free Rust DSP is pinned to a Git revision; no sibling checkout or C++ build is needed.
 Linux also needs the audio/X11 development packages listed in
 `ci/scripts/deps-linux.sh` (that script installs system packages; inspect it first).
+
+NICE-plug/core 0.4.2, nice-plug-egui 0.5.1 and nice-plug-xtask 0.1.1 are pinned.
+The framework is ISC-licensed; the VST3 bindings use MIT/Apache-2.0. The build no
+longer depends on NIH-plug, Vizia or GPL-licensed `vst3-sys`. See
+[`vendor/README.md`](vendor/README.md) for the VST3 immediate-save and X11 teardown patches.
+Plugin IDs, parameter IDs/types and audio layouts are unchanged; existing project
+controls remain compatible. RAM is still deliberately volatile.
 
 ```bash
 # Install Rust
@@ -142,11 +149,14 @@ They are software regression checks, not comparisons against hardware captures.
 ./scripts/screenshot.sh             # Render both editors; inspect the PNGs
 ```
 
-The warm fast loop took about **six seconds** on the development ThinkPad.
+Both loops include VST3 immediate-save/automation regressions. Run those alone
+with `./scripts/test-vst3-state.sh` (or append `--release`).
+The warm fast loop took about **two seconds** on the development ThinkPad with
+debug symbols and incremental compilation disabled; first builds take longer.
 Listen to `target/audition/*.wav`,
 then inspect peak/RMS, neutral delta, and effect deltas printed by the script.
 Failures stop the pass; watch mode waits for an edit before retrying. The full
-loop took about 2.5 minutes. Validators belong on PATH or in `target/tools/`.
+loop also runs the plugin validators, which belong on PATH or in `target/tools/`.
 
 `cargo run --release --example dsp_bench` compares the original per-sample capture
 mix with the SIMD capture path, including SRR, distortion, atomic 12-bit storage
@@ -235,12 +245,17 @@ and five editor open/close cycles are also checked.
 
 It then saves non-default controls, terminates that host, and opens the project
 in a fresh process with the **same RAM key**. Controls must survive, RAM must be
-silent, and One Shot must allow a fresh capture. A processing pass delivers queued
-VST3 parameter changes before saving. Requires `Xvfb`, `xdotool`, ImageMagick and
-Python on PATH. Artifacts, `.xrns`, logs and metrics are in `target/renoise-test/`.
+silent, and One Shot must allow a fresh capture. It saves immediately after edits,
+without an intervening render to flush VST3 parameter changes. Requires `Xvfb`,
+`xdotool`, ImageMagick and Python on PATH. Artifacts, `.xrns`, logs and metrics are in `target/renoise-test/`.
 This passed at 48 kHz on 2026-09-19. Sidechain/balance/effects also have callback
 tests, **not yet a Renoise sidechain-routing fixture**. No open personal session
 is modified. This fixture exercises VST3; CLAP state/processing use clap-validator.
+
+For cross-framework compatibility, run
+`./scripts/renoise-test.sh tests/renoise/nih-controls.xrns`. The reopen phase uses
+the committed pre-migration project (synthetic audio only), checking the same
+non-default controls, empty RAM and fresh capture with the NICE-plug build.
 
 `tests/test.RPP` is an old scratch session, **not** a verified ready-to-play test
 project (it lacks source→Record routing). Use the routing steps above.
@@ -325,12 +340,14 @@ cargo xtask bundle ultrawave-play --release
 PATH="$PWD/target/tools:$PATH" bash ci/scripts/validate.sh
 ```
 
-Linux validation on 2026-09-19: both CLAP bundles passed (18 tests each, 3
-unsupported tests skipped); VST3 pluginval strictness 5 and ten repetitions per
-editor passed without the previous `BadDrawable` teardown panic. Scripts check
-logs as well as exit status. Renoise capture/playback and five editor open/close
-cycles per plugin passed. Both editors and the empty/playing states were rendered
-and visually inspected. macOS and hardware A/B were not tested in this session.
+NICE-plug migration validated on Linux x86-64, 2026-09-19: 83 workspace tests and
+9 wrapper tests pass in debug/release, along with fmt, Clippy and six offline
+renders. Both CLAP bundles pass (18 tests each, 3 unsupported tests skipped);
+VST3 pluginval strictness 5 and ten repetitions per editor pass without teardown
+warnings or panics. Scripts check logs as well as exit status. Renoise validates
+capture/routing, immediate-save/reopen and pre-migration project compatibility.
+Both editors, trimmed waveform markers and Record armed/recording/locked/rearmed
+states were rendered and inspected. macOS and hardware A/B remain unverified.
 
 See [docs/testing/plugin-validation.md](docs/testing/plugin-validation.md) for details.
 

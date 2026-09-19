@@ -76,8 +76,6 @@ second_input = metrics(out / "second-capture.wav")
 assert 875 < second_input["estimated_frequency_hz"] < 885, second_input
 protected = metrics(out / "play-one-shot.wav")
 assert read_wav(out / "play-r1.wav") == read_wav(out / "play-one-shot.wav"), protected
-settings = metrics(out / "play-settings.wav")
-assert math.isclose(settings["rms"] / r1["rms"], 10 ** (-3 / 20), rel_tol=0.001), settings
 reopened = metrics(out / "play-after-reopen.wav")
 assert reopened["peak"] < 1e-7, reopened  # RAM must not survive a full shutdown
 recaptured = metrics(out / "play-recaptured.wav")

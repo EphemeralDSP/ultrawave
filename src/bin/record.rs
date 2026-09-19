@@ -1,4 +1,4 @@
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use ultrawave::plugin::RecordPlugin;
 
 fn main() {
@@ -41,5 +41,5 @@ fn main() {
         }
     }
 
-    nih_export_standalone_with_args::<RecordPlugin, _>(args);
+    nice_export_standalone_with_args::<RecordPlugin, _>(args);
 }

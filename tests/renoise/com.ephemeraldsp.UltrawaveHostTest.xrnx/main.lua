@@ -51,6 +51,7 @@ local function run()
       assert(parameter(record, "Capture").value == 0, "Capture not restored")
       assert(tonumber(parameter(record, "Main Level").value_string) == 91, "MLEV not restored")
       assert(parameter(record, "Main Balance").value_string:match("L32"), "MBAL not restored")
+      assert(tonumber(parameter(play, "Buffer").value_string) == 0, "Play buffer not restored")
       assert(parameter(play, "Level").value_string:match("%-3%.0"), "Play level not restored")
       report("project_controls_restored=true")
       local source_note = song.patterns[1].tracks[1].lines[1].note_columns[1]
@@ -169,14 +170,6 @@ local function run()
         play_note.note_string, play_note.instrument_value, play_note.volume_value = "C-4", 1, 127
       end},
       {"play-r2.wav", function() play_buffer.value_string = "1" end},
-      {"play-settings.wav", function()
-        play_buffer.value_string = "0"
-        parameter(record, "Main Level").value_string = "91"
-        parameter(record, "Main Balance").value_string = "L32"
-        parameter(play, "Level").value_string = "-3.0 dB"
-        -- Process the changes before saving: Renoise queues VST3 parameter
-        -- updates for suspended instruments until their next audio callback.
-      end},
     }, function()
       local step = 0
       local function cycle_editors()
@@ -189,6 +182,12 @@ local function run()
             report("editor_open_close_cycles_per_plugin=5")
             song.patterns[1].tracks[1]:delete_automation(capture)
             capture.value = 0
+            -- Save immediately, without rendering or yielding to another idle
+            -- callback to deliver pending VST3 parameter updates.
+            play_buffer.value_string = "0"
+            parameter(record, "Main Level").value_string = "91"
+            parameter(record, "Main Balance").value_string = "L32"
+            parameter(play, "Level").value_string = "-3.0 dB"
             -- Save while RAM is populated and One Shot is spent. The next
             -- process must restore controls, but NOT audio or the spent latch.
             renoise.app():save_song_as(root .. "/ultrawave-host-test.xrns")

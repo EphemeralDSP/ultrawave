@@ -10,5 +10,5 @@ description = "Ultrawave RAM Play - VST3/CLAP plugin"
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nice-plug = "=0.4.2"
 ultrawave = { path = "../.." }

@@ -1,4 +1,4 @@
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use crate::plugin::{
 
 pub struct PlayPlugin {
     params: Arc<RamPlayParams>,
-    editor_state: Arc<nih_plug_vizia::ViziaState>,
+    editor_state: Arc<nice_plug_egui::EguiEditorState>,
     ui: Arc<UiState>,
     ram_play: RamPlay,
     active_channel: usize,
@@ -59,12 +59,13 @@ impl Plugin for PlayPlugin {
 
     type SysExMessage = ();
     type BackgroundTask = ();
+    type Editor = editor::PluginEditor;
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
         if crate::NO_GUI.load(Ordering::Relaxed) {
             return None;
         }
@@ -75,11 +76,11 @@ impl Plugin for PlayPlugin {
         )
     }
 
-    fn initialize(
+    fn activate(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        _context: &mut impl ActivateContext<Self>,
     ) -> bool {
         if self.instance_lease.is_none() {
             match register_plugin_instance() {
@@ -187,8 +188,8 @@ impl Vst3Plugin for PlayPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nih_plug::context::process::{ProcessContext, Transport};
-    use nih_plug::context::PluginApi;
+    use nice_plug::context::process::{ProcessContext, Transport};
+    use nice_plug::context::PluginApi;
     use std::collections::VecDeque;
 
     struct TestProcessContext {
@@ -220,9 +221,25 @@ mod tests {
             self.events.pop_front()
         }
 
-        fn send_event(&mut self, _event: PluginNoteEvent<PlayPlugin>) {}
+        fn try_send_event(
+            &mut self,
+            event: PluginNoteEvent<PlayPlugin>,
+        ) -> Result<
+            (),
+            (
+                PluginNoteEvent<PlayPlugin>,
+                nice_plug::context::process::SendEventError,
+            ),
+        > {
+            Err((
+                event,
+                nice_plug::context::process::SendEventError::NoOutputBuffer,
+            ))
+        }
 
         fn set_latency_samples(&self, _samples: u32) {}
+
+        fn request_restart(&self) {}
 
         fn set_current_voice_capacity(&self, _capacity: u32) {}
     }
@@ -241,9 +258,9 @@ mod tests {
                 .iter()
                 .map(|&(timing, velocity)| NoteEvent::NoteOn {
                     timing,
-                    voice_id: None,
-                    channel: 0,
-                    note: 60,
+                    voice_id: nice_plug::midi::VoiceID::Wildcard,
+                    channel: nice_plug::midi::Channel::Number(0),
+                    key: nice_plug::midi::Key::MIDDLE_C,
                     velocity,
                 })
                 .collect(),

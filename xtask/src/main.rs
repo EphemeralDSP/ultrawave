@@ -16,7 +16,7 @@ fn main() -> ExitCode {
                 print_help();
                 ExitCode::SUCCESS
             }
-            _ => match nih_plug_xtask::main() {
+            _ => match nice_plug_xtask::main() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("xtask failed: {err}");
@@ -25,7 +25,7 @@ fn main() -> ExitCode {
             },
         }
     } else {
-        match nih_plug_xtask::main() {
+        match nice_plug_xtask::main() {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 eprintln!("xtask failed: {err}");
@@ -43,7 +43,7 @@ USAGE:
     cargo xtask <COMMAND> [OPTIONS]
 
 COMMANDS:
-    bundle              Bundle plugins (from nih_plug_xtask)
+    bundle              Bundle plugins (from nice-plug-xtask)
     install             Build + install both plugins to platform plugin directories
 
 VALIDATION COMMANDS:

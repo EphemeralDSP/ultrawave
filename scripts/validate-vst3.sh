@@ -26,6 +26,6 @@ set +e
 "${runner[@]}" "$PLUGINVAL_PATH" "${args[@]}" 2>&1 | tee "$LOG"
 status=${PIPESTATUS[0]}
 set -e
-if grep -Eiq '(panic(ked)?|BadDrawable)' "$LOG"; then echo "fatal signature in $LOG" >&2; exit 1; fi
+if grep -Eiq '(panic(ked)?|BadDrawable|BadWindow|Error while closing window)' "$LOG"; then echo "fatal signature in $LOG" >&2; exit 1; fi
 [[ $status -eq 0 ]] || { echo "pluginval failed ($status); log: $LOG" >&2; exit "$status"; }
 echo "pluginval passed; log: $LOG"

@@ -18,10 +18,12 @@ run_once() {
   cargo fmt --all --check
   if [[ "$MODE" == fast ]]; then
     cargo test --workspace
+    "$ROOT/scripts/test-vst3-state.sh"
     "$ROOT/scripts/audition.sh" --profile debug --no-build
   else
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace --release
+    "$ROOT/scripts/test-vst3-state.sh" --release
     cargo xtask bundle ultrawave-record --release
     cargo xtask bundle ultrawave-play --release
     "$ROOT/scripts/audition.sh" --profile release --no-build

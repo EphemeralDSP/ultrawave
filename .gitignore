@@ -38,3 +38,7 @@ screenshots/*.png
 # Reaper garbage
 *.reapeaks
 *.rpp-bak
+
+# Test-only lockfiles for the patched framework (the root lockfile is authoritative).
+/vendor/nice-plug/Cargo.lock
+/vendor/nice-plug-core/Cargo.lock

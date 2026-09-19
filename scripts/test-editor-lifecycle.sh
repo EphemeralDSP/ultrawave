@@ -11,7 +11,7 @@ readonly PLUGINVAL="${PLUGINVAL:-${ROOT_DIR}/target/tools/pluginval}"
 readonly REPEATS="${EDITOR_LIFECYCLE_REPEATS:-10}"
 readonly STRICTNESS="${VALIDATION_STRICTNESS:-5}"
 readonly LOG_DIR="${EDITOR_LIFECYCLE_LOG_DIR:-${TMPDIR:-/tmp}/ultrawave-editor-lifecycle-$$}"
-readonly FAILURE_PATTERN='BadDrawable|BadWindow|glXSwapBuffers|panicked at|thread .* panicked|X Error of failed request'
+readonly FAILURE_PATTERN='BadDrawable|BadWindow|glXSwapBuffers|panicked at|thread .* panicked|X Error of failed request|Error while closing window'
 
 if [[ ! -x "${PLUGINVAL}" ]]; then
     echo "pluginval is not executable: ${PLUGINVAL}" >&2

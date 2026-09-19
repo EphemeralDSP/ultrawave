@@ -1,4 +1,4 @@
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use std::sync::Arc;
 
 fn clamp_i32(value: i32, min: i32, max: i32) -> i32 {

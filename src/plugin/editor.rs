@@ -1,14 +1,21 @@
-use nih_plug::prelude::{Editor, FloatParam, IntParam};
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::widgets::ParamEvent;
-use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
+use egui::{
+    self, vec2, Color32, FontData, FontDefinitions, FontFamily, FontId, Layout, RichText, Stroke,
+    StrokeKind, UiBuilder,
+};
+use nice_plug::context::gui::GuiContext;
+use nice_plug::editor::dpi::LogicalSize;
+use nice_plug::prelude::{FloatParam, IntParam, Param};
+use nice_plug_egui::{
+    create_egui_editor, EguiEditor, EguiEditorState, EguiNiceSettings, Frame, NiceEguiApp,
+    RepaintNotifier,
+};
 use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 
 use super::UiState;
 use crate::machines::shared::get_global_registry;
 use crate::params::{RamPlayParams, RamRecordParams};
-use crate::widgets::{waveform_display, RotaryKnob, VerticalSlider, WaveformData};
+use crate::widgets::{rotary_knob, vertical_slider, waveform};
 
 #[derive(Clone)]
 pub enum EditorParams {
@@ -60,354 +67,389 @@ impl EditorParams {
     }
 }
 
-#[derive(Lens)]
-struct EditorData {
+pub struct UltrawaveEditorApp {
     params: EditorParams,
-    ui: Arc<UiState>,
-    waveform: WaveformData,
+    ui_state: Arc<UiState>,
+    gui: Option<GuiContext>,
+    waveform: Arc<Vec<i16>>,
     metadata: Option<(usize, usize, u64)>,
-    status: String,
     meter: f32,
-    meter_text: String,
-    active: bool,
-    can_rearm: bool,
 }
 
-enum EditorEvent {
-    Poll,
-    SelectBuffer(i32),
-    Trigger,
-    ToggleOneShot,
-    Rearm,
-}
+pub type PluginEditor = EguiEditor<UltrawaveEditorApp>;
 
-impl Model for EditorData {
-    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
-        event.map(|event, _| match event {
-            EditorEvent::Trigger => self.ui.trigger.store(true, Ordering::Relaxed),
-            EditorEvent::Rearm => self.ui.rearm.store(true, Ordering::Relaxed),
-            EditorEvent::ToggleOneShot => {
-                if let EditorParams::Record(p) = &self.params {
-                    let param = &p.one_shot;
-                    cx.emit(ParamEvent::BeginSetParameter(param).upcast());
-                    cx.emit(ParamEvent::SetParameter(param, !param.value()).upcast());
-                    cx.emit(ParamEvent::EndSetParameter(param).upcast());
-                }
-            }
-            EditorEvent::SelectBuffer(index) => {
-                let param = self.params.buffer();
-                cx.emit(ParamEvent::BeginSetParameter(param).upcast());
-                cx.emit(ParamEvent::SetParameter(param, *index).upcast());
-                cx.emit(ParamEvent::EndSetParameter(param).upcast());
-            }
-            EditorEvent::Poll => {
-                let channel = self.params.buffer().value() as usize;
-                let registry = get_global_registry();
-                let (len, rate, revision) = registry.snapshot(channel).unwrap_or((0, 44100.0, 0));
-                let metadata = Some((channel, len, revision));
-                if self.metadata != metadata {
-                    if let Some(samples) = registry.read_buffer(channel) {
-                        self.waveform.samples = Arc::new(samples);
-                        self.metadata = metadata;
-                    }
-                }
-                if let EditorParams::Play(p) = &self.params {
-                    self.waveform.start_pos = p.strt.value() as f32 / 127.0;
-                    self.waveform.end_pos = p.end.value() as f32 / 127.0;
-                }
-                self.active = self.ui.active.load(Ordering::Relaxed);
-                let one_shot =
-                    matches!(&self.params, EditorParams::Record(p) if p.one_shot.value());
-                let locked = self.ui.capture_locked.load(Ordering::Relaxed);
-                self.can_rearm = one_shot && locked && !self.active;
-                let phase = if self.active {
-                    match self.params {
-                        EditorParams::Record(_) => "RECORDING",
-                        EditorParams::Play(_) => "PLAYING",
-                    }
-                } else if one_shot && locked {
-                    "LOCKED — RE-ARM TO CAPTURE"
-                } else if one_shot {
-                    "ARMED — NEXT TRIGGER RECORDS"
-                } else if len == 0 {
-                    "EMPTY — CAPTURE TO BEGIN"
-                } else {
-                    "READY"
-                };
-                self.status = format!(
-                    "{phase}   ·   {:.2} s   ·   {:.1} kHz",
-                    len as f32 / rate.max(1.0),
-                    rate / 1000.0
-                );
-                let peak = f32::from_bits(self.ui.peak.swap(0, Ordering::Relaxed));
-                let db = if peak > 0.000_001 {
-                    20.0 * peak.log10()
-                } else {
-                    -120.0
-                };
-                self.meter = ((db + 60.0) / 60.0).clamp(0.0, 1.0).max(self.meter * 0.75);
-                self.meter_text = if db <= -60.0 {
-                    "−∞ dBFS".into()
-                } else {
-                    format!("{db:.1} dBFS")
-                };
-            }
-        });
-    }
-}
-
-pub fn default_state() -> Arc<ViziaState> {
-    ViziaState::new(|| (760, 460))
+pub fn default_state() -> Arc<EguiEditorState> {
+    EguiEditorState::from_size(LogicalSize::new(760.0, 460.0), 1.0)
 }
 
 pub fn create(
     params: EditorParams,
-    state: Arc<ViziaState>,
+    state: Arc<EguiEditorState>,
     ui: Arc<UiState>,
-) -> Option<Box<dyn Editor>> {
-    create_vizia_editor(state, ViziaTheming::Custom, move |cx, _| {
-        cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSans.ttf"));
-        cx.add_font_mem(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf"));
-        cx.set_default_font(&["DejaVu Sans Mono"]);
-        cx.add_stylesheet(r#"
-            .root { background-color: #000; color: #fff; child-space: 14px; row-between: 12px; }
-            label { color: #fff; font-size: 12; }
-            .header { height: 34px; col-between: 12px; child-top: 1s; child-bottom: 1s; }
-            .title { font-size: 21; }
-            .role { font-size: 12; }
-            button { background-color: #000; color: #fff; border: 1px solid #fff; border-radius: 0px; child-space: 1s; height: 28px; }
-            button:hover { background-color: #333; }
-            button:checked { background-color: #fff; }
-            button:checked label { color: #000; }
-            button:disabled { border-color: #666; }
-            button:disabled label { color: #777; }
-            .content { height: 244px; col-between: 16px; }
-            .sidebar { width: 124px; row-between: 10px; }
-            .faders { height: 164px; col-between: 8px; }
-            .fader { child-left: 1s; child-right: 1s; row-between: 8px; }
-            .readout { font-size: 12; }
-            .grid { border: 1px solid #fff; }
-            .knob-row { height: 1s; }
-            .cell { width: 1s; child-space: 1s; row-between: 4px; border: 1px solid #fff; }
-            .knob { width: 58px; height: 58px; }
-            .meter-track { height: 7px; border: 1px solid #fff; }
-            .meter-fill { background-color: #fff; height: 100%; }
-            .wave { height: 66px; }
-            .status { height: 18px; }
-            .footer { height: 28px; col-between: 6px; child-top: 1s; child-bottom: 1s; }
-            .led { width: 7px; height: 7px; border: 1px solid #fff; }
-        "#).expect("editor stylesheet");
-
-        let is_record = matches!(params, EditorParams::Record(_));
-        EditorData {
-            params: params.clone(),
-            ui: ui.clone(),
-            waveform: WaveformData::default(),
+) -> Option<PluginEditor> {
+    let repaint = RepaintNotifier::new();
+    create_egui_editor(
+        state,
+        repaint.clone(),
+        EguiNiceSettings::new().with_tile("Ultrawave"),
+        UltrawaveEditorApp {
+            params,
+            ui_state: ui,
+            gui: None,
+            waveform: Arc::new(Vec::new()),
             metadata: None,
-            status: "EMPTY — CAPTURE TO BEGIN".into(),
             meter: 0.0,
-            meter_text: "−∞ dBFS".into(),
-            active: false,
-            can_rearm: false,
-        }
-        .build(cx);
-        cx.emit(EditorEvent::Poll);
-        // This baseview backend does not service Vizia timers. Stop when the editor proxy closes.
-        let mut proxy = cx.get_proxy();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(100));
-            if proxy.emit(EditorEvent::Poll).is_err() {
-                break;
-            }
+        },
+    )
+}
+
+impl NiceEguiApp for UltrawaveEditorApp {
+    fn build(
+        &mut self,
+        ctx: egui::Context,
+        gui: GuiContext,
+        _frame: &mut Frame,
+    ) -> Result<(), nice_plug_egui::baseview::HandlerError> {
+        self.gui = Some(gui);
+        let mut fonts = FontDefinitions::default();
+        fonts.font_data.insert(
+            "uw-sans".into(),
+            Arc::new(FontData::from_static(include_bytes!(
+                "../../assets/fonts/DejaVuSans.ttf"
+            ))),
+        );
+        fonts.font_data.insert(
+            "uw-mono".into(),
+            Arc::new(FontData::from_static(include_bytes!(
+                "../../assets/fonts/DejaVuSansMono.ttf"
+            ))),
+        );
+        fonts
+            .families
+            .insert(FontFamily::Monospace, vec!["uw-mono".into()]);
+        fonts
+            .families
+            .insert(FontFamily::Proportional, vec!["uw-sans".into()]);
+        ctx.set_fonts(fonts);
+        ctx.set_theme(egui::Theme::Dark);
+        let mut visuals = egui::Visuals::dark();
+        visuals.panel_fill = Color32::BLACK;
+        visuals.window_fill = Color32::BLACK;
+        visuals.widgets.noninteractive.bg_fill = Color32::BLACK;
+        visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+        visuals.widgets.inactive.bg_fill = Color32::BLACK;
+        visuals.widgets.inactive.weak_bg_fill = Color32::BLACK;
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::WHITE);
+        visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+        visuals.widgets.hovered.bg_fill = Color32::from_gray(45);
+        visuals.widgets.hovered.weak_bg_fill = Color32::from_gray(45);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::WHITE);
+        visuals.widgets.active.bg_fill = Color32::WHITE;
+        visuals.widgets.active.weak_bg_fill = Color32::WHITE;
+        visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::BLACK);
+        visuals.selection.bg_fill = Color32::WHITE;
+        visuals.selection.stroke = Stroke::new(1.0, Color32::BLACK);
+        visuals.widgets.inactive.corner_radius = 0.into();
+        visuals.widgets.hovered.corner_radius = 0.into();
+        visuals.widgets.active.corner_radius = 0.into();
+        ctx.set_visuals(visuals);
+        ctx.style_mut_of(egui::Theme::Dark, |style| {
+            style.override_font_id = Some(FontId::monospace(12.0));
+            style.wrap_mode = Some(egui::TextWrapMode::Extend);
         });
+        Ok(())
+    }
 
-        VStack::new(cx, |cx| {
-            HStack::new(cx, |cx| {
-                Label::new(cx, "ULTRAWAVE").class("title");
-                Label::new(
-                    cx,
-                    if is_record {
-                        "RAM RECORD / 12-BIT"
-                    } else {
-                        "RAM PLAY / 12-BIT"
-                    },
-                )
-                .class("role");
-                Element::new(cx).width(Stretch(1.0));
-                if is_record {
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(EditorEvent::ToggleOneShot),
-                        |cx| Label::new(cx, "ONE SHOT"),
-                    )
-                    .width(Pixels(94.0))
-                    .checked(
-                        EditorData::params
-                            .map(|p| matches!(p, EditorParams::Record(p) if p.one_shot.value())),
-                    );
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(EditorEvent::Rearm),
-                        |cx| Label::new(cx, "RE-ARM"),
-                    )
-                    .width(Pixels(80.0))
-                    .disabled(EditorData::can_rearm.map(|enabled| !*enabled));
-                }
-                Button::new(
-                    cx,
-                    move |cx| cx.emit(EditorEvent::Trigger),
-                    |cx| {
-                        Label::new(
-                            cx,
-                            if is_record {
-                                "● CAPTURE"
-                            } else {
-                                "▶ AUDITION"
-                            },
-                        )
-                    },
-                )
-                .width(Pixels(120.0));
-            })
-            .class("header");
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut Frame) {
+        ui.ctx().request_repaint_after(Duration::from_millis(50));
+        let Some(gui) = self.gui.clone() else { return };
+        let channel = self.params.buffer().unmodulated_plain_value() as usize;
+        let registry = get_global_registry();
+        let (len, rate, revision) = registry.snapshot(channel).unwrap_or((0, 44_100.0, 0));
+        let metadata = Some((channel, len, revision));
+        if metadata != self.metadata {
+            if let Some(samples) = registry.read_buffer(channel) {
+                self.waveform = Arc::new(samples);
+                self.metadata = metadata;
+            }
+        }
+        let peak = f32::from_bits(self.ui_state.peak.swap(0, Ordering::Relaxed));
+        let db = if peak > 0.000_001 {
+            20.0 * peak.log10()
+        } else {
+            -120.0
+        };
+        self.meter = ((db + 60.0) / 60.0).clamp(0.0, 1.0).max(self.meter * 0.75);
+        let is_record = matches!(self.params, EditorParams::Record(_));
 
-            HStack::new(cx, |cx| {
-                VStack::new(cx, |cx| {
-                    HStack::new(cx, |cx| {
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "LEV");
-                            VerticalSlider::new(cx, EditorData::params, EditorParams::level)
-                                .width(Pixels(24.0))
-                                .height(Pixels(116.0));
-                            Label::new(
-                                cx,
-                                EditorData::params.map(|p| format!("{:.0}", p.level().value())),
-                            )
-                            .class("readout");
-                        })
-                        .class("fader");
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "SRR");
-                            VerticalSlider::new(cx, EditorData::params, EditorParams::srr)
-                                .width(Pixels(24.0))
-                                .height(Pixels(116.0));
-                            Label::new(
-                                cx,
-                                EditorData::params.map(|p| format!("{:.2}", p.srr().value())),
-                            )
-                            .class("readout");
-                        })
-                        .class("fader");
-                        VStack::new(cx, |cx| {
-                            Label::new(cx, "DIST");
-                            VerticalSlider::new(cx, EditorData::params, EditorParams::distortion)
-                                .width(Pixels(24.0))
-                                .height(Pixels(116.0));
-                            Label::new(
-                                cx,
-                                EditorData::params.map(|p| format!("{}", p.distortion())),
-                            )
-                            .class("readout");
-                        })
-                        .class("fader");
-                    })
-                    .class("faders");
-                    Label::new(
-                        cx,
-                        if is_record {
-                            "CAPTURE LEVEL"
+        // Fixed logical sections preserve the hardware panel at every host DPI. Explicit
+        // bounds keep an expanding horizontal layout from pushing the waveform/footer out.
+        let origin = ui.max_rect().min;
+        let rect = |x, y, w, h| egui::Rect::from_min_size(origin + vec2(x, y), vec2(w, h));
+        ui.painter().rect_filled(ui.max_rect(), 0.0, Color32::BLACK);
+        ui.scope_builder(
+            UiBuilder::new().max_rect(rect(14.0, 14.0, 732.0, 34.0)),
+            |ui| {
+                self.header(ui, &gui, is_record);
+            },
+        );
+        ui.scope_builder(
+            UiBuilder::new().max_rect(rect(14.0, 60.0, 124.0, 244.0)),
+            |ui| {
+                self.sidebar(ui, &gui, is_record, db);
+            },
+        );
+        ui.scope_builder(
+            UiBuilder::new().max_rect(rect(154.0, 60.0, 592.0, 244.0)),
+            |ui| {
+                self.knob_grid(ui, &gui, is_record);
+            },
+        );
+        let markers = match &self.params {
+            EditorParams::Play(p) => Some((
+                p.strt.unmodulated_plain_value() as f32 / 127.0,
+                p.end.unmodulated_plain_value() as f32 / 127.0,
+            )),
+            _ => None,
+        };
+        waveform(ui, rect(14.0, 316.0, 732.0, 66.0), &self.waveform, markers);
+        ui.scope_builder(
+            UiBuilder::new().max_rect(rect(14.0, 392.0, 732.0, 18.0)),
+            |ui| {
+                self.status(ui, len, rate, is_record);
+            },
+        );
+        ui.scope_builder(
+            UiBuilder::new().max_rect(rect(14.0, 418.0, 732.0, 28.0)),
+            |ui| {
+                self.footer(ui, &gui, is_record);
+            },
+        );
+    }
+
+    fn editor_closed(&mut self) {
+        self.gui = None;
+    }
+}
+
+impl UltrawaveEditorApp {
+    fn header(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("ULTRAWAVE").font(FontId::monospace(21.0)));
+            ui.label(if record {
+                "RAM RECORD / 12-BIT"
+            } else {
+                "RAM PLAY / 12-BIT"
+            });
+            ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_sized(
+                        [120.0, 28.0],
+                        egui::Button::new(if record {
+                            "● CAPTURE"
                         } else {
-                            "OUTPUT LEVEL"
+                            "▶ AUDITION"
+                        }),
+                    )
+                    .clicked()
+                {
+                    self.ui_state.trigger.store(true, Ordering::Relaxed);
+                }
+                if let EditorParams::Record(p) = &self.params {
+                    let locked = self.ui_state.capture_locked.load(Ordering::Relaxed);
+                    let active = self.ui_state.active.load(Ordering::Relaxed);
+                    if ui
+                        .add_enabled(
+                            locked && !active && p.one_shot.unmodulated_plain_value(),
+                            egui::Button::new("RE-ARM").min_size(vec2(80.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        self.ui_state.rearm.store(true, Ordering::Relaxed);
+                    }
+                    let selected = p.one_shot.unmodulated_plain_value();
+                    if ui
+                        .add_sized([94.0, 28.0], egui::Button::selectable(selected, "ONE SHOT"))
+                        .clicked()
+                    {
+                        let setter = gui.param_setter();
+                        setter.begin_set_parameter(&p.one_shot);
+                        setter.set_parameter(&p.one_shot, !selected);
+                        setter.end_set_parameter(&p.one_shot);
+                    }
+                }
+            });
+        });
+    }
+
+    fn sidebar(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool, db: f32) {
+        ui.vertical(|ui| {
+            ui.set_width(124.0);
+            ui.horizontal_top(|ui| {
+                for (label, kind) in [("LEV", 0), ("SRR", 1), ("DIST", 2)] {
+                    ui.allocate_ui_with_layout(
+                        vec2(36.0, 164.0),
+                        Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            ui.label(label);
+                            match kind {
+                                0 => {
+                                    vertical_slider(ui, self.params.level(), gui);
+                                }
+                                1 => {
+                                    vertical_slider(ui, self.params.srr(), gui);
+                                }
+                                _ => {
+                                    vertical_slider(ui, self.params.distortion(), gui);
+                                }
+                            }
+                            let value = match kind {
+                                0 => {
+                                    format!("{:.0}", self.params.level().unmodulated_plain_value())
+                                }
+                                1 => format!("{:.2}", self.params.srr().unmodulated_plain_value()),
+                                _ => self.params.distortion().normalized_value_to_string(
+                                    self.params.distortion().unmodulated_normalized_value(),
+                                    false,
+                                ),
+                            };
+                            ui.label(value);
                         },
                     );
-                    HStack::new(cx, |cx| {
-                        Element::new(cx)
-                            .class("meter-fill")
-                            .width(EditorData::meter.map(|v| Percentage(v * 100.0)));
-                    })
-                    .class("meter-track");
-                    Label::new(cx, EditorData::meter_text).class("readout");
-                })
-                .class("sidebar");
-
-                VStack::new(cx, |cx| {
-                    let labels = if is_record {
-                        [
-                            "MLEV", "MBAL", "ILEV", "IBAL", "CUE1", "CUE2", "LEN", "RATE",
-                        ]
-                    } else {
-                        ["PTCH", "DEC", "HOLD", "BRR", "STRT", "END", "RTRG", "RTIM"]
-                    };
-                    for row in 0..2 {
-                        HStack::new(cx, |cx| {
-                            for column in 0..4 {
-                                let index = row * 4 + column;
-                                VStack::new(cx, |cx| {
-                                    Label::new(cx, labels[index]);
-                                    RotaryKnob::new(cx, EditorData::params, move |p| p.knob(index))
-                                        .class("knob");
-                                    Label::new(
-                                        cx,
-                                        EditorData::params
-                                            .map(move |p| format!("{}", p.knob(index))),
-                                    )
-                                    .class("readout");
-                                })
-                                .class("cell");
-                            }
-                        })
-                        .class("knob-row");
-                    }
-                })
-                .class("grid");
-            })
-            .class("content");
-
-            waveform_display(cx, EditorData::waveform, !is_record, false).class("wave");
-            HStack::new(cx, |cx| {
-                Element::new(cx)
-                    .class("led")
-                    .background_color(EditorData::active.map(|active| {
-                        if *active {
-                            Color::white()
-                        } else {
-                            Color::black()
-                        }
-                    }));
-                Label::new(cx, EditorData::status);
-            })
-            .class("status")
-            .col_between(Pixels(10.0))
-            .child_top(Stretch(1.0))
-            .child_bottom(Stretch(1.0));
-            HStack::new(cx, |cx| {
-                Label::new(
-                    cx,
-                    EditorData::params.map(move |p| {
-                        format!(
-                            "▌▌ R{} ▐▐  RAM > {}",
-                            p.buffer().value() + 1,
-                            if is_record {
-                                "REC / CUE1 DRY / CUE2 CAPTURE"
-                            } else {
-                                "PLAY / MONO > STEREO"
-                            }
-                        )
-                    }),
-                );
-                Element::new(cx).width(Stretch(1.0));
-                for index in 0..4 {
-                    Button::new(
-                        cx,
-                        move |cx| cx.emit(EditorEvent::SelectBuffer(index)),
-                        move |cx| Label::new(cx, &format!("[R{}]", index + 1)),
-                    )
-                    .width(Pixels(44.0))
-                    .checked(EditorData::params.map(move |p| p.buffer().value() == index));
                 }
-            })
-            .class("footer");
-        })
-        .class("root");
-    })
+            });
+            ui.label(if record {
+                "CAPTURE LEVEL"
+            } else {
+                "OUTPUT LEVEL"
+            });
+            let (rect, _) = ui.allocate_exact_size(vec2(124.0, 7.0), egui::Sense::hover());
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                Stroke::new(1.0, Color32::WHITE),
+                StrokeKind::Inside,
+            );
+            let mut fill = rect.shrink(1.0);
+            fill.set_right(fill.left() + fill.width() * self.meter);
+            ui.painter().rect_filled(fill, 0.0, Color32::WHITE);
+            ui.label(if db <= -60.0 {
+                "−∞ dBFS".into()
+            } else {
+                format!("{db:.1} dBFS")
+            });
+        });
+    }
+
+    fn knob_grid(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
+        let labels = if record {
+            [
+                "MLEV", "MBAL", "ILEV", "IBAL", "CUE1", "CUE2", "LEN", "RATE",
+            ]
+        } else {
+            ["PTCH", "DEC", "HOLD", "BRR", "STRT", "END", "RTRG", "RTIM"]
+        };
+        let origin = ui.max_rect().min;
+        for (index, label) in labels.iter().enumerate() {
+            let cell = egui::Rect::from_min_size(
+                origin + vec2((index % 4) as f32 * 148.0, (index / 4) as f32 * 122.0),
+                vec2(148.0, 122.0),
+            );
+            ui.painter().rect_stroke(
+                cell,
+                0.0,
+                Stroke::new(1.0, Color32::WHITE),
+                StrokeKind::Inside,
+            );
+            ui.scope_builder(
+                UiBuilder::new()
+                    .max_rect(cell.shrink(8.0))
+                    .layout(Layout::top_down(egui::Align::Center)),
+                |ui| {
+                    ui.label(*label);
+                    rotary_knob(ui, self.params.knob(index), gui);
+                    ui.label(self.params.knob(index).normalized_value_to_string(
+                        self.params.knob(index).unmodulated_normalized_value(),
+                        false,
+                    ));
+                },
+            );
+        }
+    }
+
+    fn status(&self, ui: &mut egui::Ui, len: usize, rate: f32, record: bool) {
+        let active = self.ui_state.active.load(Ordering::Relaxed);
+        let one_shot =
+            matches!(&self.params, EditorParams::Record(p) if p.one_shot.unmodulated_plain_value());
+        let locked = self.ui_state.capture_locked.load(Ordering::Relaxed);
+        let phase = if active {
+            if record {
+                "RECORDING"
+            } else {
+                "PLAYING"
+            }
+        } else if one_shot && locked {
+            "LOCKED — RE-ARM TO CAPTURE"
+        } else if one_shot {
+            "ARMED — NEXT TRIGGER RECORDS"
+        } else if len == 0 {
+            "EMPTY — CAPTURE TO BEGIN"
+        } else {
+            "READY"
+        };
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(7.0, 7.0), egui::Sense::hover());
+            ui.painter().rect(
+                r,
+                0.0,
+                if active {
+                    Color32::WHITE
+                } else {
+                    Color32::BLACK
+                },
+                Stroke::new(1.0, Color32::WHITE),
+                StrokeKind::Inside,
+            );
+            ui.label(format!(
+                "{phase}   ·   {:.2} s   ·   {:.1} kHz",
+                len as f32 / rate.max(1.0),
+                rate / 1000.0
+            ));
+        });
+    }
+
+    fn footer(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
+        ui.horizontal(|ui| {
+            let selected = self.params.buffer().unmodulated_plain_value();
+            ui.label(format!(
+                "▌▌ R{} ▐▐  RAM > {}",
+                selected + 1,
+                if record {
+                    "REC / CUE1 DRY / CUE2 CAPTURE"
+                } else {
+                    "PLAY / MONO > STEREO"
+                }
+            ));
+            ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                for index in (0..4).rev() {
+                    if ui
+                        .add_sized(
+                            [44.0, 28.0],
+                            egui::Button::selectable(
+                                selected == index,
+                                format!("[R{}]", index + 1),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        let p = self.params.buffer();
+                        let setter = gui.param_setter();
+                        setter.begin_set_parameter(p);
+                        setter.set_parameter(p, index);
+                        setter.end_set_parameter(p);
+                    }
+                }
+            });
+        });
+    }
 }

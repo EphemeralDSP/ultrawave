@@ -2,6 +2,7 @@
 name = "ultrawave"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.95"
 authors = ["EphemeralDSP"]
 license = "MIT"
 description = "Elektron Machinedrum UW RAM machine emulation - Core library"
@@ -19,8 +20,9 @@ name = "ultrawave_play"
 path = "src/bin/play.rs"
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"] }
-nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nice-plug = { version = "=0.4.2", features = ["standalone"] }
+nice-plug-egui = "=0.5.1"
+egui = { version = "=0.36.1", default-features = false }
 libc = "0.2"
 ephemeral-dsp = { git = "ssh://git@github.com/EphemeralDSP/ephemeral.git", rev = "243d21b7aef5337ea8ff0e30750c01d1fa3af296" }
 
@@ -36,8 +38,10 @@ strip = "symbols"
 
 [workspace]
 members = ["xtask", "plugins/ultrawave_record", "plugins/ultrawave_play"]
+exclude = ["vendor/nice-plug", "vendor/nice-plug-core", "vendor/baseview"]
 
-# Patch baseview to fix null pointer dereference in become_first_responder on macOS.
-# The vendored copy adds a nil check for [this window] before calling [window isKeyWindow].
-[patch.'https://github.com/RustAudio/baseview.git']
+# See vendor/README.md for immediate-save and synchronous editor teardown patches.
+[patch.crates-io]
+nice-plug = { path = "vendor/nice-plug" }
+nice-plug-core = { path = "vendor/nice-plug-core" }
 baseview = { path = "vendor/baseview" }

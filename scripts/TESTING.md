@@ -289,4 +289,4 @@ Initial validation results will be documented here after first successful run:
 - pluginval: https://github.com/Tracktion/pluginval
 - clap-validator: https://github.com/free-audio/clap-validator
 - CLAP Developer Docs: https://cleveraudio.org/developers-getting-started/
-- NIH-plug testing: https://github.com/robbert-vdh/nih-plug
+- NICE-plug: https://codeberg.org/RustAudio/nice-plug

@@ -10,6 +10,11 @@ CACHE_DIR="$HOME_DIR/.cache"
 TOOL_DIR="$CONFIG_DIR/Renoise/V3.5.4/Scripts/Tools/com.ephemeraldsp.UltrawaveHostTest.xrnx"
 DISPLAY_NUMBER="${ULTRAWAVE_RENOISE_DISPLAY:-:95}"
 SHM_KEY="/ultrawave_renoise_test_${$}"
+COMPAT_PROJECT="${1:-}"
+if [[ -n "$COMPAT_PROJECT" ]]; then
+  COMPAT_PROJECT="$(realpath "$COMPAT_PROJECT")"
+  [[ -f "$COMPAT_PROJECT" ]] || { echo "Missing compatibility project" >&2; exit 1; }
+fi
 
 for tool in Xvfb xdotool import; do
   command -v "$tool" >/dev/null || { echo "Missing host-test tool: $tool" >&2; exit 1; }
@@ -97,10 +102,14 @@ import -display "$DISPLAY_NUMBER" -window root "$OUT/one-shot-locked.png"
 stop_renoise
 # Keep the SAME shared-memory key and mapping. A fresh host must clear RAM by
 # lifecycle rules, not because this fixture deleted the mapping between runs.
+if [[ -n "$COMPAT_PROJECT" ]]; then
+  cp "$COMPAT_PROJECT" "$OUT/ultrawave-host-test.xrns"
+  echo "compatibility_project=$COMPAT_PROJECT" >> "$OUT/host-result.txt"
+fi
 run_host reopen complete "$OUT/ultrawave-host-test.xrns"
 sleep 0.5 # Let the final editor paint before capture.
 import -display "$DISPLAY_NUMBER" -window root "$OUT/isolated-renoise.png"
-if grep -Eiq 'panicked at|BadDrawable|BadWindow' "$OUT/renoise.stderr.log" "$OUT/renoise.stdout.log"; then
+if grep -Eiq 'panicked at|BadDrawable|BadWindow|Error while closing window' "$OUT/renoise.stderr.log" "$OUT/renoise.stdout.log"; then
   echo "Plugin panic/X11 error in Renoise logs" >&2
   exit 1
 fi
