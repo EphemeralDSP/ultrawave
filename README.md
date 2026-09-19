@@ -301,11 +301,6 @@ This passed at 48 kHz on 2026-09-19. Sidechain/balance/effects also have callbac
 tests, **not yet a Renoise sidechain-routing fixture**. No open personal session
 is modified. This fixture exercises VST3; CLAP state/processing use clap-validator.
 
-For cross-framework compatibility, run
-`./scripts/renoise-test.sh tests/renoise/nih-controls.xrns`. The reopen phase uses
-the committed pre-migration project (synthetic audio only), checking the same
-non-default controls, empty RAM and fresh capture with the NICE-plug build.
-
 `tests/test.RPP` is an old scratch session, **not** a verified ready-to-play test
 project (it lacks source→Record routing). Use the routing steps above.
 
@@ -330,8 +325,8 @@ must not be treated as proof of hardware behavior.
 
 Play's synthesis controls latch on a trigger; pitch, end, BRR, SRR, distortion,
 and level also update during playback. NoteOff does not choke a one-shot.
-Record controls now affect the capture/monitor paths described above. The filter
-code is not in the audible plugin chain. RAM stores its source rate, so 44.1/48/96
+Record controls affect the capture/monitor paths described above.
+RAM stores its source rate, so 44.1/48/96
 kHz playback preserves duration/pitch, including reduced recording RATE. There is
 **no fixed hardware sample-clock model**. At RATE HI, capacity is 9.19 seconds at
 48 kHz and 4.59 seconds at 96 kHz; the additional ten-second capture-time cap applies

@@ -23,12 +23,11 @@ Both plugins access a **global buffer registry** (`src/machines/shared.rs`) cont
 
 ### Key Files
 
-- `src/standalone/record.rs` / `record_editor.rs` - Record plugin
-- `src/standalone/play.rs` / `play_editor.rs` - Play plugin  
+- `src/plugin/record.rs` / `play.rs` - Record and Play plugins
+- `src/plugin/editor.rs` - Shared egui editor
 - `src/machines/shared.rs` - Global buffer registry (the bridge)
 - `src/machines/ram_record.rs` - Recording DSP
 - `src/machines/ram_play.rs` - Playback DSP with pitch/envelope
-- `src/dsp/filter.rs` - 24dB resonant filter
 - `technical_specs.md` - Elektron hardware specs for reference
 
 ### Build Commands

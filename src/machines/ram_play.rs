@@ -99,12 +99,7 @@ impl RamPlay {
     pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
         Self {
             registry,
-            engines: [
-                SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
-                SampleEngine::new(sample_rate),
-            ],
+            engines: std::array::from_fn(|_| SampleEngine::new()),
             envelopes: [0.0; CHANNEL_COUNT],
             is_playing: [false; CHANNEL_COUNT],
             hold_time_samples: [0; CHANNEL_COUNT],
@@ -128,9 +123,6 @@ impl RamPlay {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
-        for engine in &mut self.engines {
-            engine.set_sample_rate(sample_rate);
-        }
     }
 
     /// Follow host tempo changes without restarting the current beat interval.
@@ -154,12 +146,6 @@ impl RamPlay {
     pub fn load_buffer(&mut self, samples: Vec<i16>, channel: usize) {
         let channel = Self::clamp_channel(channel);
         let _ = self.registry.replace_buffer(channel, samples);
-    }
-
-    pub fn load_all_buffers(&mut self, buffers: &[Vec<i16>; CHANNEL_COUNT]) {
-        for (i, buffer) in buffers.iter().enumerate() {
-            let _ = self.registry.replace_buffer(i, buffer.clone());
-        }
     }
 
     pub fn trigger(&mut self, params: &RamPlayParams, channel: usize) {
@@ -311,14 +297,6 @@ impl RamPlay {
 
         let vol = param_to_normalized(self.current_params[channel].vol);
         sample * self.envelopes[channel] * vol
-    }
-
-    pub fn process_mix(&mut self) -> f32 {
-        let mut mix = 0.0;
-        for ch in 0..CHANNEL_COUNT {
-            mix += self.process(ch);
-        }
-        mix / CHANNEL_COUNT as f32
     }
 
     pub fn is_playing(&self, channel: usize) -> bool {
