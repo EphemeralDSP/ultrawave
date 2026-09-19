@@ -1,10 +1,64 @@
 use std::sync::Arc;
 use ultrawave::machines::ram_play::{RamPlay, RamPlayParams};
 use ultrawave::machines::ram_record::{RamRecord, RamRecordParams};
-use ultrawave::machines::shared::{get_global_registry, BufferRegistry};
+use ultrawave::machines::shared::BufferRegistry;
 use ultrawave::offline::{run_offline_play, run_offline_record, PlayConfig, RecordConfig};
 
 const SR: f32 = 44100.0;
+
+#[test]
+fn independent_recorders_do_not_cancel_each_other() {
+    let params = RamRecordParams {
+        mlev: 127,
+        ilev: 0,
+        ..Default::default()
+    };
+    let first_registry = Arc::new(BufferRegistry::new());
+    let second_registry = Arc::new(BufferRegistry::new());
+    let mut first = RamRecord::with_registry(SR, first_registry.clone());
+    let mut second = RamRecord::with_registry(SR, second_registry.clone());
+    first.start_recording(&params, true, 0);
+    second.start_recording(&params, true, 0);
+    first.record_sample(0.25, 0.25, 0.0, 0.0, &params, 0);
+    second.record_sample(-0.5, -0.5, 0.0, 0.0, &params, 0);
+    assert_eq!(first_registry.read_buffer(0).unwrap(), [512]);
+    assert_eq!(second_registry.read_buffer(0).unwrap(), [-1024]);
+}
+
+#[test]
+fn signed_12bit_capture_preserves_level_and_every_sample() {
+    let registry = Arc::new(BufferRegistry::new());
+    let mut recorder = RamRecord::with_registry(SR, registry.clone());
+    let params = RamRecordParams {
+        mlev: 127,
+        ilev: 0,
+        rec_len: 127,
+        ..Default::default()
+    };
+    // Includes clipping, both signs, sub-LSB values, and a nonzero last sample.
+    let input = [-1.5, -0.5, -0.0003, 0.0001, 0.0003, 0.25, 1.5, 0.75];
+    let expected_codes = [-2048, -1024, -1, 0, 1, 512, 2047, 1536];
+    recorder.start_recording(&params, true, 0);
+    for sample in input {
+        recorder.record_sample(sample, sample, 0.0, 0.0, &params, 0);
+    }
+    recorder.stop_recording(0);
+    assert_eq!(registry.read_buffer(0).unwrap(), expected_codes);
+
+    let mut player = RamPlay::with_registry(SR, registry);
+    player.trigger(
+        &RamPlayParams {
+            vol: 127,
+            ..Default::default()
+        },
+        0,
+    );
+    for code in expected_codes {
+        assert_eq!(player.process(0), code as f32 / 2048.0);
+    }
+    assert!(!player.is_playing(0));
+    assert_eq!(player.process(0), 0.0);
+}
 
 fn generate_sine(freq_hz: f32, duration_secs: f32, sample_rate: f32) -> Vec<(f32, f32)> {
     let num_samples = (duration_secs * sample_rate) as usize;
@@ -130,9 +184,6 @@ fn wav_file_roundtrip() {
         writer.finalize().unwrap();
     }
 
-    // Clear global registry before using it
-    get_global_registry().clear_all();
-
     // Record
     run_offline_record(&RecordConfig {
         input: input_wav.clone(),
@@ -158,6 +209,10 @@ fn wav_file_roundtrip() {
         output: output_wav.clone(),
         output_secs: Some(0.2),
         channel: 0,
+        params: RamPlayParams {
+            vol: 127,
+            ..Default::default()
+        },
     })
     .expect("offline play should succeed");
 
@@ -187,9 +242,6 @@ fn vinyl909_record_then_play() {
     let _ = std::fs::create_dir_all(&dir);
     let record_output = dir.join("record_output.wav");
     let play_output = dir.join("play_output.wav");
-
-    // Clear global registry before using it
-    get_global_registry().clear_all();
 
     // Step 1: Record vinyl909.wav into the buffer, dump to record_output.wav
     run_offline_record(&RecordConfig {
@@ -229,6 +281,10 @@ fn vinyl909_record_then_play() {
         output: play_output.clone(),
         output_secs: Some(input_duration_secs + 0.5),
         channel: 0,
+        params: RamPlayParams {
+            vol: 127,
+            ..Default::default()
+        },
     })
     .expect("offline play of record_output.wav should succeed");
 

@@ -1,9 +1,8 @@
 use crate::machines::ram_play::{RamPlay, RamPlayParams};
 use crate::machines::ram_record::{RamRecord, RamRecordParams};
-use crate::machines::shared::{
-    get_global_registry, register_plugin_instance, unregister_plugin_instance,
-};
+use crate::machines::shared::BufferRegistry;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const SAMPLE_RATE: u32 = 44100;
 const SAMPLE_RATE_F: f32 = SAMPLE_RATE as f32;
@@ -23,6 +22,7 @@ pub struct PlayConfig {
     pub output: PathBuf,
     pub output_secs: Option<f64>,
     pub channel: usize,
+    pub params: RamPlayParams,
 }
 
 // ---------------------------------------------------------------------------
@@ -127,29 +127,29 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         ));
     }
 
-    register_plugin_instance();
-
-    let mut rec = RamRecord::new(SAMPLE_RATE_F);
+    // Offline renders never clear or overwrite a running DAW's shared RAM.
+    let registry = Arc::new(BufferRegistry::new());
+    let mut rec = RamRecord::with_registry(SAMPLE_RATE_F, registry.clone());
     let params = RamRecordParams {
         mlev: 127,
         mbal: 64,
-        ilev: 127,
+        ilev: 0,
         ibal: 64,
-        rec_len: 127,      // INF
-        rec_rate: 127,      // HI (1:1)
+        rec_len: 127,  // INF
+        rec_rate: 127, // HI (1:1)
         tempo_bpm: 120.0,
     };
 
     rec.start_recording(&params, true, config.channel);
 
     for (l, r) in &frames {
-        rec.record_sample(*l, *r, *l, *r, &params, config.channel);
+        rec.record_sample(*l, *r, 0.0, 0.0, &params, config.channel);
     }
 
     rec.stop_recording(config.channel);
 
     if let Some(output) = &config.output {
-        let buffer = get_global_registry()
+        let buffer = registry
             .read_buffer(config.channel)
             .ok_or("failed to read buffer")?;
         // Scale 12-bit buffer values (-2048..2047) to 16-bit range so the WAV
@@ -158,7 +158,6 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         write_wav_i16(output, &scaled, SAMPLE_RATE)?;
     }
 
-    unregister_plugin_instance();
     Ok(())
 }
 
@@ -175,27 +174,18 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
     }
 
     let input_duration_secs = samples.len() as f64 / SAMPLE_RATE as f64;
-    let output_secs = config.output_secs.unwrap_or(input_duration_secs + 1.0);
+    let output_secs = config.output_secs.unwrap_or(
+        input_duration_secs / crate::dsp::sample_engine::pitch_to_ratio(config.params.pitch) + 1.0,
+    );
+    if !output_secs.is_finite() || output_secs <= 0.0 || output_secs > 600.0 {
+        return Err("output duration must be finite and in (0, 600] seconds".into());
+    }
     let output_samples = (output_secs * SAMPLE_RATE as f64) as usize;
 
-    register_plugin_instance();
-
-    get_global_registry().replace_buffer(config.channel, samples);
-
-    let mut player = RamPlay::new(SAMPLE_RATE_F);
-    let params = RamPlayParams {
-        strt: 0,
-        end: 127,
-        pitch: 64,
-        hold: 0,
-        dec: 0,
-        rtrg: 0,
-        rtim: 0,
-        srr: 0.0,
-        vol: 127,
-    };
-
-    player.trigger(&params, config.channel);
+    let registry = Arc::new(BufferRegistry::new());
+    registry.replace_buffer(config.channel, samples);
+    let mut player = RamPlay::with_registry(SAMPLE_RATE_F, registry);
+    player.trigger(&config.params, config.channel);
 
     let mut output = Vec::with_capacity(output_samples);
     for _ in 0..output_samples {
@@ -204,7 +194,6 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
 
     write_wav_f32(&config.output, &output, SAMPLE_RATE)?;
 
-    unregister_plugin_instance();
     Ok(())
 }
 
@@ -213,9 +202,16 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 fn get_arg(args: &[String], flag: &str) -> Option<String> {
-    args.iter()
-        .position(|a| a == flag)
-        .and_then(|i| args.get(i + 1).cloned())
+    let index = args.iter().position(|a| a == flag)?;
+    Some(
+        args.get(index + 1)
+            .filter(|value| !value.starts_with("--"))
+            .unwrap_or_else(|| {
+                eprintln!("{flag} requires a value");
+                std::process::exit(1)
+            })
+            .clone(),
+    )
 }
 
 fn has_flag(args: &[String], flag: &str) -> bool {
@@ -268,10 +264,47 @@ pub fn parse_play_args(args: &[String]) -> Option<PlayConfig> {
         eprintln!("error: {e}");
         std::process::exit(1);
     });
+    let mut params = RamPlayParams {
+        vol: 127,
+        ..Default::default()
+    };
+    for (flag, value) in [
+        ("--pitch", &mut params.pitch),
+        ("--brr", &mut params.brr),
+        ("--dist", &mut params.dist),
+        ("--start", &mut params.strt),
+        ("--end", &mut params.end),
+        ("--hold", &mut params.hold),
+        ("--decay", &mut params.dec),
+        ("--retrigger", &mut params.rtrg),
+        ("--retrig-time", &mut params.rtim),
+    ] {
+        if let Some(text) = get_arg(args, flag) {
+            *value = text
+                .parse::<i32>()
+                .ok()
+                .filter(|v| (0..=127).contains(v))
+                .unwrap_or_else(|| {
+                    eprintln!("{flag} must be an integer in 0..127");
+                    std::process::exit(1)
+                });
+        }
+    }
+    if let Some(text) = get_arg(args, "--srr") {
+        params.srr = text
+            .parse::<f32>()
+            .ok()
+            .filter(|v| (0.0..=0.9629).contains(v))
+            .unwrap_or_else(|| {
+                eprintln!("--srr must be in 0..0.9629");
+                std::process::exit(1)
+            });
+    }
     Some(PlayConfig {
         input: PathBuf::from(input),
         output: PathBuf::from(output),
         output_secs,
         channel,
+        params,
     })
 }

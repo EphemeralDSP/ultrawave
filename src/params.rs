@@ -379,6 +379,8 @@ pub struct RamPlayParams {
     #[id = "play_dist"]
     pub dist: IntParam,
     // Main grid
+    #[id = "brr"]
+    pub brr: IntParam,
     #[id = "strt"]
     pub strt: IntParam,
     #[id = "end"]
@@ -422,6 +424,8 @@ impl Default for RamPlayParams {
             )
             .with_value_to_string(formatters::v2s_f32_rounded(3)),
             dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 })
+                .with_string_to_value(Arc::new(parse_0_127)),
+            brr: IntParam::new("Bit Reduction", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_percent))

@@ -1,3 +1,4 @@
+use crate::dsp::effects::Distortion;
 use crate::dsp::sample_engine::{param_to_normalized, pitch_to_ratio, SampleEngine};
 use crate::machines::shared::{get_global_registry, BufferRegistry, CHANNEL_COUNT};
 use std::sync::Arc;
@@ -12,6 +13,8 @@ pub struct RamPlayParams {
     pub rtrg: i32,
     pub rtim: i32,
     pub srr: f32,
+    pub brr: i32,
+    pub dist: i32,
     pub vol: i32,
 }
 
@@ -26,6 +29,8 @@ impl Default for RamPlayParams {
             rtrg: 0,
             rtim: 0,
             srr: 0.0,
+            brr: 0,
+            dist: 0,
             vol: 100,
         }
     }
@@ -44,6 +49,7 @@ pub struct RamPlay {
     retrig_intervals: [usize; CHANNEL_COUNT],
     retrigs_remaining: [usize; CHANNEL_COUNT],
     current_params: [RamPlayParams; CHANNEL_COUNT],
+    distortion: [Distortion; CHANNEL_COUNT],
 }
 
 #[allow(dead_code)]
@@ -71,6 +77,7 @@ impl RamPlay {
             retrig_intervals: [0; CHANNEL_COUNT],
             retrigs_remaining: [0; CHANNEL_COUNT],
             current_params: [RamPlayParams::default(); CHANNEL_COUNT],
+            distortion: std::array::from_fn(|_| Distortion::new()),
         }
     }
 
@@ -101,6 +108,7 @@ impl RamPlay {
     pub fn trigger(&mut self, params: &RamPlayParams, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.current_params[channel] = *params;
+        self.update_params(params, channel);
         let shared_buffer = self.registry.read_buffer(channel).unwrap_or_default();
         self.engines[channel].load_buffer(shared_buffer);
         if self.engines[channel].buffer_len() == 0 {
@@ -119,6 +127,19 @@ impl RamPlay {
         } else {
             self.retrigs_remaining[channel] = 0;
         }
+    }
+
+    /// Live playback controls. Envelope and retrigger timing are latched on trigger.
+    pub fn update_params(&mut self, params: &RamPlayParams, channel: usize) {
+        let channel = Self::clamp_channel(channel);
+        let current = &mut self.current_params[channel];
+        current.pitch = params.pitch;
+        current.end = params.end;
+        current.srr = params.srr;
+        current.brr = params.brr;
+        current.dist = params.dist;
+        current.vol = params.vol;
+        self.distortion[channel].set_drive(param_to_normalized(params.dist));
     }
 
     fn trigger_internal(&mut self, channel: usize) {
@@ -173,7 +194,7 @@ impl RamPlay {
 
         let buffer_len = self.engines[channel].buffer_len();
         let end_pos = if self.current_params[channel].end >= 127 {
-            buffer_len.saturating_sub(1) as f64
+            buffer_len as f64
         } else {
             let end_norm = param_to_normalized(self.current_params[channel].end);
             (end_norm as f64) * (buffer_len as f64)
@@ -185,8 +206,12 @@ impl RamPlay {
         }
 
         let pitch_ratio = pitch_to_ratio(self.current_params[channel].pitch);
-        let sample = self.engines[channel]
-            .read_sample_with_processing(pitch_ratio, self.current_params[channel].srr);
+        let sample = self.engines[channel].read_sample_with_processing(
+            pitch_ratio,
+            self.current_params[channel].srr,
+            self.current_params[channel].brr,
+        );
+        let sample = self.distortion[channel].process(sample);
         if self.engines[channel].position() >= end_pos {
             self.is_playing[channel] = false;
         }
@@ -345,6 +370,8 @@ mod tests {
             rtrg: 0,
             rtim: 0,
             srr: 0.0,
+            brr: 0,
+            dist: 0,
             vol: 127,
         };
         player.trigger(&params, 0);

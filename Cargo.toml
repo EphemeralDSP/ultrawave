@@ -22,7 +22,7 @@ path = "src/bin/play.rs"
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"] }
 nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 libc = "0.2"
-ephemeral-rs = { path = "../Ephemeral/rust/ephemeral-rs" }
+ephemeral-dsp = { git = "ssh://git@github.com/EphemeralDSP/ephemeral.git", rev = "243d21b7aef5337ea8ff0e30750c01d1fa3af296" }
 
 # DSP
 rubato = "1.0"

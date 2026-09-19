@@ -46,13 +46,14 @@ impl SampleEngine {
         let len = self.buffer.len();
         let idx = self.position as usize;
 
-        if idx >= len - 1 {
+        if idx >= len {
             return 0.0;
         }
 
         let frac = (self.position - idx as f64) as f32;
-        let s0: f32 = self.buffer[idx] as f32 / 32768.0;
-        let s1: f32 = self.buffer[idx + 1] as f32 / 32768.0;
+        // RAM stores signed 12-bit codes in an i16 container, not 16-bit PCM.
+        let s0: f32 = self.buffer[idx] as f32 / 2048.0;
+        let s1: f32 = self.buffer[(idx + 1).min(len - 1)] as f32 / 2048.0;
         let interpolated = s0 + (s1 - s0) * frac;
 
         self.position += pitch_ratio;
@@ -60,9 +61,9 @@ impl SampleEngine {
         interpolated
     }
 
-    pub fn read_sample_with_processing(&mut self, pitch_ratio: f64, srr: f32) -> f32 {
+    pub fn read_sample_with_processing(&mut self, pitch_ratio: f64, srr: f32, brr: i32) -> f32 {
         let raw_sample = self.read_sample_linear(pitch_ratio);
-        let quantized = apply_12bit_quantization(raw_sample);
+        let quantized = apply_bit_reduction(raw_sample, brr);
         self.decimator.process(quantized, srr)
     }
 
@@ -85,18 +86,24 @@ impl SampleEngine {
     }
 }
 
-/// Applies 12-bit quantization as per Machinedrum UW specs.
-/// Converts from 16-bit to 12-bit range, adding the characteristic grit.
+/// Undithered, saturating signed 12-bit quantization. This is a UW-inspired
+/// approximation, not a measured model of the hardware's conversion stages.
 #[inline]
 pub fn apply_12bit_quantization(sample: f32) -> f32 {
-    let scaled = sample * 2048.0;
-    let quantized = scaled.round();
-    let clamped = quantized.clamp(-2048.0, 2047.0);
-    clamped / 2048.0
+    apply_bit_reduction(sample, 0)
+}
+
+/// BRR progressively removes up to ten bits from the 12-bit playback signal.
+/// This deliberately stepped mapping is an approximation, not an MD ROM table.
+#[inline]
+pub fn apply_bit_reduction(sample: f32, brr: i32) -> f32 {
+    let bits = 12 - brr.clamp(0, 127) * 10 / 127;
+    let scale = (1 << (bits - 1)) as f32;
+    (sample * scale).round().clamp(-scale, scale - 1.0) / scale
 }
 
 /// Converts a pitch parameter (0-127, center=64) to a playback ratio.
-/// 64 = 1.0x (original speed), 0 = 0.5x, 127 = ~2.0x
+/// 64 = 1.0x (original speed), 52 = 0.5x, 76 = 2.0x.
 pub fn pitch_to_ratio(pitch: i32) -> f64 {
     let semitones = (pitch - 64) as f64;
     2.0_f64.powf(semitones / 12.0)
@@ -148,10 +155,11 @@ mod tests {
     #[test]
     fn test_linear_interpolation() {
         let mut engine = SampleEngine::new(44100.0);
-        engine.load_buffer(vec![0, 16384, 32767]);
+        engine.load_buffer(vec![-512, 1024, 1536]);
         engine.trigger(0.0);
 
-        let s1 = engine.read_sample_linear(0.5);
-        assert!((0.0..0.3).contains(&s1));
+        assert_eq!(engine.read_sample_linear(0.5), -0.25);
+        assert_eq!(engine.read_sample_linear(0.5), 0.125);
+        assert_eq!(engine.read_sample_linear(0.5), 0.5);
     }
 }

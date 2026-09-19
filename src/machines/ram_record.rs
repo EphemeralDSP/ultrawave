@@ -1,7 +1,6 @@
 use crate::dsp::sample_engine::param_to_normalized;
 use crate::machines::shared::{
-    bump_record_generation, current_record_generation, get_global_registry, BufferRegistry,
-    CHANNEL_COUNT, MAX_BUFFER_SAMPLES,
+    get_global_registry, BufferRegistry, CHANNEL_COUNT, MAX_BUFFER_SAMPLES,
 };
 use std::sync::Arc;
 
@@ -121,7 +120,7 @@ impl RamRecord {
         self.rec_rate_divisors[channel] = 1.0 + (1.0 - rate_normalized) * 15.0;
         self.rec_rate_counters[channel] = 0.0;
 
-        let gen = bump_record_generation(channel);
+        let gen = self.registry.bump_record_generation(channel);
         self.local_generations[channel] = gen;
 
         self.is_recording[channel] = true;
@@ -163,7 +162,7 @@ impl RamRecord {
         }
 
         // Check if another instance has taken over this channel.
-        if current_record_generation(channel) != self.local_generations[channel] {
+        if self.registry.current_record_generation(channel) != self.local_generations[channel] {
             self.is_recording[channel] = false;
             return;
         }
@@ -454,7 +453,7 @@ mod tests {
         assert!(rec.is_recording(0));
 
         // Simulate another instance bumping the generation
-        bump_record_generation(0);
+        registry.bump_record_generation(0);
 
         // Next record_sample should detect the mismatch and stop
         record_one_sample(&mut rec, &params, 0);

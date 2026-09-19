@@ -207,6 +207,7 @@ impl LocalBuffer {
 struct LocalRegistry {
     buffers: [LocalBuffer; CHANNEL_COUNT],
     active_instances: AtomicUsize,
+    record_generations: [AtomicU64; CHANNEL_COUNT],
 }
 
 impl LocalRegistry {
@@ -219,6 +220,7 @@ impl LocalRegistry {
                 LocalBuffer::new(),
             ],
             active_instances: AtomicUsize::new(0),
+            record_generations: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 }
@@ -235,6 +237,25 @@ pub struct BufferRegistry {
 
 #[allow(dead_code)]
 impl BufferRegistry {
+    // Local/offline registries must not cancel writers using other registries.
+    // Shared-memory writers retain the existing process-local ownership guard;
+    // arbitration across separate host processes is not yet guaranteed.
+    pub fn bump_record_generation(&self, channel: usize) -> u64 {
+        let generations = match &self.backend {
+            RegistryBackend::Local(local) => &local.record_generations,
+            RegistryBackend::Shared(_) => &RECORD_GENERATION,
+        };
+        generations[channel].fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub fn current_record_generation(&self, channel: usize) -> u64 {
+        let generations = match &self.backend {
+            RegistryBackend::Local(local) => &local.record_generations,
+            RegistryBackend::Shared(_) => &RECORD_GENERATION,
+        };
+        generations[channel].load(Ordering::Acquire)
+    }
+
     /// Creates an isolated local registry (primarily for tests and offline flows).
     pub fn new() -> Self {
         Self {
@@ -258,7 +279,9 @@ impl BufferRegistry {
             match Self::new_shared() {
                 Ok(registry) => registry,
                 Err(err) => {
-                    eprintln!("Ultrawave shared memory unavailable, falling back to local RAM: {err}");
+                    eprintln!(
+                        "Ultrawave shared memory unavailable, falling back to local RAM: {err}"
+                    );
                     Self::new()
                 }
             }
@@ -339,19 +362,18 @@ impl BufferRegistry {
     fn unregister_instance(&self) {
         match &self.backend {
             RegistryBackend::Local(local) => {
-                let _ = local
-                    .active_instances
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                        count.checked_sub(1)
-                    });
+                let _ = local.active_instances.fetch_update(
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    |count| count.checked_sub(1),
+                );
             }
             RegistryBackend::Shared(shared) => {
-                let _ = shared
-                    .layout()
-                    .active_instances
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                        count.checked_sub(1)
-                    });
+                let _ = shared.layout().active_instances.fetch_update(
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    |count| count.checked_sub(1),
+                );
             }
         }
     }
@@ -359,7 +381,9 @@ impl BufferRegistry {
     /// Get a clone of the buffer data for reading.
     pub fn read_buffer(&self, channel: usize) -> Option<Vec<i16>> {
         match &self.backend {
-            RegistryBackend::Local(local) => local.buffers.get(channel).map(LocalBuffer::read_buffer),
+            RegistryBackend::Local(local) => {
+                local.buffers.get(channel).map(LocalBuffer::read_buffer)
+            }
             RegistryBackend::Shared(shared) => {
                 let layout = shared.layout();
                 Self::shared_channel(layout, channel).map(Self::shared_read_buffer)
@@ -556,23 +580,12 @@ pub fn play_midi_note_active() -> bool {
     PLAY_MIDI_NOTE_ACTIVE.load(Ordering::Acquire)
 }
 
-/// Bump the recording generation for a channel, returning the new value.
-/// Used by record instances to claim ownership of a channel.
-pub fn bump_record_generation(channel: usize) -> u64 {
-    RECORD_GENERATION[channel].fetch_add(1, Ordering::AcqRel) + 1
-}
-
-/// Read the current recording generation for a channel.
-pub fn current_record_generation(channel: usize) -> u64 {
-    RECORD_GENERATION[channel].load(Ordering::Acquire)
-}
-
 #[cfg(unix)]
 mod platform {
     use super::*;
     use libc::{
-        close, fstat, ftruncate, mmap, munmap, off_t, shm_open, stat, MAP_FAILED,
-        MAP_SHARED, O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE,
+        close, fstat, ftruncate, mmap, munmap, off_t, shm_open, stat, MAP_FAILED, MAP_SHARED,
+        O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE,
     };
     use std::os::fd::RawFd;
 
@@ -591,11 +604,17 @@ mod platform {
 
     impl SharedMapping {
         pub(super) fn open(name: &str) -> io::Result<Self> {
-            let c_name =
-                CString::new(name).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid shm name"))?;
+            let c_name = CString::new(name)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid shm name"))?;
 
             // SAFETY: `c_name` is a valid C string and flags/mode are valid.
-            let mut fd = unsafe { shm_open(c_name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, 0o600 as libc::c_uint) };
+            let mut fd = unsafe {
+                shm_open(
+                    c_name.as_ptr(),
+                    O_CREAT | O_EXCL | O_RDWR,
+                    0o600 as libc::c_uint,
+                )
+            };
             let created = if fd >= 0 {
                 true
             } else {
@@ -745,7 +764,9 @@ mod platform {
                 )
             };
             if handle == 0 {
-                return Err(io::Error::from_raw_os_error(unsafe { GetLastError() as i32 }));
+                return Err(io::Error::from_raw_os_error(unsafe {
+                    GetLastError() as i32
+                }));
             }
 
             // SAFETY: `handle` is valid from CreateFileMappingW.
@@ -753,11 +774,14 @@ mod platform {
             if raw_ptr.is_null() {
                 // SAFETY: `handle` is valid.
                 unsafe { CloseHandle(handle) };
-                return Err(io::Error::from_raw_os_error(unsafe { GetLastError() as i32 }));
+                return Err(io::Error::from_raw_os_error(unsafe {
+                    GetLastError() as i32
+                }));
             }
 
-            let ptr = NonNull::new(raw_ptr as *mut SharedLayout)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "MapViewOfFile returned null"))?;
+            let ptr = NonNull::new(raw_ptr as *mut SharedLayout).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::Other, "MapViewOfFile returned null")
+            })?;
 
             Ok(Self { ptr, handle })
         }

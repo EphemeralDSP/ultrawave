@@ -2,7 +2,6 @@ use nih_plug::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::dsp::filter::ResonantFilter;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
 use crate::machines::shared::{
     register_plugin_instance, set_record_midi_note_active, unregister_plugin_instance,
@@ -15,7 +14,6 @@ pub struct RecordPlugin {
     editor_state: Arc<nih_plug_vizia::ViziaState>,
     sample_rate: f32,
     ram_record: RamRecord,
-    filter: ResonantFilter,
     active_channel: usize,
     midi_led_hold_samples: usize,
     lifecycle_registered: bool,
@@ -30,7 +28,6 @@ impl Default for RecordPlugin {
             editor_state: record_editor::default_state(),
             sample_rate,
             ram_record: RamRecord::new(sample_rate),
-            filter: ResonantFilter::new(sample_rate),
             active_channel: 0,
             midi_led_hold_samples: 0,
             lifecycle_registered: false,
@@ -90,7 +87,6 @@ impl Plugin for RecordPlugin {
 
         self.sample_rate = buffer_config.sample_rate;
         self.ram_record.set_sample_rate(buffer_config.sample_rate);
-        self.filter.set_sample_rate(buffer_config.sample_rate);
         self.midi_led_hold_samples = 0;
         set_record_midi_note_active(false);
         true
@@ -103,66 +99,47 @@ impl Plugin for RecordPlugin {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let tempo_bpm = context.transport().tempo.unwrap_or(120.0);
-
-        while let Some(event) = context.next_event() {
-            match event {
-                NoteEvent::NoteOn { .. } => {
-                    let chan = self.params.buffer.value() as usize;
-                    self.active_channel = chan;
-                    self.midi_led_hold_samples = (self.sample_rate * 0.25) as usize;
-                    let machine_params = RamRecordMachineParams {
-                        mlev: self.params.mlev.value(),
-                        mbal: self.params.mbal.value(),
-                        ilev: self.params.ilev.value(),
-                        ibal: self.params.ibal.value(),
-                        rec_len: self.params.rec_len.value(),
-                        rec_rate: self.params.rec_rate.value(),
-                        tempo_bpm,
-                    };
-                    self.ram_record.start_recording(&machine_params, true, chan);
+        let machine_params = RamRecordMachineParams {
+            mlev: self.params.mlev.value(),
+            mbal: self.params.mbal.value(),
+            ilev: self.params.ilev.value(),
+            ibal: self.params.ibal.value(),
+            rec_len: self.params.rec_len.value(),
+            rec_rate: self.params.rec_rate.value(),
+            tempo_bpm,
+        };
+        let mut next_event = context.next_event();
+        for (sample_id, mut channel_samples) in buffer.iter_samples().enumerate() {
+            while let Some(event) = next_event {
+                if event.timing() > sample_id as u32 {
+                    break;
                 }
-                _ => {}
+                if let NoteEvent::NoteOn { velocity, .. } = event {
+                    if velocity > 0.0 {
+                        self.ram_record.stop_all_recording();
+                        let chan = self.params.buffer.value() as usize;
+                        self.active_channel = chan;
+                        self.midi_led_hold_samples = (self.sample_rate * 0.25) as usize;
+                        self.ram_record.start_recording(&machine_params, true, chan);
+                    }
+                }
+                next_event = context.next_event();
             }
-        }
-
-        // Update filter parameters
-        let filter_freq =
-            20.0 + (self.params.cue1.value() as f32 / 127.0) * (self.sample_rate * 0.45 - 20.0);
-        let filter_resonance = self.params.cue2.value() as f32 / 127.0;
-        self.filter.set_params(
-            filter_freq,
-            filter_resonance,
-            crate::dsp::filter::FilterMode::LowPass,
-        );
-
-        for mut channel_samples in buffer.iter_samples() {
             let chan = self.active_channel;
-            let machine_params = RamRecordMachineParams {
-                mlev: self.params.mlev.value(),
-                mbal: self.params.mbal.value(),
-                ilev: self.params.ilev.value(),
-                ibal: self.params.ibal.value(),
-                rec_len: self.params.rec_len.value(),
-                rec_rate: self.params.rec_rate.value(),
-                tempo_bpm,
-            };
+            let left = channel_samples.get_mut(0).copied().unwrap_or(0.0);
+            let right = channel_samples.get_mut(1).copied().unwrap_or(left);
 
-            // Collect samples first
-            let samples: Vec<f32> = channel_samples.iter_mut().map(|s| *s).collect();
-            let left = samples.first().copied().unwrap_or(0.0);
-            let right = samples.get(1).copied().unwrap_or(0.0);
-
-            // Record the sample (main input is the audio input)
+            // There is one stereo input bus, not two copies of the same input.
             self.ram_record
-                .record_sample(left, right, left, right, &machine_params, chan);
+                .record_sample(left, right, 0.0, 0.0, &machine_params, chan);
 
             // No audio output - Record plugin is silent
             // (Cue 1 and Cue 2 will be used for aux outputs in the future)
             for sample in channel_samples.iter_mut() {
                 *sample = 0.0;
             }
+            self.midi_led_hold_samples = self.midi_led_hold_samples.saturating_sub(1);
         }
-        self.midi_led_hold_samples = self.midi_led_hold_samples.saturating_sub(buffer.samples());
         set_record_midi_note_active(
             self.midi_led_hold_samples > 0 || self.ram_record.is_recording(self.active_channel),
         );
@@ -171,6 +148,12 @@ impl Plugin for RecordPlugin {
 
     fn task_executor(&mut self) -> TaskExecutor<Self> {
         Box::new(|_task| {})
+    }
+
+    fn reset(&mut self) {
+        self.ram_record.stop_all_recording();
+        self.midi_led_hold_samples = 0;
+        set_record_midi_note_active(false);
     }
 }
 

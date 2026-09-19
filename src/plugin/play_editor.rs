@@ -317,8 +317,8 @@ pub fn create(
 
                             VStack::new(cx, |cx| {
                                 Label::new(cx, "BRR").class("knob-label");
-                                RotaryKnob::new(cx, EditorData::params, |p| &p.srr).class("knob");
-                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.srr)))
+                                RotaryKnob::new(cx, EditorData::params, |p| &p.brr).class("knob");
+                                Label::new(cx, EditorData::params.map(|p| format!("{}", p.brr)))
                                     .color(Color::rgb(255, 255, 255))
                                     .font_size(10.0);
                             })
@@ -438,15 +438,15 @@ pub fn create(
 
                 Label::new(cx, COMMIT_HASH).class("commit-hash");
 
-                Element::new(cx)
-                    .class("midi-led")
-                    .background_color(EditorData::midi_note_active.map(|active| {
+                Element::new(cx).class("midi-led").background_color(
+                    EditorData::midi_note_active.map(|active| {
                         if *active {
                             Color::rgb(255, 255, 255)
                         } else {
                             Color::rgb(0, 0, 0)
                         }
-                    }));
+                    }),
+                );
             })
             .col_between(Pixels(8.0))
             .class("footer");
