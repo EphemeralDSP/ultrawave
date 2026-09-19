@@ -70,18 +70,30 @@ struct EditorData {
     meter: f32,
     meter_text: String,
     active: bool,
+    can_rearm: bool,
 }
 
 enum EditorEvent {
     Poll,
     SelectBuffer(i32),
     Trigger,
+    ToggleOneShot,
+    Rearm,
 }
 
 impl Model for EditorData {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|event, _| match event {
             EditorEvent::Trigger => self.ui.trigger.store(true, Ordering::Relaxed),
+            EditorEvent::Rearm => self.ui.rearm.store(true, Ordering::Relaxed),
+            EditorEvent::ToggleOneShot => {
+                if let EditorParams::Record(p) = &self.params {
+                    let param = &p.one_shot;
+                    cx.emit(ParamEvent::BeginSetParameter(param).upcast());
+                    cx.emit(ParamEvent::SetParameter(param, !param.value()).upcast());
+                    cx.emit(ParamEvent::EndSetParameter(param).upcast());
+                }
+            }
             EditorEvent::SelectBuffer(index) => {
                 let param = self.params.buffer();
                 cx.emit(ParamEvent::BeginSetParameter(param).upcast());
@@ -104,11 +116,19 @@ impl Model for EditorData {
                     self.waveform.end_pos = p.end.value() as f32 / 127.0;
                 }
                 self.active = self.ui.active.load(Ordering::Relaxed);
+                let one_shot =
+                    matches!(&self.params, EditorParams::Record(p) if p.one_shot.value());
+                let locked = self.ui.capture_locked.load(Ordering::Relaxed);
+                self.can_rearm = one_shot && locked && !self.active;
                 let phase = if self.active {
                     match self.params {
                         EditorParams::Record(_) => "RECORDING",
                         EditorParams::Play(_) => "PLAYING",
                     }
+                } else if one_shot && locked {
+                    "LOCKED — RE-ARM TO CAPTURE"
+                } else if one_shot {
+                    "ARMED — NEXT TRIGGER RECORDS"
                 } else if len == 0 {
                     "EMPTY — CAPTURE TO BEGIN"
                 } else {
@@ -159,6 +179,8 @@ pub fn create(
             button:hover { background-color: #333; }
             button:checked { background-color: #fff; }
             button:checked label { color: #000; }
+            button:disabled { border-color: #666; }
+            button:disabled label { color: #777; }
             .content { height: 244px; col-between: 16px; }
             .sidebar { width: 124px; row-between: 10px; }
             .faders { height: 164px; col-between: 8px; }
@@ -186,6 +208,7 @@ pub fn create(
             meter: 0.0,
             meter_text: "−∞ dBFS".into(),
             active: false,
+            can_rearm: false,
         }
         .build(cx);
         cx.emit(EditorEvent::Poll);
@@ -211,6 +234,25 @@ pub fn create(
                 )
                 .class("role");
                 Element::new(cx).width(Stretch(1.0));
+                if is_record {
+                    Button::new(
+                        cx,
+                        |cx| cx.emit(EditorEvent::ToggleOneShot),
+                        |cx| Label::new(cx, "ONE SHOT"),
+                    )
+                    .width(Pixels(94.0))
+                    .checked(
+                        EditorData::params
+                            .map(|p| matches!(p, EditorParams::Record(p) if p.one_shot.value())),
+                    );
+                    Button::new(
+                        cx,
+                        |cx| cx.emit(EditorEvent::Rearm),
+                        |cx| Label::new(cx, "RE-ARM"),
+                    )
+                    .width(Pixels(80.0))
+                    .disabled(EditorData::can_rearm.map(|enabled| !*enabled));
+                }
                 Button::new(
                     cx,
                     move |cx| cx.emit(EditorEvent::Trigger),

@@ -20,6 +20,7 @@ pub struct RecordPlugin {
     active_channel: usize,
     ui: Arc<UiState>,
     capture_was_high: bool,
+    one_shot_spent: bool,
     decimator: crate::Decimator,
     distortion: Distortion,
     instance_lease: Option<Arc<InstanceLease>>,
@@ -37,6 +38,7 @@ impl Default for RecordPlugin {
             active_channel: 0,
             ui: Arc::new(UiState::default()),
             capture_was_high: false,
+            one_shot_spent: false,
             decimator: crate::Decimator::new(),
             distortion: Distortion::new(),
             instance_lease: None,
@@ -131,11 +133,17 @@ impl Plugin for RecordPlugin {
 
 impl RecordPlugin {
     fn start_capture(&mut self, params: &RamRecordMachineParams) {
+        if self.params.one_shot.value() && self.one_shot_spent {
+            return;
+        }
         self.ram_record.stop_all_recording();
         self.active_channel = self.params.buffer.value() as usize;
         self.decimator = crate::Decimator::new();
         self.ram_record
             .start_recording(params, true, self.active_channel);
+        if self.params.one_shot.value() && self.ram_record.is_recording(self.active_channel) {
+            self.one_shot_spent = true;
+        }
     }
 
     fn process_audio(
@@ -145,6 +153,17 @@ impl RecordPlugin {
         context: &mut impl ProcessContext<Self>,
         tempo_bpm: f64,
     ) -> ProcessStatus {
+        if !self.params.one_shot.value() {
+            self.one_shot_spent = false;
+        } else if self.ram_record.is_any_recording() {
+            // Enabling One Shot mid-take protects that take, not the next one.
+            self.one_shot_spent = true;
+        }
+        // Re-arming preserves the buffer and waits for the next trigger.
+        // Ignore requests during a take instead of truncating or queuing one.
+        if self.ui.rearm.swap(false, Ordering::Relaxed) && !self.ram_record.is_any_recording() {
+            self.one_shot_spent = false;
+        }
         let machine_params = RamRecordMachineParams {
             mlev: self.params.mlev.value(),
             mbal: self.params.mbal.value(),
@@ -222,6 +241,9 @@ impl RecordPlugin {
                 }
             }
         }
+        self.ui
+            .capture_locked
+            .store(self.one_shot_spent, Ordering::Relaxed);
         self.ui
             .publish(self.ram_record.is_recording(self.active_channel), peak);
         ProcessStatus::Normal
@@ -395,6 +417,104 @@ mod tests {
         render(&mut plugin, &[[0.5; 4]], Some(0));
         assert_eq!(registry.read_buffer(0).unwrap(), [2047]);
         assert!(f32::from_bits(plugin.ui.peak.load(Ordering::Relaxed)) > 0.9);
+    }
+
+    #[test]
+    fn one_shot_protects_the_first_take_during_capture_and_after_transport_reset() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut plugin = RecordPlugin::default();
+        // At 32 Hz, one bar at 120 BPM is exactly 64 samples.
+        plugin.ram_record = RamRecord::with_registry(32.0, registry.clone());
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
+        render(&mut plugin, &[[0.25; 4]; 32], Some(0));
+        render(&mut plugin, &[[-0.5; 4]; 40], Some(0));
+        let expected = [vec![512; 32], vec![-1024; 32]].concat();
+        assert_eq!(registry.read_buffer(0).unwrap(), expected);
+
+        // Neither another MIDI trigger, a Capture automation edge, nor the
+        // UI Capture button may replace this take after stop/start.
+        plugin.reset();
+        Arc::get_mut(&mut plugin.params).unwrap().capture = BoolParam::new("Capture", true);
+        plugin.ui.trigger.store(true, Ordering::Relaxed);
+        render(&mut plugin, &[[0.75; 4]; 8], Some(3));
+        assert_eq!(registry.read_buffer(0).unwrap(), expected);
+    }
+
+    #[test]
+    fn one_shot_rearm_waits_for_a_trigger_and_does_not_interrupt_a_take() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut plugin = RecordPlugin::default();
+        plugin.ram_record = RamRecord::with_registry(32.0, registry.clone());
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
+        render(&mut plugin, &[[0.25; 4]; 32], Some(0));
+        plugin.ui.rearm.store(true, Ordering::Relaxed);
+        render(&mut plugin, &[[-0.5; 4]; 32], Some(0));
+        let first_take = [vec![512; 32], vec![-1024; 32]].concat();
+        assert_eq!(registry.read_buffer(0).unwrap(), first_take);
+
+        plugin.ui.rearm.store(true, Ordering::Relaxed);
+        render(&mut plugin, &[[0.75; 4]; 8], None);
+        assert_eq!(
+            registry.read_buffer(0).unwrap(),
+            first_take,
+            "arming keeps RAM"
+        );
+        render(&mut plugin, &[[0.75; 4]; 68], Some(4));
+        assert_eq!(registry.read_buffer(0).unwrap(), [1536; 64]);
+        render(&mut plugin, &[[-0.25; 4]; 8], Some(0));
+        assert_eq!(registry.read_buffer(0).unwrap(), [1536; 64]);
+    }
+
+    #[test]
+    fn one_shot_toggle_rearms_and_adopts_an_in_progress_take() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut plugin = RecordPlugin::default();
+        plugin.ram_record = RamRecord::with_registry(32.0, registry.clone());
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
+        render(&mut plugin, &[[0.25; 4]; 64], Some(0));
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", false);
+        render(&mut plugin, &[[0.0; 4]; 8], None);
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
+        render(&mut plugin, &[[-0.5; 4]; 8], Some(0));
+        assert_eq!(registry.read_buffer(0).unwrap(), [-1024; 8]);
+
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", false);
+        render(&mut plugin, &[[0.25; 4]; 8], None);
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
+        render(&mut plugin, &[[0.75; 4]; 56], Some(0));
+        assert_eq!(
+            registry.read_buffer(0).unwrap(),
+            [vec![-1024; 8], vec![512; 8], vec![1536; 48]].concat()
+        );
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", false);
+        render(&mut plugin, &[[-0.25; 4]; 8], Some(0));
+        render(&mut plugin, &[[0.5; 4]; 5], Some(0));
+        assert_eq!(registry.read_buffer(0).unwrap(), [1024; 5]);
+    }
+
+    #[test]
+    fn rejected_one_shot_stays_armed_and_lock_is_per_instance_not_per_buffer() {
+        let registry = Arc::new(BufferRegistry::new());
+        let mut owner = RamRecord::with_registry(32.0, registry.clone());
+        owner.start_recording(&RamRecordMachineParams::default(), true, 0);
+        owner.record_mono(-0.25, 0);
+        let mut plugin = RecordPlugin::default();
+        plugin.ram_record = RamRecord::with_registry(32.0, registry.clone());
+        Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
+        render(&mut plugin, &[[0.75; 4]; 4], Some(0));
+        assert_eq!(registry.read_buffer(0).unwrap(), [-512]);
+        owner.stop_all_recording();
+        render(&mut plugin, &[[0.5; 4]; 64], Some(0));
+        assert_eq!(registry.read_buffer(0).unwrap(), [1024; 64]);
+
+        // Selecting another buffer does not silently re-arm this recorder.
+        Arc::get_mut(&mut plugin.params).unwrap().buffer = int(2);
+        render(&mut plugin, &[[-0.5; 4]; 64], Some(0));
+        assert_eq!(registry.buffer_len(2), 0);
+        plugin.ui.rearm.store(true, Ordering::Relaxed);
+        render(&mut plugin, &[[-0.5; 4]; 64], Some(0));
+        assert_eq!(registry.read_buffer(2).unwrap(), [-1024; 64]);
+        assert_eq!(registry.read_buffer(0).unwrap(), [1024; 64]);
     }
 
     #[test]

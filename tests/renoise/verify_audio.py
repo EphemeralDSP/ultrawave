@@ -72,16 +72,38 @@ assert r1["stereo_delta_peak"] < 1e-7, r1
 assert 435 < r1["estimated_frequency_hz"] < 445, r1
 assert 90000 < r1["active_extent_frames"] < 100000, r1
 assert r2["peak"] < 1e-7, r2
+second_input = metrics(out / "second-capture.wav")
+assert 875 < second_input["estimated_frequency_hz"] < 885, second_input
+protected = metrics(out / "play-one-shot.wav")
+assert read_wav(out / "play-r1.wav") == read_wav(out / "play-one-shot.wav"), protected
+settings = metrics(out / "play-settings.wav")
+assert math.isclose(settings["rms"] / r1["rms"], 10 ** (-3 / 20), rel_tol=0.001), settings
+reopened = metrics(out / "play-after-reopen.wav")
+assert reopened["peak"] < 1e-7, reopened  # RAM must not survive a full shutdown
+recaptured = metrics(out / "play-recaptured.wav")
+assert recaptured["peak"] > 1e-4 and recaptured["stereo_delta_peak"] < 1e-7, recaptured
+assert 435 < recaptured["estimated_frequency_hz"] < 445, recaptured
+assert 90000 < recaptured["active_extent_frames"] < 100000, recaptured
+assert metrics(out / "recapture-after-reopen.wav")["peak"] < 1e-7
+assert "project_controls_restored=true" in (out / "host-result.txt").read_text()
 summary = {
     "capture_pass": capture,
     "r1": r1,
     "r2": r2,
+    "second_input": second_input,
+    "protected_take": protected,
+    "after_reopen": reopened,
+    "recaptured": recaptured,
     "assertions": {
         "capture_monitor_silent": True,
         "captured_r1_nonzero": True,
         "captured_content_is_440hz_two_seconds": True,
         "play_is_dual_mono": True,
         "r2_did_not_receive_r1": True,
+        "one_shot_ignored_repeated_880hz_capture": True,
+        "project_controls_restored": True,
+        "ram_empty_after_host_restart": True,
+        "one_shot_rearmed_after_host_restart": True,
     },
 }
 (out / "audio-assertions.json").write_text(json.dumps(summary, indent=2) + "\n")

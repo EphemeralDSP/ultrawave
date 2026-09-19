@@ -28,6 +28,7 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 - 4 shared mono buffers (441,000 samples each: 10 seconds at 44.1 kHz)
 - Real-time recording and playback across plugin instances
 - RAM is not saved in presets/projects; recapture after all instances close or crash
+- Record One Shot captures once until re-armed; its mode is saved, its latch is volatile
 - Separate bit-depth reduction (BRR), sample-and-hold rate reduction (SRR), and distortion
 - Varispeed pitch with linear interpolation, start/end, hold/decay, and retriggers
 - MIDI-triggered playback with velocity sensitivity
@@ -189,6 +190,35 @@ the sidechain. Each bus is mixed to mono before LEV, SRR, DIST, RATE and 12-bit
 storage. CUE1 bypasses those effects; CUE2 monitors what reaches RAM. Avoid routing
 monitor output back into its own capture input unless you deliberately want feedback.
 
+### Record once, then keep the take
+
+Enable **ONE SHOT**, then use Capture, MIDI or Capture automation as usual. The
+first successful trigger records for LEN (or until capacity); further triggers
+cannot restart or replace that take. The status moves from **ARMED** through
+**RECORDING** to **LOCKED**. This automates muting the record trigger after one
+pass without muting Play or changing CUE monitoring.
+
+Click **RE-ARM** after recording to allow one more capture. Arming does not erase
+RAM or start recording; it waits for the next trigger. Re-arm is unavailable
+during capture. Switching One Shot off restores repeated-trigger behavior;
+switching it back on arms it again. Enabling it during a take protects that take.
+A rejected trigger on a busy buffer does not consume the arm.
+
+The lock belongs to this Record instance: transport stop/start, editor reopening
+and selecting another R1–R4 buffer do not re-arm it. Stopping transport mid-take
+can leave a partial take locked; use Re-arm to replace it. Other Record instances
+can still write the same buffer when no writer owns it.
+
+**Projects/presets save controls, not samples or the One Shot latch.** After a
+full shutdown RAM is empty, and a fresh Record instance with One Shot enabled
+starts armed. No sample files or RAM snapshots are embedded in the project.
+
+To sample a single track, several tracks, or a master mix, route that source to
+Record's main or sidechain input in the DAW. Ultrawave does not implicitly tap the
+DAW's master; the DAW send/bus routing supplies the equivalent of the hardware's
+master or analog input. Use a separate capture bus to avoid silencing your master
+with Record's default-silent output.
+
 ### Automated Renoise test (Linux, Renoise 3.5.4 installed)
 
 ```bash
@@ -199,12 +229,18 @@ cargo xtask bundle ultrawave-play --release
 
 The fixture uses Xvfb, an isolated HOME, and a unique shared-RAM key. It generates
 a left-only 440 Hz source **inside Renoise**, captures one bar through the Record
-track effect, renders Play R1 and empty R2, then opens/closes each editor five times.
-The numerical checks verify a two-second 440 Hz capture, identical left/right
-playback, silent capture monitoring, and zero R2 leakage. Artifacts, a generated
-`.xrns`, logs and JSON metrics are in `target/renoise-test/`. This passed at 48 kHz
-on 2026-09-19. Sidechain/balance/effects are covered by callback tests, **not yet by
-a Renoise sidechain-routing fixture**. The test does not modify an open personal session.
+track effect, and verifies that repeated One Shot triggers with an 880 Hz source
+leave that take bit-for-bit unchanged. R1/R2 routing, dual-mono output, monitoring,
+and five editor open/close cycles are also checked.
+
+It then saves non-default controls, terminates that host, and opens the project
+in a fresh process with the **same RAM key**. Controls must survive, RAM must be
+silent, and One Shot must allow a fresh capture. A processing pass delivers queued
+VST3 parameter changes before saving. Requires `Xvfb`, `xdotool`, ImageMagick and
+Python on PATH. Artifacts, `.xrns`, logs and metrics are in `target/renoise-test/`.
+This passed at 48 kHz on 2026-09-19. Sidechain/balance/effects also have callback
+tests, **not yet a Renoise sidechain-routing fixture**. No open personal session
+is modified. This fixture exercises VST3; CLAP state/processing use clap-validator.
 
 `tests/test.RPP` is an old scratch session, **not** a verified ready-to-play test
 project (it lacks source→Record routing). Use the routing steps above.

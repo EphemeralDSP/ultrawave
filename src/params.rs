@@ -238,6 +238,9 @@ pub struct RamRecordParams {
     /// Rising edge starts a timed capture, falling edge does not truncate it.
     #[id = "capture"]
     pub capture: BoolParam,
+    /// Capture once per arming; the runtime latch and RAM are not persisted.
+    #[id = "one_shot"]
+    pub one_shot: BoolParam,
     // Sidebar - Output/Effects
     #[id = "lev"]
     pub lev: FloatParam,
@@ -270,6 +273,7 @@ impl Default for RamRecordParams {
             buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
                 .with_string_to_value(Arc::new(parse_buffer)),
             capture: BoolParam::new("Capture", false),
+            one_shot: BoolParam::new("One Shot", false),
             lev: FloatParam::new(
                 "Level",
                 0.0,

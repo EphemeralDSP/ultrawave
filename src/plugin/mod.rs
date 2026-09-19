@@ -13,6 +13,8 @@ pub use record::RecordPlugin;
 #[derive(Default)]
 pub struct UiState {
     pub trigger: AtomicBool,
+    pub rearm: AtomicBool,
+    pub capture_locked: AtomicBool,
     pub active: AtomicBool,
     pub peak: AtomicU32,
 }
