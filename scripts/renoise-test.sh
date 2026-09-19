@@ -71,7 +71,7 @@ run_host() {
   ULTRAWAVE_RENOISE_TEST_ROOT="$OUT" ULTRAWAVE_RENOISE_PHASE="$phase" \
     /usr/bin/renoise "$@" >>"$OUT/renoise.stdout.log" 2>>"$OUT/renoise.stderr.log" &
   RENOISE_PID=$!
-  local deadline=$((SECONDS + ${ULTRAWAVE_RENOISE_TIMEOUT:-90}))
+  local deadline=$((SECONDS + ${ULTRAWAVE_RENOISE_TIMEOUT:-300}))
   while ! grep -q "^${marker}=true$" "$OUT/host-result.txt" 2>/dev/null; do
     # Only dismiss first-run dialogs, on this isolated display.
     if [[ ! -s "$OUT/host-result.txt" ]]; then

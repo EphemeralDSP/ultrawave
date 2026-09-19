@@ -12,6 +12,35 @@ local function parameter(device, name)
   for _, p in ipairs(device.parameters) do if p.name == name then return p end end
   error("parameter missing: " .. name)
 end
+local function make_tone(song, instrument_index, name, left_hz, left_gain, right_hz, right_gain)
+  local instrument = song.instruments[instrument_index]
+  instrument.name = name
+  instrument:insert_sample_at(1)
+  local buffer = instrument.samples[1].sample_buffer
+  assert(buffer:create_sample_data(48000, 32, 2, 96000))
+  buffer:prepare_sample_data_changes()
+  for frame = 1, 96000 do
+    local taper = 1 - 0.5 * (frame - 1) / 96000
+    local t = (frame - 1) / 48000
+    buffer:set_sample_data(1, frame, left_gain * taper * math.sin(2 * math.pi * left_hz * t))
+    buffer:set_sample_data(2, frame, right_gain * taper * math.sin(2 * math.pi * right_hz * t))
+  end
+  buffer:finalize_sample_data_changes()
+end
+local function sidechain_preset(chain_index, effect_index, mute_source)
+  return '<FilterDevicePreset doc_version="14"><DeviceSlot type="SideChainDevice">' ..
+    '<IsActive><Value>1</Value></IsActive><MuteSource>' .. tostring(mute_source) .. '</MuteSource>' ..
+    '<SendAmount><Value>1</Value></SendAmount><SendPan><Value>0.5</Value></SendPan>' ..
+    '<DestChainIndex><Value>' .. chain_index .. '</Value></DestChainIndex>' ..
+    '<DestEffectIndex><Value>' .. effect_index .. '</Value></DestEffectIndex>' ..
+    '</DeviceSlot></FilterDevicePreset>'
+end
+local function configure_sidechain(device, chain_index, effect_index, mute_source)
+  device.active_preset_data = sidechain_preset(chain_index, effect_index, mute_source)
+  -- Presets omit song-specific routing; set the destination parameters explicitly.
+  parameter(device, "Dest. Track").value = chain_index
+  parameter(device, "Dest. Effect").value = effect_index
+end
 
 -- Run each setup and render serially. Catch asynchronous callback assertions
 -- too, so a failure is reported rather than waiting for the shell timeout.
@@ -154,6 +183,42 @@ local function run()
     for _, p in ipairs(play.parameters) do report("play_parameter=" .. p.name .. ":" .. p.value_string) end
     local play_buffer = parameter(play, "Buffer")
     local play_note = song.patterns[1].tracks[2].lines[1].note_columns[1]
+
+    -- Renoise's native #Sidechain device is the only send which feeds a VST3
+    -- auxiliary input. Build two independent right-only lanes so the receiver,
+    -- channel balance, level exclusion, and summing can be distinguished by
+    -- known frequencies and amplitudes.
+    local sidechain_path
+    for _, path in ipairs(song.tracks[1].available_devices) do
+      if path:match("#Sidechain$") then sidechain_path = path end
+    end
+    assert(sidechain_path, "native #Sidechain device unavailable")
+    report("sidechain_device_path=" .. sidechain_path)
+    song:insert_track_at(3); song:insert_track_at(4)
+    song:insert_instrument_at(3); song:insert_instrument_at(4)
+    make_tone(song, 3, "fixture-right-only-660Hz", 660, 0, 660, 0.30)
+    make_tone(song, 4, "fixture-right-only-1100Hz", 1100, 0, 1100, 0.12)
+    local side_note_a = song.patterns[1].tracks[3].lines[1].note_columns[1]
+    local side_note_b = song.patterns[1].tracks[4].lines[1].note_columns[1]
+    local side_a = song.tracks[3]:insert_device_at(sidechain_path, 2)
+    local side_b = song.tracks[4]:insert_device_at(sidechain_path, 2)
+    for _, p in ipairs(side_a.parameters) do report("sidechain_parameter=" .. p.name .. ":" .. p.value_string) end
+
+    local function clear_notes()
+      source_note:clear(); play_note:clear(); side_note_a:clear(); side_note_b:clear()
+    end
+    local function note(column, instrument)
+      column.note_string, column.instrument_value, column.volume_value = "C-4", instrument, 127
+    end
+    local function capture_buffer(index, main_level, main_balance, side_level, side_balance)
+      play_buffer.value_string = tostring(index)
+      parameter(record, "Buffer").value_string = tostring(index)
+      parameter(record, "Main Level").value_string = tostring(main_level)
+      parameter(record, "Main Balance").value_string = main_balance
+      parameter(record, "Sidechain Level").value_string = tostring(side_level)
+      parameter(record, "Sidechain Balance").value_string = side_balance
+      capture.value = 1
+    end
     render_sequence(song, {
       {"capture-pass.wav", function() end},
       {"play-r1.wav", function()
@@ -204,7 +269,63 @@ local function run()
         parameter(play, "Retrigger").value_string = "0"
         play_buffer.value_string = "1"
       end},
+      {"side-dry-660.wav", function()
+        song.patterns[1].tracks[1]:delete_automation(capture)
+        capture.value = 0; parameter(record, "One Shot").value = 0
+        -- Renoise refuses sidechains to previous tracks. Move the receiver
+        -- after both senders, then restore the original layout before saving.
+        song:swap_tracks_at(1, 5)
+        source_note = song.patterns[1].tracks[5].lines[1].note_columns[1]
+        -- Track headroom otherwise attenuates the replay an additional -6 dB.
+        -- Use unity for these routing comparisons, not an output-fitted scale.
+        song.transport.track_headroom = 1
+        clear_notes(); note(side_note_a, 2)
+        configure_sidechain(side_a, 4, 1, false)
+        configure_sidechain(side_b, 4, 1, true)
+        report("sidechain_receiver=" .. parameter(side_a, "Dest. Track").value_string .. "/" ..
+          parameter(side_a, "Dest. Effect").value_string)
+      end},
+      {"side-wrong-route-capture.wav", function()
+        clear_notes(); note(side_note_a, 2)
+        configure_sidechain(side_a, 4, 0, true)
+        capture_buffer(2, 0, "R63", 127, "R63")
+      end},
+      {"side-wrong-route-play.wav", function()
+        capture.value = 0; clear_notes(); note(play_note, 1)
+      end},
+      {"side-rejected-balance-capture.wav", function()
+        clear_notes(); note(side_note_a, 2)
+        configure_sidechain(side_a, 4, 1, true)
+        capture_buffer(2, 0, "R63", 127, "L64")
+      end},
+      {"side-rejected-balance-play.wav", function()
+        capture.value = 0; clear_notes(); note(play_note, 1)
+      end},
+      {"side-single-capture.wav", function()
+        clear_notes(); note(side_note_a, 2); note(source_note, 0)
+        capture_buffer(2, 0, "L64", 127, "R63")
+      end},
+      {"side-single-play.wav", function()
+        capture.value = 0; clear_notes(); note(play_note, 1)
+      end},
+      {"main-only-capture.wav", function()
+        clear_notes(); note(source_note, 0); note(side_note_a, 2); note(side_note_b, 3)
+        capture_buffer(3, 127, "L64", 0, "R63")
+      end},
+      {"main-only-play.wav", function()
+        capture.value = 0; clear_notes(); note(play_note, 1)
+      end},
+      {"side-sum-capture-monitor.wav", function()
+        clear_notes(); note(side_note_a, 2); note(side_note_b, 3)
+        parameter(record, "Capture Monitor").value_string = "127"
+        capture_buffer(3, 0, "L64", 127, "R63")
+      end},
+      {"side-sum-play.wav", function()
+        capture.value = 0; parameter(record, "Capture Monitor").value_string = "0"
+        clear_notes(); note(play_note, 1)
+      end},
     }, function()
+      song:swap_tracks_at(1, 5)
       local step = 0
       local function cycle_editors()
         local success, message = pcall(function()
@@ -214,13 +335,15 @@ local function run()
           if step == 10 then
             renoise.tool():remove_timer(cycle_editors)
             report("editor_open_close_cycles_per_plugin=5")
-            song.patterns[1].tracks[1]:delete_automation(capture)
+            pcall(function() song.patterns[1].tracks[1]:delete_automation(capture) end)
             capture.value = 0
             -- Save immediately, without rendering or yielding to another idle
             -- callback to deliver pending VST3 parameter updates.
             play_buffer.value_string = "0"
+            parameter(record, "Buffer").value_string = "0"
             parameter(record, "Main Level").value_string = "91"
             parameter(record, "Main Balance").value_string = "L32"
+            parameter(record, "One Shot").value = 1
             parameter(play, "Level").value_string = "-3.0 dB"
             -- Save while RAM is populated and One Shot is spent. The next
             -- process must restore controls, but NOT audio or the spent latch.
@@ -230,7 +353,7 @@ local function run()
           end
         end)
         if not success then
-          renoise.tool():remove_timer(cycle_editors)
+          if renoise.tool():has_timer(cycle_editors) then renoise.tool():remove_timer(cycle_editors) end
           report("fatal=Editor lifecycle: " .. tostring(message))
         end
       end

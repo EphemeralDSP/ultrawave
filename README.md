@@ -310,18 +310,27 @@ The fixture uses Xvfb, an isolated HOME, and a unique shared-RAM key. It generat
 a left-only 440 Hz source **inside Renoise**, captures one bar through the Record
 track effect, and verifies that repeated One Shot triggers with an 880 Hz source
 leave that take bit-for-bit unchanged. Reversed STRT/END must render every frame
-of that take in reverse order. R1/R2 routing, dual-mono output, monitoring, and
-five editor open/close cycles are also checked. Retrigger renders compare every
-sample at 60/120 BPM, with RTIM off, and through 256 infinite-mode hits.
+of that take in reverse order. It also uses Renoise's native `#Sidechain` device
+to route independent right-only 660 Hz and 1100 Hz lanes into Record, checking a
+single send, a summed send, MBAL/IBAL and MLEV/ILEV exclusion, default-silent and
+opt-in capture monitoring, plus silent wrong-destination and rejected-balance
+controls. R1-R4 routing, dual-mono output, monitoring, and five editor open/close
+cycles are checked. Retrigger renders compare every sample at 60/120 BPM, with
+RTIM off, and through 256 infinite-mode hits.
 
 It then saves non-default controls, terminates that host, and opens the project
 in a fresh process with the **same RAM key**. Controls must survive, RAM must be
 silent, and One Shot must allow a fresh capture. It saves immediately after edits,
 without an intervening render to flush VST3 parameter changes. Requires `Xvfb`,
 `xdotool`, ImageMagick and Python on PATH. Artifacts, `.xrns`, logs and metrics are in `target/renoise-test/`.
-This passed at 48 kHz on 2026-09-19. Sidechain/balance/effects also have callback
-tests, **not yet a Renoise sidechain-routing fixture**. No open personal session
-is modified. This fixture exercises VST3; CLAP state/processing use clap-validator.
+**Put the Record receiver after its source tracks:** Renoise refuses sidechain
+sends to previous tracks. Use native `#Sidechain`, choose the later receiver
+track and Ultrawave Record, and enable Mute Source if only the recorded playback
+should be audible. Multiple senders sum into the same stereo sidechain bus.
+The fixture uses unity track headroom for sample comparisons, since Renoise's
+default -6 dB headroom attenuates replay again. It checks destination readback
+and actual rendered samples. No personal session or plugin install is modified.
+This fixture exercises VST3; the offline CLAP harness and clap-validator cover CLAP.
 
 `tests/test.RPP` is an old scratch session, **not** a verified ready-to-play test
 project (it lacks source→Record routing). Use the routing steps above.
