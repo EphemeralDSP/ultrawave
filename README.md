@@ -158,7 +158,15 @@ They are software regression checks, not comparisons against hardware captures.
 
 Both loops include VST3 immediate-save/automation regressions. Run those alone
 with `./scripts/test-vst3-state.sh` (or append `--release`).
-The warm fast loop took about **two seconds** on the development ThinkPad with
+They also build and load the actual CLAP cdylibs and run the bounded,
+isolated audio/state harness in `./scripts/test-clap-audio.sh`. The harness uses
+fresh shared-memory names and removes its mappings and lease directories. It
+checks four-lane main/sidechain routing, exact MIDI/automation offsets, reverse,
+finite/infinite/OFF retriggers at two tempos, saved controls and bank isolation
+at 44.1/48/96 kHz. The full loop uses release libraries (`--release`). It
+documents current transport behavior: a playing-to-stopped edge and reset stop
+voices, while host seek position and loop metadata do not restart or stop them.
+The warm fast loop takes about **eight seconds** on the development ThinkPad with
 debug symbols and incremental compilation disabled; first builds take longer.
 Listen to `target/audition/*.wav`,
 then inspect peak/RMS, neutral delta, and effect deltas printed by the script.

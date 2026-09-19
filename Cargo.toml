@@ -29,6 +29,10 @@ ephemeral-dsp = { git = "ssh://git@github.com/EphemeralDSP/ephemeral.git", rev =
 hound = "3.5"
 crossbeam-queue = "0.3"
 
+[dev-dependencies]
+clap-sys = "=0.5.0"
+libloading = "=0.8.9"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Memory"] }
 
