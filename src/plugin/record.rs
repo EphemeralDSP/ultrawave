@@ -5,10 +5,10 @@ use std::sync::Arc;
 use crate::dsp::effects::Distortion;
 use crate::dsp::mix::mix_inputs;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
-use crate::machines::shared::{register_plugin_instance, InstanceLease};
 use crate::params::RamRecordParams;
 use crate::plugin::{
     editor::{self, EditorParams},
+    pairing::Pairing,
     UiState,
 };
 
@@ -23,25 +23,26 @@ pub struct RecordPlugin {
     one_shot_spent: bool,
     decimator: crate::Decimator,
     distortion: Distortion,
-    instance_lease: Option<Arc<InstanceLease>>,
+    pairing: Pairing,
     preload_attempted: bool,
 }
 
 impl Default for RecordPlugin {
     fn default() -> Self {
         let sample_rate = 44100.0;
+        let pairing = Pairing::new();
         Self {
             params: Arc::new(RamRecordParams::default()),
             editor_state: editor::default_state(),
             sample_rate,
-            ram_record: RamRecord::new(sample_rate),
+            ram_record: RamRecord::with_registry(sample_rate, pairing.current_registry()),
             active_channel: 0,
             ui: Arc::new(UiState::default()),
             capture_was_high: false,
             one_shot_spent: false,
             decimator: crate::Decimator::new(),
             distortion: Distortion::new(),
-            instance_lease: None,
+            pairing,
             preload_attempted: false,
         }
     }
@@ -81,6 +82,7 @@ impl Plugin for RecordPlugin {
             EditorParams::Record(self.params.clone()),
             self.editor_state.clone(),
             self.ui.clone(),
+            self.pairing.ui_registry(),
         )
     }
 
@@ -90,17 +92,14 @@ impl Plugin for RecordPlugin {
         buffer_config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
-        if self.instance_lease.is_none() {
-            match register_plugin_instance() {
-                Ok(lease) => self.instance_lease = Some(lease),
-                Err(error) => {
-                    eprintln!("Ultrawave RAM registration failed: {error}");
-                    return false;
-                }
-            }
-        }
+        self.pairing
+            .prepare_initial(self.params.bank.value() as u8, |registry| {
+                self.ram_record.rebind_registry(registry)
+            });
         if !self.preload_attempted {
-            if let Err(error) = crate::plugin::maybe_preload_buffer_from_env() {
+            if let Err(error) =
+                crate::plugin::maybe_preload_buffer_from_env(&self.pairing.current_registry())
+            {
                 eprintln!("standalone preload failed: {error}");
             }
             self.preload_attempted = true;
@@ -154,6 +153,24 @@ impl RecordPlugin {
         context: &mut impl ProcessContext<Self>,
         tempo_bpm: f64,
     ) -> ProcessStatus {
+        let bank = self.params.bank.value() as u8;
+        if self.pairing.request(bank) {
+            self.ram_record.stop_all_recording();
+            self.capture_was_high = self.params.capture.value();
+        }
+        self.pairing
+            .adopt(|registry| self.ram_record.rebind_registry(registry));
+        self.ui
+            .bank_status
+            .store(self.pairing.status() as u32, Ordering::Relaxed);
+        if self.pairing.status() == crate::plugin::pairing::CONNECTING {
+            self.ui.trigger.store(false, Ordering::Relaxed);
+            for channel in buffer.as_slice() {
+                channel.fill(0.0);
+            }
+            self.ui.publish(false, 0.0);
+            return ProcessStatus::Normal;
+        }
         if !self.params.one_shot.value() {
             self.one_shot_spent = false;
         } else if self.ram_record.is_any_recording() {

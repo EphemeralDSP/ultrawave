@@ -270,6 +270,20 @@ can still write the same buffer when no writer owns it.
 full shutdown RAM is empty, and a fresh Record instance with One Shot enabled
 starts armed. No sample files or RAM snapshots are embedded in the project.
 
+### Pairing Record and Play
+
+Set **BANK** to the same number (1–16) in Record and Play to share R1–R4. BANK
+is saved with plugin state but is intentionally not automatable. The default is
+**OFF**: every new instance has private RAM and cannot accidentally hear another
+instance. Different banks are isolated. Choosing the same bank in another
+project deliberately joins that RAM; bank numbers are not project identities.
+Samples remain volatile, and fully closing a bank clears it when it is next
+opened even while other banks remain active. The footer shows `B…` while
+connecting and `B!` if attachment failed; failure uses disconnected private RAM
+rather than pretending pairing succeeded. Standalone/screenshot runs may set
+`ULTRAWAVE_BANK=1`; `ULTRAWAVE_SHM_KEY` remains the namespace prefix for all
+banks.
+
 To sample a single track, several tracks, or a master mix, route that source to
 Record's main or sidechain input in the DAW. Ultrawave does not implicitly tap the
 DAW's master; the DAW send/bus routing supplies the equivalent of the hardware's

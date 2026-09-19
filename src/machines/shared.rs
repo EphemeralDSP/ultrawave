@@ -211,6 +211,23 @@ impl BufferRegistry {
         })
     }
 
+    /// Opens one explicit pairing bank. Unlike the legacy global path this
+    /// never falls back to local RAM: callers must surface attachment errors.
+    pub fn open_bank(bank: u8) -> io::Result<Arc<Self>> {
+        if !(1..=16).contains(&bank) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bank must be 1..=16",
+            ));
+        }
+        let key = format!("{}-bank-{bank}", shared_memory_key());
+        Ok(Arc::new(Self {
+            backend: RegistryBackend::Shared(Arc::new(SharedMemory::open_key(&key)?)),
+            session_id: AtomicU32::new(0),
+            lease: Mutex::new(Weak::new()),
+        }))
+    }
+
     fn new_global() -> Self {
         if cfg!(test) {
             return Self::new();

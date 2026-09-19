@@ -2773,6 +2773,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "ultrawave"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-queue",
  "egui",
  "ephemeral-dsp",
  "hound",

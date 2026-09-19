@@ -1,8 +1,9 @@
 pub mod editor;
+mod pairing;
 pub mod play;
 pub mod record;
 
-use crate::machines::shared::{get_global_registry, CHANNEL_COUNT};
+use crate::machines::shared::{BufferRegistry, CHANNEL_COUNT};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -17,6 +18,7 @@ pub struct UiState {
     pub capture_locked: AtomicBool,
     pub active: AtomicBool,
     pub peak: AtomicU32,
+    pub bank_status: AtomicU32,
 }
 
 impl UiState {
@@ -27,7 +29,7 @@ impl UiState {
     }
 }
 
-pub fn maybe_preload_buffer_from_env() -> Result<Option<usize>, String> {
+pub fn maybe_preload_buffer_from_env(registry: &BufferRegistry) -> Result<Option<usize>, String> {
     let wav_path = match std::env::var("ULTRAWAVE_SCREENSHOT_WAV") {
         Ok(path) if !path.is_empty() => path,
         _ => return Ok(None),
@@ -71,6 +73,6 @@ pub fn maybe_preload_buffer_from_env() -> Result<Option<usize>, String> {
         .collect();
 
     let len = mono_buffer.len();
-    get_global_registry().replace_buffer_at_rate(channel, mono_buffer, spec.sample_rate as f32);
+    registry.replace_buffer_at_rate(channel, mono_buffer, spec.sample_rate as f32);
     Ok(Some(len))
 }

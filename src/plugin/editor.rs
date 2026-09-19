@@ -9,11 +9,11 @@ use nice_plug_egui::{
     create_egui_editor, EguiEditor, EguiEditorState, EguiNiceSettings, Frame, NiceEguiApp,
     RepaintNotifier,
 };
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 use std::time::Duration;
 
 use super::UiState;
-use crate::machines::shared::get_global_registry;
+use crate::machines::shared::BufferRegistry;
 use crate::params::{RamPlayParams, RamRecordParams};
 use crate::widgets::{rotary_knob, vertical_slider, waveform};
 
@@ -28,6 +28,12 @@ impl EditorParams {
         match self {
             Self::Record(p) => &p.buffer,
             Self::Play(p) => &p.buffer,
+        }
+    }
+    fn bank(&self) -> &IntParam {
+        match self {
+            Self::Record(p) => &p.bank,
+            Self::Play(p) => &p.bank,
         }
     }
     fn level(&self) -> &FloatParam {
@@ -74,6 +80,7 @@ pub struct UltrawaveEditorApp {
     waveform: Arc<Vec<i16>>,
     metadata: Option<(usize, usize, u64)>,
     meter: f32,
+    registry: Arc<Mutex<Arc<BufferRegistry>>>,
 }
 
 pub type PluginEditor = EguiEditor<UltrawaveEditorApp>;
@@ -86,6 +93,7 @@ pub fn create(
     params: EditorParams,
     state: Arc<EguiEditorState>,
     ui: Arc<UiState>,
+    registry: Arc<Mutex<Arc<BufferRegistry>>>,
 ) -> Option<PluginEditor> {
     let repaint = RepaintNotifier::new();
     create_egui_editor(
@@ -99,6 +107,7 @@ pub fn create(
             waveform: Arc::new(Vec::new()),
             metadata: None,
             meter: 0.0,
+            registry,
         },
     )
 }
@@ -164,7 +173,11 @@ impl NiceEguiApp for UltrawaveEditorApp {
         ui.ctx().request_repaint_after(Duration::from_millis(50));
         let Some(gui) = self.gui.clone() else { return };
         let channel = self.params.buffer().unmodulated_plain_value() as usize;
-        let registry = get_global_registry();
+        let registry = self
+            .registry
+            .lock()
+            .expect("bank UI registry poisoned")
+            .clone();
         let (len, rate, revision) = registry.snapshot(channel).unwrap_or((0, 44_100.0, 0));
         let metadata = Some((channel, len, revision));
         if metadata != self.metadata {
@@ -421,15 +434,31 @@ impl UltrawaveEditorApp {
     fn footer(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
         ui.horizontal(|ui| {
             let selected = self.params.buffer().unmodulated_plain_value();
+            let bank = self.params.bank().unmodulated_plain_value();
+            let bank_status = self.ui_state.bank_status.load(Ordering::Relaxed);
+            let bank_text = match bank_status {
+                1 => format!("B{bank}…"),
+                3 => format!("B{bank}!"),
+                _ if bank == 0 => "OFF".into(),
+                _ => format!("B{bank}"),
+            };
             ui.label(format!(
-                "▌▌ R{} ▐▐  RAM > {}",
+                "▌▌ R{} ▐▐  {}",
                 selected + 1,
-                if record {
-                    "REC / CUE1 DRY / CUE2 CAPTURE"
-                } else {
-                    "PLAY / MONO > STEREO"
-                }
+                if record { "REC" } else { "PLAY" }
             ));
+            ui.label("BANK");
+            if ui
+                .add_sized([48.0, 28.0], egui::Button::new(bank_text))
+                .clicked()
+            {
+                let next = if bank >= 16 { 0 } else { bank + 1 };
+                let p = self.params.bank();
+                let setter = gui.param_setter();
+                setter.begin_set_parameter(p);
+                setter.set_parameter(p, next);
+                setter.end_set_parameter(p);
+            }
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 for index in (0..4).rev() {
                     if ui

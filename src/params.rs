@@ -39,6 +39,31 @@ fn parse_buffer(string: &str) -> Option<i32> {
     parse_i32_clamped(string, 0, 3)
 }
 
+fn parse_bank(string: &str) -> Option<i32> {
+    let value = string.trim();
+    if value.eq_ignore_ascii_case("OFF") {
+        Some(0)
+    } else {
+        parse_i32_clamped(value, 1, 16)
+    }
+}
+
+fn format_bank(value: i32) -> String {
+    if value == 0 {
+        "OFF".into()
+    } else {
+        value.to_string()
+    }
+}
+
+fn default_bank() -> i32 {
+    std::env::var("ULTRAWAVE_BANK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        .clamp(0, 16)
+}
+
 fn parse_level_db(string: &str) -> Option<f32> {
     let trimmed = string.trim();
     let stripped = trimmed.trim_end_matches([' ', 'd', 'D', 'b', 'B']);
@@ -247,6 +272,8 @@ fn format_rtim(value: i32) -> String {
 
 #[derive(Params)]
 pub struct RamRecordParams {
+    #[id = "bank"]
+    pub bank: IntParam,
     // Buffer selector (R1-R4)
     #[id = "rec_buf"]
     pub buffer: IntParam,
@@ -285,6 +312,10 @@ pub struct RamRecordParams {
 impl Default for RamRecordParams {
     fn default() -> Self {
         Self {
+            bank: IntParam::new("Bank", default_bank(), IntRange::Linear { min: 0, max: 16 })
+                .with_value_to_string(Arc::new(format_bank))
+                .with_string_to_value(Arc::new(parse_bank))
+                .non_automatable(),
             buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
                 .with_string_to_value(Arc::new(parse_buffer)),
             capture: BoolParam::new("Capture", false),
@@ -344,6 +375,8 @@ impl Default for RamRecordParams {
 
 #[derive(Params)]
 pub struct RamPlayParams {
+    #[id = "bank"]
+    pub bank: IntParam,
     // Buffer selector (R1-R4)
     #[id = "play_buf"]
     pub buffer: IntParam,
@@ -376,6 +409,10 @@ pub struct RamPlayParams {
 impl Default for RamPlayParams {
     fn default() -> Self {
         Self {
+            bank: IntParam::new("Bank", default_bank(), IntRange::Linear { min: 0, max: 16 })
+                .with_value_to_string(Arc::new(format_bank))
+                .with_string_to_value(Arc::new(parse_bank))
+                .non_automatable(),
             buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
                 .with_string_to_value(Arc::new(parse_buffer)),
             lev: FloatParam::new(

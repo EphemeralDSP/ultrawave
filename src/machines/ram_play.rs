@@ -125,6 +125,13 @@ impl RamPlay {
         self.sample_rate = sample_rate;
     }
 
+    /// Stop playback/retriggers before changing RAM ownership. The old Arc is
+    /// returned for non-audio-thread retirement.
+    pub fn rebind_registry(&mut self, registry: Arc<BufferRegistry>) -> Arc<BufferRegistry> {
+        self.stop_all();
+        std::mem::replace(&mut self.registry, registry)
+    }
+
     /// Follow host tempo changes without restarting the current beat interval.
     /// Invalid or unavailable host tempo falls back to 120 BPM.
     pub fn set_tempo(&mut self, tempo_bpm: f64) {

@@ -3,10 +3,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
-use crate::machines::shared::{register_plugin_instance, InstanceLease};
 use crate::params::RamPlayParams;
 use crate::plugin::{
     editor::{self, EditorParams},
+    pairing::Pairing,
     UiState,
 };
 
@@ -18,14 +18,15 @@ pub struct PlayPlugin {
     active_channel: usize,
     velocity: f32,
     transport_was_playing: bool,
-    instance_lease: Option<Arc<InstanceLease>>,
+    pairing: Pairing,
     preload_attempted: bool,
 }
 
 impl Default for PlayPlugin {
     fn default() -> Self {
         let sample_rate = 44100.0;
-        let ram_play = RamPlay::new(sample_rate);
+        let pairing = Pairing::new();
+        let ram_play = RamPlay::with_registry(sample_rate, pairing.current_registry());
 
         Self {
             params: Arc::new(RamPlayParams::default()),
@@ -35,7 +36,7 @@ impl Default for PlayPlugin {
             active_channel: 0,
             velocity: 1.0,
             transport_was_playing: false,
-            instance_lease: None,
+            pairing,
             preload_attempted: false,
         }
     }
@@ -75,6 +76,7 @@ impl Plugin for PlayPlugin {
             EditorParams::Play(self.params.clone()),
             self.editor_state.clone(),
             self.ui.clone(),
+            self.pairing.ui_registry(),
         )
     }
 
@@ -84,17 +86,14 @@ impl Plugin for PlayPlugin {
         buffer_config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
-        if self.instance_lease.is_none() {
-            match register_plugin_instance() {
-                Ok(lease) => self.instance_lease = Some(lease),
-                Err(error) => {
-                    eprintln!("Ultrawave RAM registration failed: {error}");
-                    return false;
-                }
-            }
-        }
+        self.pairing
+            .prepare_initial(self.params.bank.value() as u8, |registry| {
+                self.ram_play.rebind_registry(registry)
+            });
         if !self.preload_attempted {
-            if let Err(error) = crate::plugin::maybe_preload_buffer_from_env() {
+            if let Err(error) =
+                crate::plugin::maybe_preload_buffer_from_env(&self.pairing.current_registry())
+            {
                 eprintln!("standalone preload failed: {error}");
             }
             self.preload_attempted = true;
@@ -111,6 +110,23 @@ impl Plugin for PlayPlugin {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let bank = self.params.bank.value() as u8;
+        if self.pairing.request(bank) {
+            self.ram_play.stop_all();
+        }
+        self.pairing
+            .adopt(|registry| self.ram_play.rebind_registry(registry));
+        self.ui
+            .bank_status
+            .store(self.pairing.status() as u32, Ordering::Relaxed);
+        if self.pairing.status() == crate::plugin::pairing::CONNECTING {
+            self.ui.trigger.store(false, Ordering::Relaxed);
+            for channel in buffer.as_slice() {
+                channel.fill(0.0);
+            }
+            self.ui.publish(false, 0.0);
+            return ProcessStatus::Normal;
+        }
         let transport = context.transport();
         self.ram_play.set_tempo(transport.tempo.unwrap_or(120.0));
         if self.transport_was_playing && !transport.playing {

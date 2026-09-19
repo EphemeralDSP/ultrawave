@@ -108,6 +108,13 @@ impl RamRecord {
         }
     }
 
+    /// Stop all writers before changing RAM ownership. The old Arc is returned
+    /// so its final drop can be retired away from the audio thread.
+    pub fn rebind_registry(&mut self, registry: Arc<BufferRegistry>) -> Arc<BufferRegistry> {
+        self.stop_all_recording();
+        std::mem::replace(&mut self.registry, registry)
+    }
+
     fn clamp_channel(channel: usize) -> usize {
         channel.min(CHANNEL_COUNT - 1)
     }
