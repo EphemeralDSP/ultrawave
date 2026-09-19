@@ -3,7 +3,11 @@ use std::ffi::CString;
 use std::io;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicI16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, Weak};
+
+mod lifecycle;
+pub use lifecycle::InstanceLease;
+use lifecycle::{LockFiles, SESSION_SLOTS};
 
 pub const CHANNEL_COUNT: usize = 4;
 
@@ -17,15 +21,15 @@ const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 pub const MAX_BUFFER_SAMPLES: usize = (DEFAULT_SAMPLE_RATE * MAX_RECORD_SECONDS) as usize;
 
 const SHARED_MAGIC: u32 = 0x5557_524D; // "UWRM"
-const SHARED_VERSION: u32 = 2;
+const SHARED_VERSION: u32 = 3;
 const INIT_UNINITIALIZED: u32 = 0;
 const INIT_IN_PROGRESS: u32 = 1;
 const INIT_READY: u32 = 2;
 
 #[cfg(unix)]
-const DEFAULT_SHM_KEY: &str = "/ultrawave_global_buffers_v2";
+const DEFAULT_SHM_KEY: &str = "/ultrawave_global_buffers_v3";
 #[cfg(windows)]
-const DEFAULT_SHM_KEY: &str = "Local\\UltrawaveGlobalBuffersV2";
+const DEFAULT_SHM_KEY: &str = "Local\\UltrawaveGlobalBuffersV3";
 
 #[repr(C, align(64))]
 struct SharedChannelLayout {
@@ -43,12 +47,14 @@ struct SharedLayout {
     version: AtomicU32,
     init_state: AtomicU32,
     next_writer_id: AtomicU32,
-    active_instances: AtomicUsize,
+    next_session_id: AtomicU32,
+    sessions: [AtomicU32; SESSION_SLOTS],
     channels: [SharedChannelLayout; CHANNEL_COUNT],
 }
 
 struct SharedMemory {
     mapping: platform::SharedMapping,
+    locks: LockFiles,
 }
 
 impl SharedMemory {
@@ -58,10 +64,13 @@ impl SharedMemory {
     }
 
     fn open_key(key: &str) -> io::Result<Self> {
+        let locks = LockFiles::new(key)?;
+        // Covers file sizing AND initialization. A crashed initializer releases
+        // the gate, so its successor can finish even a zero-length mapping.
+        let _gate = locks.lock("gate", true)?;
         let mapping = platform::SharedMapping::open(key)?;
-        let memory = Self { mapping };
+        let memory = Self { mapping, locks };
         memory.ensure_initialized()?;
-        memory.recover_dead_writers();
         Ok(memory)
     }
 
@@ -73,46 +82,23 @@ impl SharedMemory {
 
     fn ensure_initialized(&self) -> io::Result<()> {
         let layout = self.layout();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-
-        loop {
-            let state = layout.init_state.load(Ordering::Acquire);
-            if state == INIT_READY {
-                let magic = layout.magic.load(Ordering::Acquire);
-                let version = layout.version.load(Ordering::Acquire);
-                if magic == SHARED_MAGIC && version == SHARED_VERSION {
-                    return Ok(());
-                }
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "incompatible Ultrawave RAM layout; use a distinct ULTRAWAVE_SHM_KEY",
-                ));
+        match layout.init_state.load(Ordering::Acquire) {
+            INIT_READY
+                if layout.magic.load(Ordering::Acquire) == SHARED_MAGIC
+                    && layout.version.load(Ordering::Acquire) == SHARED_VERSION =>
+            {
+                Ok(())
             }
-
-            if state == INIT_UNINITIALIZED {
-                if layout
-                    .init_state
-                    .compare_exchange(
-                        INIT_UNINITIALIZED,
-                        INIT_IN_PROGRESS,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
-                {
-                    self.initialize_layout();
-                    return Ok(());
-                }
-                continue;
+            INIT_UNINITIALIZED | INIT_IN_PROGRESS => {
+                // Holding the OS gate proves no initializer is still running.
+                layout.init_state.store(INIT_IN_PROGRESS, Ordering::Release);
+                self.initialize_layout();
+                Ok(())
             }
-
-            if std::time::Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Ultrawave RAM initializer did not finish",
-                ));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "incompatible Ultrawave RAM layout; use a distinct ULTRAWAVE_SHM_KEY",
+            )),
         }
     }
 
@@ -126,59 +112,15 @@ impl SharedMemory {
                 .store(DEFAULT_SAMPLE_RATE.to_bits(), Ordering::Release);
             channel.revision.store(0, Ordering::Release);
             channel.writer.store(0, Ordering::Release);
-            for sample in &channel.samples {
-                sample.store(0, Ordering::Release);
-            }
         }
-        layout.active_instances.store(0, Ordering::Release);
+        for session in &layout.sessions {
+            session.store(0, Ordering::Release);
+        }
+        layout.next_session_id.store(1, Ordering::Relaxed);
         layout.next_writer_id.store(1, Ordering::Relaxed);
         layout.magic.store(SHARED_MAGIC, Ordering::Release);
         layout.version.store(SHARED_VERSION, Ordering::Release);
         layout.init_state.store(INIT_READY, Ordering::Release);
-    }
-
-    fn recover_dead_writers(&self) {
-        #[cfg(unix)]
-        for channel in &self.layout().channels {
-            let token = channel.writer.load(Ordering::Acquire);
-            if token != 0 {
-                let pid = (token >> 32) as libc::pid_t;
-                // kill(pid, 0) performs no signalling; ESRCH means the owner died.
-                if unsafe { libc::kill(pid, 0) } != 0
-                    && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-                {
-                    let recovery_token = ((std::process::id() as u64) << 32)
-                        | self.layout().next_writer_id.fetch_add(1, Ordering::Relaxed) as u64;
-                    if channel
-                        .writer
-                        .compare_exchange(
-                            token,
-                            recovery_token,
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                        )
-                        .is_ok()
-                    {
-                        // The dead process may have stopped after making the
-                        // revision odd. Keep readers invalidated while restoring
-                        // a coherent empty channel under exclusive ownership.
-                        let revision = channel.revision.load(Ordering::Acquire);
-                        if revision & 1 == 0 {
-                            channel.revision.store(revision + 1, Ordering::Release);
-                        }
-                        channel.length.store(0, Ordering::Release);
-                        channel.write_position.store(0, Ordering::Release);
-                        channel
-                            .sample_rate_bits
-                            .store(DEFAULT_SAMPLE_RATE.to_bits(), Ordering::Release);
-                        channel
-                            .revision
-                            .store((revision | 1) + 1, Ordering::Release);
-                        channel.writer.store(0, Ordering::Release);
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -201,7 +143,6 @@ impl LocalBuffer {
 
 struct LocalRegistry {
     buffers: [LocalBuffer; CHANNEL_COUNT],
-    active_instances: AtomicUsize,
     next_writer_id: AtomicU32,
 }
 
@@ -214,7 +155,6 @@ impl LocalRegistry {
                 LocalBuffer::new(),
                 LocalBuffer::new(),
             ],
-            active_instances: AtomicUsize::new(0),
             next_writer_id: AtomicU32::new(1),
         }
     }
@@ -222,37 +162,52 @@ impl LocalRegistry {
 
 enum RegistryBackend {
     Local(LocalRegistry),
-    Shared(SharedMemory),
+    Shared(Arc<SharedMemory>),
 }
 
 /// Global registry for shared buffers R1-R4.
 pub struct BufferRegistry {
     backend: RegistryBackend,
-    process_id: u32,
+    session_id: AtomicU32,
+    lease: Mutex<Weak<InstanceLease>>,
 }
 
 impl BufferRegistry {
     /// IDs come from RAM, not a dylib-local static: CLAP and VST3 may coexist.
     pub(crate) fn writer_token(&self) -> u64 {
-        let counter = match &self.backend {
-            RegistryBackend::Local(local) => &local.next_writer_id,
-            RegistryBackend::Shared(shared) => &shared.layout().next_writer_id,
+        let (session, counter) = match &self.backend {
+            RegistryBackend::Local(local) => (1, &local.next_writer_id),
+            RegistryBackend::Shared(shared) => (
+                self.session_id.load(Ordering::Acquire),
+                &shared.layout().next_writer_id,
+            ),
         };
-        ((self.process_id as u64) << 32) | counter.fetch_add(1, Ordering::Relaxed) as u64
+        if session == 0 {
+            return 0;
+        }
+        // Never wrap into an existing owner's identity. Zero rejects the write.
+        let Ok(id) =
+            counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        else {
+            return 0;
+        };
+        ((session as u64) << 32) | id as u64
     }
 
     /// Creates an isolated local registry (primarily for tests and offline flows).
     pub fn new() -> Self {
         Self {
             backend: RegistryBackend::Local(LocalRegistry::new()),
-            process_id: std::process::id(),
+            session_id: AtomicU32::new(0),
+            lease: Mutex::new(Weak::new()),
         }
     }
 
     fn new_shared() -> io::Result<Self> {
         Ok(Self {
-            backend: RegistryBackend::Shared(SharedMemory::open()?),
-            process_id: std::process::id(),
+            backend: RegistryBackend::Shared(Arc::new(SharedMemory::open()?)),
+            session_id: AtomicU32::new(0),
+            lease: Mutex::new(Weak::new()),
         })
     }
 
@@ -289,10 +244,11 @@ impl BufferRegistry {
             return false;
         };
         let token = self.writer_token();
-        if ch
-            .writer
-            .compare_exchange(0, token, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
+        if token == 0
+            || ch
+                .writer
+                .compare_exchange(0, token, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
         {
             return false;
         }
@@ -333,45 +289,6 @@ impl BufferRegistry {
         channel.length.store(0, Ordering::Release);
         channel.write_position.store(0, Ordering::Release);
         channel.revision.fetch_add(1, Ordering::Release);
-    }
-
-    fn register_instance(&self) {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                let previous = local.active_instances.fetch_add(1, Ordering::AcqRel);
-                if previous == 0 {
-                    self.clear_all();
-                }
-            }
-            RegistryBackend::Shared(shared) => {
-                let previous = shared
-                    .layout()
-                    .active_instances
-                    .fetch_add(1, Ordering::AcqRel);
-                if previous == 0 {
-                    self.clear_all();
-                }
-            }
-        }
-    }
-
-    fn unregister_instance(&self) {
-        match &self.backend {
-            RegistryBackend::Local(local) => {
-                let _ = local.active_instances.fetch_update(
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    |count| count.checked_sub(1),
-                );
-            }
-            RegistryBackend::Shared(shared) => {
-                let _ = shared.layout().active_instances.fetch_update(
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                    |count| count.checked_sub(1),
-                );
-            }
-        }
     }
 
     /// Get a clone of the buffer data for reading.
@@ -451,10 +368,11 @@ impl BufferRegistry {
         let Some(ch) = self.channel(channel) else {
             return false;
         };
-        if ch
-            .writer
-            .compare_exchange(0, token, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
+        if token == 0
+            || ch
+                .writer
+                .compare_exchange(0, token, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
         {
             return false;
         }
@@ -544,27 +462,28 @@ fn shared_memory_key() -> String {
     }
 }
 
-/// Global singleton instance.
-static GLOBAL_REGISTRY: OnceLock<Arc<BufferRegistry>> = OnceLock::new();
+// Cache weakly so final plugin/editor teardown also unmaps RAM and closes its
+// descriptor. A strong static would leak those resources on library unload.
+static GLOBAL_REGISTRY: Mutex<Weak<BufferRegistry>> = Mutex::new(Weak::new());
 
-/// Get reference to the global buffer registry.
+/// Get the global registry during setup or on the UI thread, never in process().
+/// Audio machines retain their own Arc and access RAM directly.
 pub fn get_global_registry() -> Arc<BufferRegistry> {
-    GLOBAL_REGISTRY
-        .get_or_init(|| Arc::new(BufferRegistry::new_global()))
-        .clone()
+    let mut cached = GLOBAL_REGISTRY.lock().expect("RAM registry poisoned");
+    if let Some(registry) = cached.upgrade() {
+        return registry;
+    }
+    let registry = Arc::new(BufferRegistry::new_global());
+    *cached = Arc::downgrade(&registry);
+    registry
 }
 
 /// Register a plugin instance lifecycle.
 ///
 /// When the first instance is created after a full teardown, RAM buffers are
 /// cleared to guarantee volatile/non-persistent behavior across host reloads.
-pub fn register_plugin_instance() {
-    get_global_registry().register_instance();
-}
-
-/// Unregister a plugin instance lifecycle.
-pub fn unregister_plugin_instance() {
-    get_global_registry().unregister_instance();
+pub fn register_plugin_instance() -> io::Result<Arc<InstanceLease>> {
+    get_global_registry().register_instance()
 }
 
 #[cfg(unix)]
@@ -602,9 +521,7 @@ mod platform {
                     0o600 as libc::c_uint,
                 )
             };
-            let created = if fd >= 0 {
-                true
-            } else {
+            if fd < 0 {
                 let err = io::Error::last_os_error();
                 if err.raw_os_error() == Some(libc::EEXIST) {
                     // SAFETY: `c_name` is a valid C string and flags are valid.
@@ -616,18 +533,27 @@ mod platform {
                             format!("shm_open(existing {name}) failed: {open_err}"),
                         ));
                     }
-                    false
                 } else {
                     return Err(io::Error::new(
                         err.kind(),
                         format!("shm_open(create {name}) failed: {err}"),
                     ));
                 }
-            };
+            }
 
             let len = std::mem::size_of::<SharedLayout>();
-
-            if created {
+            // Caller holds the lifecycle gate, including on first creation.
+            // Zero length is an interrupted shm_open → ftruncate, not a live
+            // incompatible layout. Never resize an existing nonzero mapping.
+            // SAFETY: zeroed stat is a valid output buffer; fd is open and owned.
+            let mut info: stat = unsafe { std::mem::zeroed() };
+            if unsafe { fstat(fd, &mut info) } != 0 {
+                let error = io::Error::last_os_error();
+                // SAFETY: this error path relinquishes the owned shm descriptor.
+                unsafe { close(fd) };
+                return Err(error);
+            }
+            if info.st_size == 0 {
                 // SAFETY: `fd` is valid and `len` is the mapping size.
                 let trunc_result = unsafe { ftruncate(fd, len as off_t) };
                 if trunc_result != 0 {
@@ -639,30 +565,16 @@ mod platform {
                         format!("ftruncate({name}, {len}) failed: {err}"),
                     ));
                 }
-            } else {
-                // SAFETY: zeroed struct is valid as out-param for fstat.
-                let mut info: stat = unsafe { std::mem::zeroed() };
-                // SAFETY: `fd` is valid and `info` points to writable memory.
-                if unsafe { fstat(fd, &mut info as *mut stat) } != 0 {
-                    let err = io::Error::last_os_error();
-                    // SAFETY: `fd` came from `shm_open`.
-                    let _ = unsafe { close(fd) };
-                    return Err(io::Error::new(
-                        err.kind(),
-                        format!("fstat({name}) failed: {err}"),
-                    ));
-                }
-                if info.st_size < len as off_t {
-                    // SAFETY: `fd` came from `shm_open`.
-                    let _ = unsafe { close(fd) };
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "shared mapping too small for {name}: {} < {}",
-                            info.st_size, len
-                        ),
-                    ));
-                }
+            } else if info.st_size != len as off_t {
+                // SAFETY: `fd` came from `shm_open`.
+                let _ = unsafe { close(fd) };
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "incompatible shared mapping size for {name}: {} != {len}",
+                        info.st_size
+                    ),
+                ));
             }
 
             // SAFETY: valid fd, shared + read/write mapping, offset 0.
@@ -794,6 +706,12 @@ mod tests {
     use super::*;
     use std::thread;
 
+    // A fork in another test inherits our lock FDs until exec. Keep immediate
+    // final-close assertions separate from subprocess startup. The integration
+    // tests exercise genuinely concurrent hosts in distinct processes.
+    #[cfg(unix)]
+    static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn test_buffer_creation() {
         let registry = BufferRegistry::new();
@@ -883,26 +801,47 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shared_backend_initializes_and_recovers_odd_dead_writer() {
+        let _isolated = PROCESS_TEST_LOCK.lock().unwrap();
         let key = format!("/uw-unit-{}-{:p}", std::process::id(), &());
-        let memory = SharedMemory::open_key(&key).unwrap();
+        let memory = Arc::new(SharedMemory::open_key(&key).unwrap());
+        let registry = Arc::new(BufferRegistry {
+            backend: RegistryBackend::Shared(memory.clone()),
+            session_id: AtomicU32::new(0),
+            lease: Mutex::new(Weak::new()),
+        });
+        let lease = registry.register_instance().unwrap();
+        let token = registry.writer_token();
         let channel = &memory.layout().channels[0];
-        let mut dead = std::process::Command::new("true").spawn().unwrap();
-        let dead_pid = dead.id();
-        dead.wait().unwrap();
         channel.length.store(12, Ordering::Release);
         channel.write_position.store(7, Ordering::Release);
         channel.revision.store(3, Ordering::Release);
-        channel
-            .writer
-            .store((dead_pid as u64) << 32 | 1, Ordering::Release);
+        channel.writer.store(token, Ordering::Release);
 
-        memory.recover_dead_writers();
+        drop(lease);
+        assert_eq!(
+            Arc::strong_count(&memory),
+            2,
+            "recovery worker joined before lease drop returns"
+        );
+        let lease = registry.register_instance().unwrap();
+        assert_ne!(
+            registry.writer_token() >> 32,
+            token >> 32,
+            "new incarnation, same PID"
+        );
         assert_eq!(channel.writer.load(Ordering::Acquire), 0);
         assert_eq!(channel.length.load(Ordering::Acquire), 0);
         assert_eq!(channel.write_position.load(Ordering::Acquire), 0);
         assert_eq!(channel.revision.load(Ordering::Acquire) & 1, 0);
 
+        drop(lease);
+        drop(registry);
         drop(memory);
+        let _ = std::fs::remove_dir_all(format!(
+            "/tmp/ultrawave-{}/{}",
+            unsafe { libc::geteuid() },
+            &key[1..]
+        ));
         let name = CString::new(key).unwrap();
         // SAFETY: name is a valid, uniquely owned POSIX shared-memory key.
         assert_eq!(unsafe { libc::shm_unlink(name.as_ptr()) }, 0);
@@ -961,6 +900,172 @@ mod tests {
             assert_eq!(buffer.len(), 2048);
             assert_eq!(buffer[0], 0);
             assert_eq!(buffer[2047], 2047);
+        }
+    }
+
+    #[cfg(unix)]
+    mod initialization {
+        use super::*;
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        struct Namespace(String);
+        impl Namespace {
+            fn new() -> Self {
+                let stamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                Self(format!("/uwi{:x}{:x}", std::process::id(), stamp as u64))
+            }
+        }
+        impl Drop for Namespace {
+            fn drop(&mut self) {
+                let name = CString::new(self.0.as_str()).unwrap();
+                // SAFETY: uniquely owned disposable test namespace, no live children.
+                unsafe {
+                    libc::shm_unlink(name.as_ptr());
+                }
+                let _ = std::fs::remove_dir_all(format!(
+                    "/tmp/ultrawave-{}/{}",
+                    unsafe { libc::geteuid() },
+                    &self.0[1..]
+                ));
+            }
+        }
+
+        fn create_empty(key: &str) -> OwnedFd {
+            let name = CString::new(key).unwrap();
+            // SAFETY: valid name, flags and mode. Exclusive creation ensures
+            // this test never mutates another process's shared memory.
+            let fd = unsafe {
+                libc::shm_open(
+                    name.as_ptr(),
+                    libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+                    0o600,
+                )
+            };
+            assert!(fd >= 0, "{}", io::Error::last_os_error());
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        }
+
+        #[test]
+        fn crashed_initializer() {
+            let Ok(key) = env::var("ULTRAWAVE_INIT_CRASH_KEY") else {
+                return;
+            };
+            let locks = LockFiles::new(&key).unwrap();
+            let _gate = locks.lock("gate", true).unwrap();
+            let _empty = create_empty(&key);
+            if env::var("ULTRAWAVE_INIT_CRASH_PHASE").unwrap() == "metadata" {
+                let mapping = platform::SharedMapping::open(&key).unwrap();
+                // SAFETY: valid mapping and exclusive lifecycle gate. Inject
+                // a crash partway through initialization, before READY exists.
+                let layout = unsafe { &*mapping.as_ptr() };
+                layout.init_state.store(INIT_IN_PROGRESS, Ordering::Release);
+                layout.channels[1].length.store(45, Ordering::Release);
+                layout.channels[1].revision.store(3, Ordering::Release);
+                layout.channels[1].writer.store(17, Ordering::Release);
+                layout.channels[1]
+                    .sample_rate_bits
+                    .store(f32::NAN.to_bits(), Ordering::Release);
+                std::process::exit(0);
+            }
+            // No destructors: only the kernel can release the lifecycle gate.
+            std::process::exit(0);
+        }
+
+        #[test]
+        fn crash_during_sizing_or_metadata_initialization_can_be_reopened() {
+            let _isolated = PROCESS_TEST_LOCK.lock().unwrap();
+            for phase in ["sizing", "metadata"] {
+                let namespace = Namespace::new();
+                let child = std::process::Command::new(env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "machines::shared::tests::initialization::crashed_initializer",
+                    ])
+                    .env("ULTRAWAVE_INIT_CRASH_KEY", &namespace.0)
+                    .env("ULTRAWAVE_INIT_CRASH_PHASE", phase)
+                    .output()
+                    .unwrap();
+                assert!(
+                    child.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&child.stdout)
+                );
+                let memory = SharedMemory::open_key(&namespace.0).unwrap();
+                assert_eq!(
+                    memory.layout().init_state.load(Ordering::Acquire),
+                    INIT_READY
+                );
+                for channel in &memory.layout().channels {
+                    assert_eq!(channel.length.load(Ordering::Acquire), 0);
+                    assert_eq!(channel.writer.load(Ordering::Acquire), 0);
+                    assert_eq!(channel.revision.load(Ordering::Acquire) & 1, 0);
+                    assert_eq!(
+                        f32::from_bits(channel.sample_rate_bits.load(Ordering::Acquire)),
+                        44100.0
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn live_lock_directory_is_excluded_from_tmpfiles_aging() {
+            let _isolated = PROCESS_TEST_LOCK.lock().unwrap();
+            let namespace = Namespace::new();
+            let memory = SharedMemory::open_key(&namespace.0).unwrap();
+            let directory = std::fs::File::open(format!(
+                "/tmp/ultrawave-{}/{}",
+                unsafe { libc::geteuid() },
+                &namespace.0[1..]
+            ))
+            .unwrap();
+            assert!(matches!(
+                directory.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            drop(memory);
+            directory.try_lock().unwrap();
+        }
+
+        #[test]
+        fn incompatible_mapping_is_rejected_without_resizing_or_reinitializing() {
+            for size in [1, std::mem::size_of::<SharedLayout>() + 64] {
+                let namespace = Namespace::new();
+                let fd = create_empty(&namespace.0);
+                // SAFETY: disposable mapping, no other users, valid owned FD.
+                assert_eq!(
+                    unsafe { libc::ftruncate(fd.as_raw_fd(), size as libc::off_t) },
+                    0
+                );
+                assert_eq!(
+                    SharedMemory::open_key(&namespace.0).err().unwrap().kind(),
+                    io::ErrorKind::InvalidData
+                );
+                let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+                assert_eq!(unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) }, 0);
+                assert_eq!(
+                    stat.st_size as usize, size,
+                    "must not resize an incompatible mapping"
+                );
+            }
+            let namespace = Namespace::new();
+            let memory = SharedMemory::open_key(&namespace.0).unwrap();
+            memory.layout().version.store(2, Ordering::Release);
+            memory.layout().channels[0]
+                .length
+                .store(7, Ordering::Release);
+            assert_eq!(
+                SharedMemory::open_key(&namespace.0).err().unwrap().kind(),
+                io::ErrorKind::InvalidData
+            );
+            assert_eq!(memory.layout().version.load(Ordering::Acquire), 2);
+            assert_eq!(
+                memory.layout().channels[0].length.load(Ordering::Acquire),
+                7
+            );
         }
     }
 }

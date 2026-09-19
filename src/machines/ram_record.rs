@@ -72,7 +72,7 @@ pub struct RamRecord {
     rec_rate_counters: [f32; CHANNEL_COUNT],
     rec_rate_divisors: [f32; CHANNEL_COUNT],
     monitor: [f32; CHANNEL_COUNT],
-    owner_token: u64,
+    owner_tokens: [u64; CHANNEL_COUNT],
 }
 
 impl RamRecord {
@@ -84,7 +84,6 @@ impl RamRecord {
 
     pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
         let max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
-        let owner_token = registry.writer_token();
 
         Self {
             registry,
@@ -97,7 +96,7 @@ impl RamRecord {
             rec_rate_counters: [0.0; CHANNEL_COUNT],
             rec_rate_divisors: [1.0; CHANNEL_COUNT],
             monitor: [0.0; CHANNEL_COUNT],
-            owner_token,
+            owner_tokens: [0; CHANNEL_COUNT],
         }
     }
 
@@ -138,15 +137,19 @@ impl RamRecord {
         self.monitor[channel] = 0.0;
 
         let stored_rate = self.sample_rate / self.rec_rate_divisors[channel].ceil();
+        // Registration happens after construction. Allocate the take's identity
+        // here using only atomics, once a live session exists.
+        self.owner_tokens[channel] = self.registry.writer_token();
         self.is_recording[channel] =
             self.registry
-                .claim_writer(channel, self.owner_token, clear, stored_rate);
+                .claim_writer(channel, self.owner_tokens[channel], clear, stored_rate);
     }
 
     pub fn stop_recording(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.is_recording[channel] = false;
-        self.registry.release_writer(channel, self.owner_token);
+        self.registry
+            .release_writer(channel, self.owner_tokens[channel]);
     }
 
     pub fn stop_all_recording(&mut self) {
@@ -191,7 +194,8 @@ impl RamRecord {
             self.elapsed_samples[channel] += 1;
             if self.elapsed_samples[channel] >= self.target_lengths[channel] {
                 self.is_recording[channel] = false;
-                self.registry.release_writer(channel, self.owner_token);
+                self.registry
+                    .release_writer(channel, self.owner_tokens[channel]);
             }
             return;
         }
@@ -201,10 +205,11 @@ impl RamRecord {
 
         if !self
             .registry
-            .write_sample_owned(channel, self.owner_token, sample_12bit)
+            .write_sample_owned(channel, self.owner_tokens[channel], sample_12bit)
         {
             self.is_recording[channel] = false;
-            self.registry.release_writer(channel, self.owner_token);
+            self.registry
+                .release_writer(channel, self.owner_tokens[channel]);
             return;
         }
 
@@ -214,7 +219,8 @@ impl RamRecord {
 
         if self.elapsed_samples[channel] >= self.target_lengths[channel] {
             self.is_recording[channel] = false;
-            self.registry.release_writer(channel, self.owner_token);
+            self.registry
+                .release_writer(channel, self.owner_tokens[channel]);
         }
     }
 
@@ -247,7 +253,8 @@ impl RamRecord {
 
     pub fn clear(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
-        self.registry.release_writer(channel, self.owner_token);
+        self.registry
+            .release_writer(channel, self.owner_tokens[channel]);
         self.registry.clear_buffer(channel);
         self.samples_recorded[channel] = 0;
         self.elapsed_samples[channel] = 0;

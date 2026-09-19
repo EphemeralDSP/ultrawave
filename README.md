@@ -27,7 +27,7 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 - Undithered signed 12-bit capture/playback, with correct full-scale gain
 - 4 shared mono buffers (441,000 samples each: 10 seconds at 44.1 kHz)
 - Real-time recording and playback across plugin instances
-- RAM is not saved in presets/projects; recapture after a clean full teardown
+- RAM is not saved in presets/projects; recapture after all instances close or crash
 - Separate bit-depth reduction (BRR), sample-and-hold rate reduction (SRR), and distortion
 - Varispeed pitch with linear interpolation, start/end, hold/decay, and retriggers
 - MIDI-triggered playback with velocity sensitivity
@@ -141,21 +141,27 @@ They are software regression checks, not comparisons against hardware captures.
 ./scripts/screenshot.sh             # Render both editors; inspect the PNGs
 ```
 
-The warm fast loop took about **one second** on the development ThinkPad; an
-incremental rebuild took about five seconds. Listen to `target/audition/*.wav`,
+The warm fast loop took about **six seconds** on the development ThinkPad.
+Listen to `target/audition/*.wav`,
 then inspect peak/RMS, neutral delta, and effect deltas printed by the script.
 Failures stop the pass; watch mode waits for an edit before retrying. The full
 loop took about 2.5 minutes. Validators belong on PATH or in `target/tools/`.
 
-`cargo run --release --example dsp_bench` measures trigger cost for short/full
-buffers and neutral/crunchy playback. This machine measured roughly 20 ns per
-trigger, 18 ns/sample neutral and 22 ns/sample crunchy. These are local scalar
-microbenchmarks, not whole-host CPU guarantees. MIDI triggers no longer copy RAM;
-allocation tests cover the first trigger, recording, processing and stopping.
-Pitch and distortion normalization are calculated outside the sample loop.
-SIMD is deferred: the current mono SRR/envelope path is sequential and reads
-atomic shared samples. Block conversion or future parallel voices are better
-SIMD candidates; benchmark those before introducing architecture-specific code.
+`cargo run --release --example dsp_bench` compares the original per-sample capture
+mix with the SIMD capture path, including SRR, distortion, atomic 12-bit storage
+and monitoring. On the development ThinkPad, seven-run medians measured about
+**11.3 → 8.2 ns/sample neutral** and **21.5 → 17.3 ns/sample driven** (roughly
+28% and 20% less CPU time). Playback remains about 18/22 ns/sample neutral/crunchy;
+trigger cost is about 20 ns regardless of buffer length. These are local DSP-path
+measurements, not whole-host CPU guarantees. Rerun on the target machine.
+
+Record mixes four time samples at once using SSE2 on x86-64 and NEON on enabled
+AArch64 targets, with a scalar fallback/tail. It uses bounded stack chunks, keeps
+the original floating-point sum order, and does not approximate tanh or change
+12-bit rounding. Stateful SRR, MIDI timing and envelopes remain sequential.
+Debug/release tests verify bit-exact scalar equivalence, unaligned/tail buffers,
+and MIDI around chunk/host-block boundaries. SSE2 was executed here; NEON awaits
+an ARM run. Allocation tests cover mixing, first trigger, recording and stopping.
 
 ## Test in a DAW
 
@@ -234,15 +240,39 @@ at reduced RATE.
 Writers are exclusive across processes: a competing capture is ignored, never
 steals an active take. A new take invalidates an old playing voice rather than
 mixing revisions; Play latches the available prefix when triggered. Shared-memory
-layout v2 uses a new default key: restart all instances together after upgrading.
-All instances using a key share R1–R4, even in different DAWs/projects.
+**layout v3 uses a new default key**: update Record and Play together, restart all
+instances and recapture. If setting `ULTRAWAVE_SHM_KEY`, choose a fresh key rather
+than reusing a v2 mapping. Incompatible layouts are never resized or overwritten.
+All instances using a key still share R1–R4, even in different DAWs/projects.
 
-Remaining limitations: Unix dead-writer recovery occurs when a new shared mapping
-attaches, not in the audio callback. The shared active-instance counter is not yet
-crash-safe, so a host crash can retain stale RAM until explicitly recaptured.
-Project isolation, crash-safe lifecycle reset, hardware A/B calibration and a
-verified REAPER/sidechain fixture remain open work. No hardware-fidelity claim is
-made by the software tests.
+RAM lifecycle uses OS-held leases instead of persistent counters or PID checks:
+
+- The first plugin after every participant closes/crashes starts with empty RAM.
+  Simultaneous first registrations serialize initialization and clearing.
+- If another host remains open, a background worker checks abandoned sessions
+  every 100 ms (subject to OS scheduling). It discards unfinished takes owned by
+  the dead session, preserving other live writers and completed takes. Trigger
+  capture again after recovery; an earlier rejected trigger is not replayed.
+- A paused/live owner is never stolen because of a timeout. Crashes during file
+  sizing or initialization can also be recovered by the next loader.
+- RAM access on the audio thread remains atomic-only: no filesystem calls,
+  mutexes, allocation or worker startup. Final lease drop joins the worker before
+  library unload; final registry drop releases the mapping and descriptors.
+
+Unix lease files live in the private `/tmp/ultrawave-<uid>/<key>/` directory.
+They intentionally persist; **do not remove them while any instance is open**.
+A shared directory lock protects active namespaces from systemd temporary-file
+aging. There are 64 concurrent registry sessions per key; instances in one loaded
+plugin module share a session. Core-library callers using shared RAM must retain
+the guard returned by `register_instance()` through processing; isolated offline
+registries do not need a lease.
+
+Linux tests exercise real process termination, a stopped live owner, recovery in
+an already-attached survivor, concurrent first loads, odd revisions, interrupted
+initialization, incompatible layouts and orderly reload. This is crash-safe
+coordination, **not sample persistence or hardware calibration**. macOS/ARM
+verification, project isolation, hardware A/B and a verified REAPER/sidechain
+fixture remain open work.
 
 ## Development
 

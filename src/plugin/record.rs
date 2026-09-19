@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::dsp::effects::Distortion;
 use crate::dsp::mix::mix_inputs;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
-use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
+use crate::machines::shared::{register_plugin_instance, InstanceLease};
 use crate::params::RamRecordParams;
 use crate::plugin::{
     editor::{self, EditorParams},
@@ -22,7 +22,7 @@ pub struct RecordPlugin {
     capture_was_high: bool,
     decimator: crate::Decimator,
     distortion: Distortion,
-    lifecycle_registered: bool,
+    instance_lease: Option<Arc<InstanceLease>>,
     preload_attempted: bool,
 }
 
@@ -39,7 +39,7 @@ impl Default for RecordPlugin {
             capture_was_high: false,
             decimator: crate::Decimator::new(),
             distortion: Distortion::new(),
-            lifecycle_registered: false,
+            instance_lease: None,
             preload_attempted: false,
         }
     }
@@ -87,9 +87,14 @@ impl Plugin for RecordPlugin {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        if !self.lifecycle_registered {
-            register_plugin_instance();
-            self.lifecycle_registered = true;
+        if self.instance_lease.is_none() {
+            match register_plugin_instance() {
+                Ok(lease) => self.instance_lease = Some(lease),
+                Err(error) => {
+                    eprintln!("Ultrawave RAM registration failed: {error}");
+                    return false;
+                }
+            }
         }
         if !self.preload_attempted {
             if let Err(error) = crate::plugin::maybe_preload_buffer_from_env() {
@@ -239,11 +244,8 @@ impl Vst3Plugin for RecordPlugin {
 
 impl Drop for RecordPlugin {
     fn drop(&mut self) {
+        // Stop every writer before the instance lease is released.
         self.ram_record.stop_all_recording();
-        if self.lifecycle_registered {
-            unregister_plugin_instance();
-            self.lifecycle_registered = false;
-        }
     }
 }
 

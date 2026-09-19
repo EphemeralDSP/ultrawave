@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
-use crate::machines::shared::{register_plugin_instance, unregister_plugin_instance};
+use crate::machines::shared::{register_plugin_instance, InstanceLease};
 use crate::params::RamPlayParams;
 use crate::plugin::{
     editor::{self, EditorParams},
@@ -17,7 +17,7 @@ pub struct PlayPlugin {
     ram_play: RamPlay,
     active_channel: usize,
     velocity: f32,
-    lifecycle_registered: bool,
+    instance_lease: Option<Arc<InstanceLease>>,
     preload_attempted: bool,
 }
 
@@ -33,7 +33,7 @@ impl Default for PlayPlugin {
             ram_play,
             active_channel: 0,
             velocity: 1.0,
-            lifecycle_registered: false,
+            instance_lease: None,
             preload_attempted: false,
         }
     }
@@ -81,9 +81,14 @@ impl Plugin for PlayPlugin {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        if !self.lifecycle_registered {
-            register_plugin_instance();
-            self.lifecycle_registered = true;
+        if self.instance_lease.is_none() {
+            match register_plugin_instance() {
+                Ok(lease) => self.instance_lease = Some(lease),
+                Err(error) => {
+                    eprintln!("Ultrawave RAM registration failed: {error}");
+                    return false;
+                }
+            }
         }
         if !self.preload_attempted {
             if let Err(error) = crate::plugin::maybe_preload_buffer_from_env() {
@@ -179,15 +184,6 @@ impl Vst3Plugin for PlayPlugin {
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Sampler];
 }
 
-impl Drop for PlayPlugin {
-    fn drop(&mut self) {
-        if self.lifecycle_registered {
-            unregister_plugin_instance();
-            self.lifecycle_registered = false;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,8 +264,10 @@ mod tests {
     fn playback_honors_note_offsets_velocity_pitch_and_block_boundaries() {
         let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
         registry.replace_buffer(0, vec![512, -1024, 1536, 256, -512]);
-        let mut plugin = PlayPlugin::default();
-        plugin.ram_play = RamPlay::with_registry(44100.0, registry.clone());
+        let mut plugin = PlayPlugin {
+            ram_play: RamPlay::with_registry(44100.0, registry.clone()),
+            ..Default::default()
+        };
         assert_eq!(
             render(&mut plugin, 9, &[(2, 0.5), (5, 1.0)]),
             [0.0, 0.0, 0.125, -0.25, 0.375, 0.25, -0.5, 0.75, 0.125]
@@ -283,8 +281,10 @@ mod tests {
         );
 
         let timeline = |block_size: usize| {
-            let mut plugin = PlayPlugin::default();
-            plugin.ram_play = RamPlay::with_registry(44100.0, registry.clone());
+            let mut plugin = PlayPlugin {
+                ram_play: RamPlay::with_registry(44100.0, registry.clone()),
+                ..Default::default()
+            };
             let mut output = Vec::new();
             for start in (0..128).step_by(block_size) {
                 let len = block_size.min(128 - start);
@@ -305,8 +305,10 @@ mod tests {
     fn brr_srr_distortion_and_level_are_independent_live_controls() {
         let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
         registry.replace_buffer(0, vec![256, 768, -256, -768, 256, 768, -256, -768]);
-        let mut plugin = PlayPlugin::default();
-        plugin.ram_play = RamPlay::with_registry(44100.0, registry);
+        let mut plugin = PlayPlugin {
+            ram_play: RamPlay::with_registry(44100.0, registry),
+            ..Default::default()
+        };
         assert_eq!(
             render(&mut plugin, 4, &[(0, 1.0)]),
             [0.125, 0.375, -0.125, -0.375]
@@ -371,8 +373,10 @@ mod tests {
     fn manual_audition_and_meter_are_instance_local() {
         let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
         registry.replace_buffer(0, vec![512; 4]);
-        let mut plugin = PlayPlugin::default();
-        plugin.ram_play = RamPlay::with_registry(44100.0, registry);
+        let mut plugin = PlayPlugin {
+            ram_play: RamPlay::with_registry(44100.0, registry),
+            ..Default::default()
+        };
         let other = PlayPlugin::default();
         plugin.ui.trigger.store(true, Ordering::Relaxed);
         assert_eq!(render(&mut plugin, 2, &[]), [0.25; 2]);
