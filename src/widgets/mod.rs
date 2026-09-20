@@ -46,7 +46,10 @@ pub fn parameter_value<P: nice_plug::prelude::Param>(
             state.invalid = false;
         }
         if enter {
-            if let Some(normalized) = param.string_to_normalized_value(&state.text) {
+            if let Some(normalized) = param
+                .string_to_normalized_value(&state.text)
+                .filter(|v| v.is_finite())
+            {
                 let setter = gui.param_setter();
                 let snapped = param.preview_normalized(param.preview_plain(normalized));
                 setter.begin_set_parameter(param);
@@ -179,7 +182,14 @@ mod tests {
         ctx.set_fonts(fonts);
         let host = Arc::new(Host::default());
         let gui = GuiContext::new(host.clone());
-        let param = IntParam::new("Value", 32, IntRange::Linear { min: 0, max: 127 });
+        let param = FloatParam::new(
+            "Value",
+            32.0,
+            FloatRange::Linear {
+                min: 0.0,
+                max: 127.0,
+            },
+        );
         let id = egui::Id::new("value-test");
         let frame = |events| {
             ctx.run_ui(
@@ -229,19 +239,21 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         };
-        frame(vec![
-            select_all.clone(),
-            egui::Event::Text("invalid".into()),
-            enter.clone(),
-        ]);
-        assert!(host.0.lock().unwrap().is_empty());
+        for invalid in ["invalid", "NaN"] {
+            frame(vec![
+                select_all.clone(),
+                egui::Event::Text(invalid.into()),
+                enter.clone(),
+            ]);
+            assert!(host.0.lock().unwrap().is_empty(), "invalid input {invalid}");
+        }
         frame(vec![select_all, egui::Event::Text("93".into()), enter]);
         let events = host.0.lock().unwrap();
         assert_eq!(events.len(), 3);
         assert_eq!(events[0], None);
-        assert_eq!(param.preview_plain(events[1].unwrap()), 93);
+        assert_eq!(param.preview_plain(events[1].unwrap()), 93.0);
         assert_eq!(events[2], None);
-        assert_eq!(param.value(), 32, "only the host changes DSP parameters");
+        assert_eq!(param.value(), 32.0, "only the host changes DSP parameters");
     }
 
     #[test]

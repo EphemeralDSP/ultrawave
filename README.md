@@ -19,8 +19,10 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 
 1. Insert **Ultrawave Record** on a track to capture audio
 2. Insert **Ultrawave Play** on an instrument track
-3. Record captures audio to one of 4 shared buffers (R1-R4)
-4. Play back via MIDI, with pitch, start/end points, and bit-crushing
+3. Set both plugins to the same **BANK (1–16)** and **buffer (R1–R4)**;
+   the default **OFF** bank is private to each instance
+4. Capture audio with Record, then play it via MIDI with pitch, start/end points,
+   and bit-crushing. Choose different banks for independent Record/Play groups
 
 ## Features
 
@@ -35,6 +37,8 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
   playback cursor, and click-to-type parameter values with Enter/Escape handling
 - Reverse playback when STRT is greater than END
 - MIDI-triggered playback with velocity sensitivity
+- Live level, input balance and monitor gains ramp over 5 ms; initial settings,
+  sample/retrigger edges and the stepped BRR/SRR effects remain immediate
 - Capture/Audition buttons, automatable Capture trigger, clickable R1–R4 tabs,
   per-instance activity/peak meters, and source-rate-aware waveform duration
 - VST3 and CLAP formats
@@ -168,7 +172,7 @@ finite/infinite/OFF retriggers at two tempos, saved controls and bank isolation
 at 44.1/48/96 kHz. The full loop uses release libraries (`--release`). It
 documents current transport behavior: a playing-to-stopped edge and reset stop
 voices, while host seek position and loop metadata do not restart or stop them.
-The warm fast loop takes about **eight seconds** on the development ThinkPad with
+The warm fast loop takes about **9–10 seconds** on the development ThinkPad with
 debug symbols and incremental compilation disabled; first builds take longer.
 Listen to `target/audition/*.wav`,
 then inspect peak/RMS, neutral delta, and effect deltas printed by the script.

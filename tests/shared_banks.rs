@@ -15,6 +15,7 @@ impl Drop for Fixture {
             }
             let _ = std::fs::remove_dir_all(format!(
                 "/tmp/ultrawave-{}/{}",
+                // SAFETY: geteuid has no pointer arguments or preconditions.
                 unsafe { libc::geteuid() },
                 key.trim_start_matches('/')
             ));

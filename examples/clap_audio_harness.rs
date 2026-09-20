@@ -1,4 +1,12 @@
 //! Small, deliberately project-specific CLAP host for exported-plugin regressions.
+//!
+//! Safety model: this loads only our freshly built CLAP modules, which must honor
+//! CLAP's C ABI (valid function tables, NUL-terminated strings, initialized output
+//! structs on success, and synchronous borrowed event/audio/stream pointers).
+//! All fixture helpers execute serially on one thread; no callback is concurrent.
+//! Modules outlive every Plugin and extension reference; Plugins own stable boxed
+//! host tables until destroy. Test helpers accepting Modules/Plugins inherit these
+//! lifetime and thread requirements. This is not a host for untrusted binaries.
 #![allow(unsafe_code)]
 
 use clap_sys::{
@@ -37,6 +45,8 @@ struct Module {
     entry: *const clap_plugin_entry,
 }
 impl Module {
+    // SAFETY: caller supplies our CLAP cdylib. Keep Library alive for every symbol
+    // and every created plugin; the temporary path is borrowed only by init().
     unsafe fn load(path: &Path) -> Self {
         let library = Library::new(path).unwrap_or_else(|e| panic!("load {}: {e}", path.display()));
         let entry = {
@@ -51,6 +61,8 @@ impl Module {
             entry,
         }
     }
+    // SAFETY: self is initialized and must outlive the returned Plugin. Factory
+    // count is checked before descriptor 0; CLAP guarantees that descriptor.
     unsafe fn create(&self) -> Plugin {
         let factory = ((*self.entry).get_factory.unwrap()(CLAP_PLUGIN_FACTORY_ID.as_ptr()))
             as *const clap_plugin_factory;
@@ -80,6 +92,7 @@ impl Module {
 }
 impl Drop for Module {
     fn drop(&mut self) {
+        // SAFETY: fixtures destroy all plugins first; Library is still loaded.
         unsafe { (*self.entry).deinit.unwrap()() }
     }
 }
@@ -90,6 +103,8 @@ struct Plugin {
     active: bool,
 }
 impl Plugin {
+    // SAFETY: caller pairs the exact CLAP extension ID with its ABI struct T.
+    // The returned table belongs to this live plugin and is checked for null.
     unsafe fn ext<T>(&self, id: &CStr) -> &T {
         let extension = (*self.raw).get_extension.unwrap()(self.raw, id.as_ptr()) as *const T;
         assert!(!extension.is_null(), "required extension {id:?}");
@@ -99,6 +114,8 @@ impl Plugin {
         self.ext(CLAP_EXT_PARAMS)
     }
     unsafe fn param(&self, name: &str) -> clap_param_info {
+        // SAFETY: indices are below count; get_info initializes the POD output on
+        // success and its name is NUL-terminated under the CLAP ABI contract.
         let ext = self.params();
         for i in 0..ext.count.unwrap()(self.raw) {
             let mut info = MaybeUninit::zeroed();
@@ -111,6 +128,8 @@ impl Plugin {
         panic!("parameter {name:?} not exported")
     }
     unsafe fn text_value(&self, name: &str, text: &str) -> f64 {
+        // SAFETY: valid parameter ID and owned C string; conversion destinations
+        // remain live for each synchronous call and output capacity is explicit.
         let info = self.param(name);
         let text = CString::new(text).unwrap();
         let mut value = 0.0;
@@ -131,6 +150,7 @@ impl Plugin {
         value
     }
     unsafe fn value(&self, name: &str) -> f64 {
+        // SAFETY: a valid ID and writable f64 borrowed for this call only.
         let mut value = 0.0;
         assert!(self.params().get_value.unwrap()(
             self.raw,
@@ -140,6 +160,8 @@ impl Plugin {
         value
     }
     unsafe fn flush(&self, values: &[(&str, &str)]) {
+        // SAFETY: events, context and lists stay alive until synchronous flush
+        // returns. No process call runs concurrently, including when activated.
         let events: Vec<Event> = values
             .iter()
             .map(|&(name, text)| Event::param(0, self.param(name), self.text_value(name, text)))
@@ -151,12 +173,15 @@ impl Plugin {
         (*self.raw).on_main_thread.unwrap()(self.raw);
     }
     unsafe fn activate(&mut self, rate: f64, max: u32) {
+        // SAFETY: initialized inactive plugin; fixtures use finite positive rates
+        // and process sizes within [1,max]. Calls follow CLAP lifecycle order.
         assert!(!self.active);
         assert!((*self.raw).activate.unwrap()(self.raw, rate, 1, max));
         assert!((*self.raw).start_processing.unwrap()(self.raw));
         self.active = true;
     }
     unsafe fn stop(&mut self) {
+        // SAFETY: active tracks successful activate/start; no callback is in flight.
         if self.active {
             (*self.raw).stop_processing.unwrap()(self.raw);
             (*self.raw).deactivate.unwrap()(self.raw);
@@ -164,9 +189,11 @@ impl Plugin {
         }
     }
     unsafe fn reset(&self) {
+        // SAFETY: called only between synchronous process calls on active plugins.
         (*self.raw).reset.unwrap()(self.raw)
     }
     unsafe fn ports(&self, input: bool) -> Vec<clap_audio_port_info> {
+        // SAFETY: exact extension type, indices below count, POD initialized on success.
         let ext: &clap_plugin_audio_ports = self.ext(CLAP_EXT_AUDIO_PORTS);
         (0..ext.count.unwrap()(self.raw, input))
             .map(|i| {
@@ -178,6 +205,11 @@ impl Plugin {
     }
     unsafe fn save(&self) -> Vec<u8> {
         unsafe extern "C" fn write(s: *const clap_ostream, p: *const c_void, n: u64) -> i64 {
+            // SAFETY: save borrows the stream/context below synchronously; CLAP
+            // supplies n readable bytes. No other access to data occurs in save.
+            if n == 0 {
+                return 0;
+            }
             let v = &mut *((*s).ctx as *mut Vec<u8>);
             v.extend_from_slice(std::slice::from_raw_parts(p as *const u8, n as usize));
             n as i64
@@ -198,6 +230,11 @@ impl Plugin {
             at: usize,
         }
         unsafe extern "C" fn read(s: *const clap_istream, p: *mut c_void, n: u64) -> i64 {
+            // SAFETY: load borrows the live Reader below exclusively. CLAP gives
+            // n writable bytes disjoint from our input; clamp reads to remaining.
+            if n == 0 {
+                return 0;
+            }
             let r = &mut *((*s).ctx as *mut Reader);
             let n = (n as usize).min(r.data.len() - r.at);
             ptr::copy_nonoverlapping(r.data.as_ptr().add(r.at), p as *mut u8, n);
@@ -221,7 +258,10 @@ impl Plugin {
         events: &[Event],
         transport: &clap_event_transport,
     ) -> [Vec<f32>; 2] {
-        assert!(input.iter().all(|x| x.len() == frames || x.is_empty()));
+        // SAFETY: local Vecs own disjoint channel storage, pointer arrays and all
+        // process/event/transport structs survive the synchronous call. Empty
+        // inputs are omitted entirely; advertised channels have frames elements.
+        assert!(input.iter().all(|x| x.is_empty()) || input.iter().all(|x| x.len() == frames));
         let mut ins: [Vec<f32>; 4] = input.map(|x| x.to_vec());
         let mut out = [vec![0.0; frames], vec![0.0; frames]];
         let mut main_ptr = [ins[0].as_mut_ptr(), ins[1].as_mut_ptr()];
@@ -252,6 +292,7 @@ impl Plugin {
 }
 impl Drop for Plugin {
     fn drop(&mut self) {
+        // SAFETY: Module and host table still live; stop before destroying once.
         unsafe {
             self.stop();
             (*self.raw).destroy.unwrap()(self.raw)
@@ -325,9 +366,12 @@ impl EventContext {
     }
 }
 unsafe extern "C" fn event_size(l: *const clap_input_events) -> u32 {
+    // SAFETY: only invoked synchronously with event_list's live EventContext.
     (*((*l).ctx as *const EventContext)).len as u32
 }
 unsafe extern "C" fn event_get(l: *const clap_input_events, i: u32) -> *const clap_event_header {
+    // SAFETY: same live context; bounds checked before indexing the borrowed
+    // Event slice. Each variant's header starts its repr(C) CLAP event payload.
     let c = &*((*l).ctx as *const EventContext);
     if i as usize >= c.len {
         ptr::null()
@@ -488,7 +532,7 @@ unsafe fn run(record: &Module, play: &Module, rate: f64, frames: usize, bank: &s
         assert_eq!(reverse[0][i], expected, "restored reverse frame {i}");
         assert_eq!(reverse[1][i], expected);
     }
-    // Dry-monitor automation changes output on its exact event frame.
+    // Gain automation starts a 5ms ramp on its exact event frame.
     let cue = r.param("Dry Monitor");
     let zero = r.text_value("Dry Monitor", "-inf");
     let automated = [Event::param(frames as u32 / 2, cue, zero)];
@@ -503,7 +547,11 @@ unsafe fn run(record: &Module, play: &Module, rate: f64, frames: usize, bank: &s
         main_l[frames / 2 - 1] + side_r[frames / 2 - 1],
         "automation pre-frame",
     );
-    assert_eq!(out[0][frames / 2], 0.0, "automation event offset");
+    let steps = (rate * 0.005).round() as usize;
+    for i in frames / 2..frames {
+        let gain = 1.0 - ((i - frames / 2 + 1) as f32 / steps as f32).min(1.0);
+        approx(out[0][i], (main_l[i] + side_r[i]) * gain, "automation ramp");
+    }
     let state = r.save();
     r.stop();
     drop(r);
@@ -558,6 +606,10 @@ unsafe fn routing(record: &Module, play: &Module) {
             "routing {mbal}/{ibal}/{main}/{side}"
         );
         r.flush(&[("Capture Monitor", "127")]);
+        // Let the monitor gain settle; starting a new take must not fade its edge.
+        for _ in 0..15 {
+            r.process(source.each_ref().map(|v| v.as_slice()), 17, &[], &tr);
+        }
         let wet = r.process(source.each_ref().map(|v| v.as_slice()), 17, &[], &tr);
         assert_eq!(
             wet, take,
@@ -631,6 +683,105 @@ unsafe fn retriggers(record: &Module, play: &Module, rate: f64, block: usize) {
     }
 }
 
+unsafe fn gain_automation(record: &Module, play: &Module) {
+    // Known DC lanes isolate control discontinuities from sample/retrigger edges.
+    for (rate, steps) in [(44100.0, 221), (48000.0, 240), (96000.0, 480)] {
+        for block in [17, 65, 257] {
+            for (control, target, side, dry, wet, before, after, playback) in [
+                ("Main Level", "0", "0", "127", "0", 0.5, 0.0, false),
+                ("Main Balance", "R64", "0", "127", "0", 0.5, -0.25, false),
+                ("Sidechain Level", "127", "0", "127", "0", 0.5, 0.375, false),
+                (
+                    "Sidechain Balance",
+                    "L64",
+                    "127",
+                    "127",
+                    "0",
+                    0.375,
+                    0.75,
+                    false,
+                ),
+                ("Dry Monitor", "0", "0", "127", "0", 0.5, 0.0, false),
+                ("Capture Monitor", "127", "0", "0", "0", 0.0, 0.5, false),
+                ("Level", "-6.0206 dB", "0", "0", "127", 0.5, 0.25, false),
+                ("Level", "-6.0206 dB", "0", "0", "0", 0.5, 0.25, true),
+            ] {
+                let mut r = record.create();
+                let mut p = play.create();
+                configure_record(&r, "11", dry);
+                r.flush(&[("Sidechain Level", side), ("Capture Monitor", wet)]);
+                configure_play(&p, "11");
+                r.activate(rate, 1025);
+                p.activate(rate, 1025);
+                let lanes = [[0.5; 1025], [-0.25; 1025], [0.25; 1025], [-0.125; 1025]];
+                let tr = transport(true, 120.0, 0, false);
+                if playback {
+                    r.process(
+                        lanes.each_ref().map(|s| s.as_slice()),
+                        1025,
+                        &[Event::note(0)],
+                        &tr,
+                    );
+                    r.reset();
+                }
+                let plugin = if playback { &p } else { &r };
+                let mut output = Vec::new();
+                for start in (0..1025).step_by(block) {
+                    let count = block.min(1025 - start);
+                    let mut events = Vec::new();
+                    if start == 0 {
+                        events.push(Event::note(0));
+                    }
+                    if (start..start + count).contains(&37) {
+                        events.push(Event::param(
+                            (37 - start) as u32,
+                            plugin.param(control),
+                            plugin.text_value(control, target),
+                        ));
+                    }
+                    if playback && (start..start + count).contains(&67) {
+                        events.push(Event::note((67 - start) as u32));
+                    }
+                    if control == "Dry Monitor" && (start..start + count).contains(&83) {
+                        events.push(Event::param(
+                            (83 - start) as u32,
+                            plugin.param(control),
+                            plugin.text_value(control, "127"),
+                        ));
+                    }
+                    let inputs = if playback {
+                        [&[][..]; 4]
+                    } else {
+                        lanes.each_ref().map(|s| &s[..count])
+                    };
+                    let out = plugin.process(inputs, count, &events, &tr);
+                    assert_eq!(out[0], out[1]);
+                    output.extend_from_slice(&out[0]);
+                }
+                for (i, &actual) in output.iter().enumerate() {
+                    let expected = if i < 37 {
+                        before
+                    } else if control == "Dry Monitor" && i >= 83 {
+                        // Retarget from the current gain, not the previous target.
+                        let pivot = before + (after - before) * 46.0 / steps as f32;
+                        pivot + (before - pivot) * ((i - 83 + 1) as f32 / steps as f32).min(1.0)
+                    } else if i >= 37 + steps {
+                        after
+                    } else {
+                        before + (after - before) * (i - 37 + 1) as f32 / steps as f32
+                    };
+                    let tolerance = if control == "Level" && !playback {
+                        0.00026
+                    } else {
+                        0.00001
+                    };
+                    assert!((actual-expected).abs() < tolerance, "5ms {control}, play={playback}, {rate}Hz block={block} frame={i}: {actual} != {expected}");
+                }
+            }
+        }
+    }
+}
+
 fn library(name: &str) -> PathBuf {
     std::env::current_exe()
         .unwrap()
@@ -641,10 +792,13 @@ fn library(name: &str) -> PathBuf {
         .join(libloading::library_filename(name))
 }
 fn main() {
+    // SAFETY: load only the sibling build artifacts, keep modules in this scope
+    // until all fixture plugins drop, and drive every CLAP call synchronously.
     unsafe {
         let started = Instant::now();
         let record = Module::load(&library("ultrawave_record"));
         let play = Module::load(&library("ultrawave_play"));
+        gain_automation(&record, &play);
         routing(&record, &play);
         for (i, (rate, block)) in [(44100.0, 65), (48000.0, 257), (96000.0, 1025)]
             .into_iter()

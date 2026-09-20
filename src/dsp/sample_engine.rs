@@ -128,11 +128,8 @@ impl SampleEngine {
         }
     }
 
-    pub fn playback_position(&self) -> (usize, usize) {
-        (
-            self.position.clamp(0.0, self.buffer_len() as f64) as usize,
-            self.buffer_len(),
-        )
+    pub fn playback_position(&self) -> usize {
+        self.position.clamp(0.0, self.buffer_len() as f64) as usize
     }
 }
 

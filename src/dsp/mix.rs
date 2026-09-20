@@ -1,3 +1,61 @@
+use nice_plug::prelude::{Smoother, SmoothingStyle};
+
+/// Live gain coefficients only: never smooth audio, sample edges or bit reduction.
+/// Initial/reset values snap; subsequent changes settle in 5ms of audio frames.
+pub struct SmoothedGains<const N: usize> {
+    ramps: [Smoother<f32>; N],
+    targets: Option<[f32; N]>,
+}
+
+impl<const N: usize> Default for SmoothedGains<N> {
+    fn default() -> Self {
+        Self {
+            ramps: std::array::from_fn(|_| Smoother::new(SmoothingStyle::Linear(5.0))),
+            targets: None,
+        }
+    }
+}
+
+impl<const N: usize> SmoothedGains<N> {
+    pub fn reset(&mut self) {
+        self.targets = None;
+    }
+
+    pub fn set(&mut self, targets: [f32; N], rate: f32) {
+        for (i, &target) in targets.iter().enumerate() {
+            match self.targets {
+                None => self.ramps[i].reset(target),
+                Some(previous) if previous[i] != target => self.ramps[i].set_target(rate, target),
+                _ => {} // Repeated targets must not restart a ramp at block boundaries.
+            }
+        }
+        self.targets = Some(targets);
+    }
+
+    pub fn next_frame(&self) -> [f32; N] {
+        self.ramps.each_ref().map(Smoother::next)
+    }
+}
+
+impl SmoothedGains<4> {
+    pub fn mix(&self, inputs: [&[f32]; 4], output: &mut [f32]) {
+        if !self.ramps.iter().any(Smoother::is_smoothing) {
+            mix_inputs(inputs, self.next_frame(), output);
+        } else {
+            for input in inputs {
+                assert_eq!(input.len(), output.len());
+            }
+            for (i, sample) in output.iter_mut().enumerate() {
+                let g = self.next_frame();
+                *sample = inputs[0][i] * g[0]
+                    + inputs[1][i] * g[1]
+                    + inputs[2][i] * g[2]
+                    + inputs[3][i] * g[3];
+            }
+        }
+    }
+}
+
 /// Mix main L/R and sidechain L/R into mono. All slices must have equal length.
 /// SIMD spans time, not voices: the sum keeps the scalar operation order and
 /// does not fuse multiply/add or approximate the downstream sampler effects.

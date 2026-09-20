@@ -2,6 +2,7 @@ use nice_plug::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::dsp::mix::SmoothedGains;
 use crate::machines::ram_play::{RamPlay, RamPlayParams as RamPlayMachineParams};
 use crate::params::RamPlayParams;
 use crate::plugin::{
@@ -17,6 +18,8 @@ pub struct PlayPlugin {
     ram_play: RamPlay,
     active_channel: usize,
     velocity: f32,
+    gain: SmoothedGains<1>,
+    sample_rate: f32,
     transport_was_playing: bool,
     pairing: Pairing,
     preload_attempted: bool,
@@ -35,6 +38,8 @@ impl Default for PlayPlugin {
             ram_play,
             active_channel: 0,
             velocity: 1.0,
+            gain: SmoothedGains::default(),
+            sample_rate,
             transport_was_playing: false,
             pairing,
             preload_attempted: false,
@@ -99,6 +104,7 @@ impl Plugin for PlayPlugin {
             self.preload_attempted = true;
         }
 
+        self.sample_rate = buffer_config.sample_rate;
         self.ram_play.set_sample_rate(buffer_config.sample_rate);
         self.reset();
         true
@@ -152,7 +158,10 @@ impl Plugin for PlayPlugin {
         };
         self.ram_play
             .update_params(&play_params, self.active_channel);
-        let gain = util::db_to_gain(self.params.lev.value());
+        self.gain.set(
+            [util::db_to_gain(self.params.lev.value())],
+            self.sample_rate,
+        );
         if self.ui.trigger.swap(false, Ordering::Relaxed) {
             self.ram_play.stop_all();
             self.active_channel = self.params.buffer.value() as usize;
@@ -178,7 +187,8 @@ impl Plugin for PlayPlugin {
                 next_event = context.next_event();
             }
             let chan = self.active_channel;
-            let sample_out = self.ram_play.process(chan) * self.velocity * gain;
+            let sample_out =
+                self.ram_play.process(chan) * self.velocity * self.gain.next_frame()[0];
             peak = peak.max(sample_out.abs());
 
             for sample in channel_samples {
@@ -187,9 +197,9 @@ impl Plugin for PlayPlugin {
         }
         self.ui
             .publish(self.ram_play.is_playing(self.active_channel), peak);
-        if let Some((position, len)) = self.ram_play.playback_position(self.active_channel) {
+        if let Some(position) = self.ram_play.playback_position(self.active_channel) {
             self.ui
-                .publish_playback(bank, self.active_channel, position, len);
+                .publish_playback(bank, self.active_channel, position);
         } else {
             self.ui.clear_playback();
         }
@@ -198,6 +208,7 @@ impl Plugin for PlayPlugin {
 
     fn reset(&mut self) {
         self.ram_play.stop_all();
+        self.gain.reset();
         self.transport_was_playing = false;
         self.ui.active.store(false, Ordering::Relaxed);
         self.ui.peak.store(0, Ordering::Relaxed);
@@ -341,16 +352,19 @@ mod tests {
         params.rtrg = IntParam::new("Retrigger", 2, IntRange::Linear { min: 0, max: 127 });
         params.rtim = IntParam::new("Retrig Time", 127, IntRange::Linear { min: 0, max: 127 });
         render(&mut plugin, 4, &[(0, 1.0)]);
-        assert_eq!(plugin.ui.playback_position(0, 0), Some(0.75));
-        assert_eq!(plugin.ui.playback_position(1, 0), None);
-        assert_eq!(plugin.ui.playback_position(0, 1), None);
+        assert_eq!(plugin.ui.playback_position(0, 0, 16), Some(0.75));
+        // A live recording can extend the displayed waveform after note-on.
+        assert_eq!(plugin.ui.playback_position(0, 0, 32), Some(0.375));
+        assert_eq!(plugin.ui.playback_position(0, 0, 0), None);
+        assert_eq!(plugin.ui.playback_position(1, 0, 16), None);
+        assert_eq!(plugin.ui.playback_position(0, 1, 16), None);
         render(&mut plugin, 12, &[]);
         assert!(plugin.ui.active.load(Ordering::Relaxed));
-        assert_eq!(plugin.ui.playback_position(0, 0), None);
+        assert_eq!(plugin.ui.playback_position(0, 0, 16), None);
         render(&mut plugin, 116, &[]);
-        assert_eq!(plugin.ui.playback_position(0, 0), Some(0.75));
+        assert_eq!(plugin.ui.playback_position(0, 0, 16), Some(0.75));
         plugin.reset();
-        assert_eq!(plugin.ui.playback_position(0, 0), None);
+        assert_eq!(plugin.ui.playback_position(0, 0, 16), None);
     }
 
     #[test]
@@ -553,9 +567,12 @@ mod tests {
                 max: 12.0,
             },
         );
-        for (actual, full_level) in render(&mut plugin, 4, &[]).iter().zip(driven) {
-            assert!((actual - full_level * 0.1).abs() < 1e-6);
+        for (i, (actual, full_level)) in render(&mut plugin, 4, &[]).iter().zip(driven).enumerate()
+        {
+            let gain = 1.0 - 0.9 * (i + 1) as f32 / 221.0;
+            assert!((actual - full_level * gain).abs() < 1e-6);
         }
+        render(&mut plugin, 217, &[]); // Gain advances even while the voice is silent.
         render(&mut plugin, 1, &[(0, 1.0)]);
         // Envelope changes are latched until the next trigger, not applied
         // using the previous voice's decay coefficient.

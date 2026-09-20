@@ -1,5 +1,9 @@
 use std::sync::atomic::AtomicBool;
 
+#[cfg(test)]
+#[path = "../tests/support/allocations.rs"]
+mod allocations;
+
 pub mod dsp;
 pub mod machines;
 pub mod offline;

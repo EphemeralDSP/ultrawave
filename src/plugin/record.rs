@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::dsp::effects::Distortion;
-use crate::dsp::mix::mix_inputs;
+use crate::dsp::mix::SmoothedGains;
 use crate::machines::ram_record::{RamRecord, RamRecordParams as RamRecordMachineParams};
 use crate::params::RamRecordParams;
 use crate::plugin::{
@@ -23,6 +23,9 @@ pub struct RecordPlugin {
     one_shot_spent: bool,
     decimator: crate::Decimator,
     distortion: Distortion,
+    mix_gains: SmoothedGains<4>,
+    // Capture level, dry monitor, capture monitor.
+    gains: SmoothedGains<3>,
     pairing: Pairing,
     preload_attempted: bool,
 }
@@ -42,6 +45,8 @@ impl Default for RecordPlugin {
             one_shot_spent: false,
             decimator: crate::Decimator::new(),
             distortion: Distortion::new(),
+            mix_gains: SmoothedGains::default(),
+            gains: SmoothedGains::default(),
             pairing,
             preload_attempted: false,
         }
@@ -125,6 +130,8 @@ impl Plugin for RecordPlugin {
         self.ram_record.stop_all_recording();
         self.capture_was_high = false;
         self.decimator = crate::Decimator::new();
+        self.mix_gains.reset();
+        self.gains.reset();
         self.ui.active.store(false, Ordering::Relaxed);
         self.ui.peak.store(0, Ordering::Relaxed);
         self.ui.trigger.store(false, Ordering::Relaxed);
@@ -208,13 +215,19 @@ impl RecordPlugin {
             self.start_capture(&machine_params);
         }
         self.capture_was_high = capture_high;
-        let gains = machine_params.input_gains();
-        let input_gain = util::db_to_gain(self.params.lev.value());
+        self.mix_gains
+            .set(machine_params.input_gains(), self.sample_rate);
+        self.gains.set(
+            [
+                util::db_to_gain(self.params.lev.value()),
+                self.params.cue1.value() as f32 / 127.0,
+                self.params.cue2.value() as f32 / 127.0,
+            ],
+            self.sample_rate,
+        );
         self.distortion
             .set_drive(self.params.dist.value() as f32 / 127.0);
         let srr = self.params.srr.value();
-        let cue1 = self.params.cue1.value() as f32 / 127.0;
-        let cue2 = self.params.cue2.value() as f32 / 127.0;
         let external = aux.inputs.first_mut().map(|input| input.as_slice());
         let mut peak = 0.0f32;
         let mut next_event = context.next_event();
@@ -236,7 +249,7 @@ impl RecordPlugin {
                     .unwrap_or(silent)
             };
             // Read each chunk before overwriting the in-place main bus.
-            mix_inputs([left, right, side(0), side(1)], gains, dry);
+            self.mix_gains.mix([left, right, side(0), side(1)], dry);
             for (offset, &dry) in dry.iter().enumerate() {
                 let sample_id = start + offset;
                 while let Some(event) = next_event {
@@ -251,6 +264,7 @@ impl RecordPlugin {
                     next_event = context.next_event();
                 }
                 let chan = self.active_channel;
+                let [input_gain, cue1, cue2] = self.gains.next_frame();
                 let wet = self
                     .distortion
                     .process(self.decimator.process(dry * input_gain, srr));
@@ -396,17 +410,27 @@ mod tests {
         p.ilev = int(127);
         p.ibal = int(127);
         p.cue2 = int(127);
+        let ramp = render(&mut plugin, &[frames[0]; 221], None);
+        for (i, actual) in ramp.into_iter().enumerate() {
+            let progress = (i + 1) as f32 / 221.0;
+            let code = (-512.0 + 256.0 * progress).round();
+            assert!((actual - code / 2048.0 * progress).abs() < 0.00001);
+        }
         // The old R1 take still captures the new live input mix until the
         // note at frame 1 switches capture to R3.
         assert_eq!(render(&mut plugin, &frames, Some(1)), [-0.125; 4]);
         assert_eq!(registry.read_buffer(2).unwrap(), [-256; 3]);
-        assert_eq!(registry.read_buffer(0).unwrap(), [-512, -512, -256]);
+        let old_take = registry.read_buffer(0).unwrap();
+        assert_eq!(old_take.len(), 224);
+        assert_eq!(&old_take[..2], &[-512, -512]);
+        assert_eq!(old_take[223], -256);
         plugin.reset();
         assert_eq!(render(&mut plugin, &frames, None), [0.0; 4]);
         let p = Arc::get_mut(&mut plugin.params).unwrap();
         p.cue2 = int(0);
         p.cue1 = int(127);
         p.ibal = int(0);
+        render(&mut plugin, &[frames[0]; 221], None);
         assert_eq!(render(&mut plugin, &frames, None), [0.5; 4]);
         assert_eq!(registry.read_buffer(2).unwrap(), [-256; 3]);
     }
@@ -446,7 +470,9 @@ mod tests {
             &[[0.25; 4], [0.5; 4], [-0.25; 4], [-0.5; 4]],
             None,
         );
-        assert_eq!(registry.read_buffer(0).unwrap(), [0, 512, 512, -512]);
+        // SRR still holds every second frame; LEV ramps from unity to 0.5
+        // over 221 frames. Samples 2/4 use gains 220/221 and 219/221.
+        assert_eq!(registry.read_buffer(0).unwrap(), [0, 1019, 1019, -1015]);
         let p = Arc::get_mut(&mut plugin.params).unwrap();
         p.dist = int(127);
         p.srr = FloatParam::new(

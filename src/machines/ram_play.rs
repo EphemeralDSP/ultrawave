@@ -315,7 +315,7 @@ impl RamPlay {
     }
 
     /// The currently audible voice, excluding silent waits between retriggers.
-    pub fn playback_position(&self, channel: usize) -> Option<(usize, usize)> {
+    pub fn playback_position(&self, channel: usize) -> Option<usize> {
         let channel = Self::clamp_channel(channel);
         if !self.is_playing[channel] {
             return None;

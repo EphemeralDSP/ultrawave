@@ -235,6 +235,7 @@ impl Drop for Pairing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::allocations::assert_no_alloc;
 
     #[test]
     fn reactivation_prepares_restored_bank_before_the_first_audio_block() {
@@ -260,7 +261,9 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(pairing.status(), CONNECTING);
-        assert!(pairing.adopt(|next| std::mem::replace(&mut machine, next)));
+        assert_no_alloc(|| {
+            assert!(pairing.adopt(|next| std::mem::replace(&mut machine, next)));
+        });
         assert_eq!(pairing.status(), FAILED);
         assert!(Arc::ptr_eq(&machine, &pairing.current_registry()));
     }
@@ -282,7 +285,9 @@ mod tests {
                 })
                 .is_ok());
         }
-        pairing.request(1);
+        assert_no_alloc(|| {
+            pairing.request(1);
+        });
         let resource = BankResource::disconnected();
         let weak = Arc::downgrade(&resource.registry);
         assert!(pairing
@@ -293,10 +298,14 @@ mod tests {
                 resource,
             })
             .is_ok());
-        assert!(!pairing.adopt(|_| panic!("must not adopt when retirement is full")));
-        pairing.request(2);
+        assert_no_alloc(|| {
+            assert!(!pairing.adopt(|_| panic!("must not adopt when retirement is full")));
+            pairing.request(2);
+        });
         drop(pairing.retired.pop());
-        assert!(!pairing.adopt(|_| panic!("must not adopt a superseded bank")));
+        assert_no_alloc(|| {
+            assert!(!pairing.adopt(|_| panic!("must not adopt a superseded bank")));
+        });
         assert_eq!(pairing.status(), CONNECTING);
         assert!(
             weak.upgrade().is_some(),
@@ -313,7 +322,9 @@ mod tests {
                 resource,
             })
             .is_ok());
-        assert!(pairing.adopt(|next| std::mem::replace(&mut machine, next)));
+        assert_no_alloc(|| {
+            assert!(pairing.adopt(|next| std::mem::replace(&mut machine, next)));
+        });
         assert_eq!(pairing.status(), CONNECTED);
         assert!(Arc::ptr_eq(&machine, &pairing.current_registry()));
     }

@@ -20,7 +20,7 @@ pub struct UiState {
     pub peak: AtomicU32,
     pub bank_status: AtomicU32,
     pub capture_busy: AtomicBool,
-    /// One coherent snapshot: valid bit, bank, channel, normalized f32 position.
+    /// One coherent snapshot: valid bit, bank, channel, absolute sample position.
     playback_cursor: AtomicU64,
 }
 
@@ -31,27 +31,20 @@ impl UiState {
         self.peak.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
     }
 
-    pub fn publish_playback(&self, bank: u8, channel: usize, position: usize, len: usize) {
-        let normalized = if len == 0 {
-            0.0
-        } else {
-            position as f32 / len as f32
-        };
+    pub fn publish_playback(&self, bank: u8, channel: usize, position: usize) {
         self.playback_cursor.store(
-            (1 << 63)
-                | ((bank as u64) << 40)
-                | ((channel as u64) << 32)
-                | normalized.clamp(0.0, 1.0).to_bits() as u64,
+            (1 << 63) | ((bank as u64) << 40) | ((channel as u64) << 32) | position as u64,
             Ordering::Relaxed,
         );
     }
 
-    pub fn playback_position(&self, bank: u8, channel: usize) -> Option<f32> {
+    pub fn playback_position(&self, bank: u8, channel: usize, displayed_len: usize) -> Option<f32> {
         let packed = self.playback_cursor.load(Ordering::Relaxed);
-        (packed >> 63 != 0
+        (displayed_len != 0
+            && packed >> 63 != 0
             && (packed >> 40) as u8 == bank
             && (packed >> 32) as u8 as usize == channel)
-            .then(|| f32::from_bits(packed as u32))
+            .then(|| (packed as u32 as f32 / displayed_len as f32).clamp(0.0, 1.0))
     }
 
     pub fn clear_playback(&self) {

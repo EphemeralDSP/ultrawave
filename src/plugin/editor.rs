@@ -236,9 +236,9 @@ impl NiceEguiApp for UltrawaveEditorApp {
             EditorParams::Play(p) => Some((&p.strt, &p.end)),
             _ => None,
         };
-        let cursor = self
-            .ui_state
-            .playback_position(self.params.bank().value() as u8, channel);
+        let cursor =
+            self.ui_state
+                .playback_position(self.params.bank().value() as u8, channel, len);
         waveform(
             ui,
             rect(14.0, 316.0, 732.0, 66.0),

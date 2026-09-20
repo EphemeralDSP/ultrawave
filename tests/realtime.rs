@@ -1,39 +1,11 @@
 use std::sync::Arc;
-use std::{
-    alloc::{GlobalAlloc, Layout, System},
-    cell::Cell,
-};
+
+#[path = "support/allocations.rs"]
+mod allocations;
 
 use ultrawave::machines::ram_play::{RamPlay, RamPlayParams};
 use ultrawave::machines::ram_record::{RamRecord, RamRecordParams};
 use ultrawave::machines::shared::{BufferRegistry, MAX_BUFFER_SAMPLES};
-
-struct CountingAllocator;
-thread_local! { static COUNTING: Cell<bool> = const { Cell::new(false) }; static OPS: Cell<usize> = const { Cell::new(0) }; }
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        COUNTING.with(|on| {
-            if on.get() {
-                OPS.with(|n| n.set(n.get() + 1))
-            }
-        });
-        // SAFETY: this allocator forwards the caller's valid allocation
-        // request unchanged to the system allocator.
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        COUNTING.with(|on| {
-            if on.get() {
-                OPS.with(|n| n.set(n.get() + 1))
-            }
-        });
-        // SAFETY: `ptr` and `layout` are the pair previously returned by the
-        // system allocator through this forwarding allocator.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 fn neutral() -> RamPlayParams {
     RamPlayParams {
@@ -77,35 +49,66 @@ fn trigger_and_process_do_not_allocate_or_free() {
     let mut recorder = RamRecord::with_registry(44_100.0, registry);
     let rec_params = RamRecordParams::default();
     let params = neutral();
-    OPS.with(|n| n.set(0));
-    COUNTING.with(|on| on.set(true));
-    let mut mixed = [0.0; 67];
-    ultrawave::dsp::mix::mix_inputs([&[0.25; 67]; 4], [0.25; 4], &mut mixed);
-    std::hint::black_box(mixed);
-    player.trigger(&params, 0);
-    recorder.start_recording(&rec_params, true, 1);
-    for _ in 0..100 {
-        std::hint::black_box(player.process(0));
-        recorder.record_sample(0.25, 0.25, 0.0, 0.0, &rec_params, 1);
-    }
-    player.trigger(
-        &RamPlayParams {
-            strt: 127,
-            end: 0,
-            rtrg: 127,
-            rtim: 32,
-            ..params
-        },
-        0,
+    allocations::assert_no_alloc(|| {
+        let mut mixed = [0.0; 67];
+        ultrawave::dsp::mix::mix_inputs([&[0.25; 67]; 4], [0.25; 4], &mut mixed);
+        let mut gains = ultrawave::dsp::mix::SmoothedGains::<4>::default();
+        gains.set([0.25; 4], 44100.0);
+        gains.set([0.1, 0.2, 0.3, 0.4], 44100.0);
+        for _ in 0..5 {
+            gains.mix([&[0.25; 67]; 4], &mut mixed);
+        }
+        std::hint::black_box(mixed);
+        player.trigger(&params, 0);
+        recorder.start_recording(&rec_params, true, 1);
+        for _ in 0..100 {
+            std::hint::black_box(player.process(0));
+            recorder.record_sample(0.25, 0.25, 0.0, 0.0, &rec_params, 1);
+        }
+        player.trigger(
+            &RamPlayParams {
+                strt: 127,
+                end: 0,
+                rtrg: 127,
+                rtim: 32,
+                ..params
+            },
+            0,
+        );
+        player.set_tempo(137.0);
+        for _ in 0..10_000 {
+            std::hint::black_box(player.process(0));
+        }
+        recorder.stop_all_recording();
+        player.stop_all();
+    });
+}
+
+#[test]
+fn rebind_active_machines_defers_old_registry_destruction() {
+    let registry = Arc::new(BufferRegistry::new());
+    registry.replace_buffer(0, vec![1024; 32]);
+    let weak = Arc::downgrade(&registry);
+    let mut player = RamPlay::with_registry(44100.0, registry.clone());
+    let mut recorder = RamRecord::with_registry(44100.0, registry);
+    player.trigger(&neutral(), 0);
+    recorder.start_recording(&RamRecordParams::default(), true, 1);
+    let next = Arc::new(BufferRegistry::new());
+    let mut retired = None;
+    allocations::assert_no_alloc(|| {
+        retired = Some((
+            player.rebind_registry(next.clone()),
+            recorder.rebind_registry(next),
+        ));
+    });
+    assert!(!player.is_any_playing());
+    assert!(!recorder.is_any_recording());
+    assert!(weak.upgrade().is_some());
+    drop(retired);
+    assert!(
+        weak.upgrade().is_none(),
+        "no engine retains the retired bank"
     );
-    player.set_tempo(137.0);
-    for _ in 0..10_000 {
-        std::hint::black_box(player.process(0));
-    }
-    recorder.stop_all_recording();
-    player.stop_all();
-    COUNTING.with(|on| on.set(false));
-    assert_eq!(OPS.with(Cell::get), 0);
 }
 
 #[test]
