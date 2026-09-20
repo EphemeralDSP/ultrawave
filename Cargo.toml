@@ -12,36 +12,27 @@ name = "ultrawave"
 crate-type = ["lib"]
 
 [[bin]]
-name = "ultrawave_record"
-path = "src/bin/record.rs"
-
-[[bin]]
-name = "ultrawave_play"
-path = "src/bin/play.rs"
+name = "ultrawave"
+path = "src/bin/ultrawave.rs"
 
 [dependencies]
 nice-plug = { version = "=0.4.2", features = ["standalone"] }
 nice-plug-egui = "=0.5.1"
 egui = { version = "=0.36.1", default-features = false }
-libc = "0.2"
 ephemeral-dsp = { git = "ssh://git@github.com/EphemeralDSP/ephemeral.git", rev = "243d21b7aef5337ea8ff0e30750c01d1fa3af296" }
 
 hound = "3.5"
-crossbeam-queue = "0.3"
 
 [dev-dependencies]
 clap-sys = "=0.5.0"
 libloading = "=0.8.9"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Memory"] }
 
 [profile.release]
 lto = "thin"
 strip = "symbols"
 
 [workspace]
-members = ["xtask", "plugins/ultrawave_record", "plugins/ultrawave_play"]
+members = ["xtask", "plugins/ultrawave"]
 exclude = ["vendor/nice-plug", "vendor/nice-plug-core", "vendor/baseview"]
 
 # See vendor/README.md for immediate-save and synchronous editor teardown patches.

@@ -22,7 +22,8 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
     }
     writer.finalize().unwrap();
 
-    let result = Command::new(env!("CARGO_BIN_EXE_ultrawave_record"))
+    let result = Command::new(env!("CARGO_BIN_EXE_ultrawave"))
+        .arg("record")
         .arg("--input")
         .arg(&input)
         .arg("--output")
@@ -50,7 +51,8 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         ),
         (vec!["--pitch", "76"], vec![0.125, -0.125, 0.1875, 0.0, 0.0]),
     ] {
-        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave_play"))
+        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave"))
+            .arg("play")
             .arg("--input")
             .arg(&recorded)
             .arg("--output")
@@ -73,7 +75,8 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         assert!(rendered[5..].iter().all(|s| *s == 0.0));
     }
     for (tempo, starts) in [("60", [0, 11025, 22050]), ("120", [0, 5513, 11025])] {
-        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave_play"))
+        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave"))
+            .arg("play")
             .arg("--input")
             .arg(&recorded)
             .arg("--output")
@@ -115,7 +118,8 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         vec!["--tempo", "inf"],
         vec!["--brr"],
     ] {
-        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave_play"))
+        let result = Command::new(env!("CARGO_BIN_EXE_ultrawave"))
+            .arg("play")
             .arg("--input")
             .arg(&recorded)
             .arg("--output")

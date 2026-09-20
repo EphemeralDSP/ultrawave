@@ -12,7 +12,7 @@ rm -f "${ZIP_PATH}"
 
 (
     cd "${PROJECT_ROOT}"
-    zip -rq "${ZIP_PATH}" target/bundled
+    zip -rq "${ZIP_PATH}" target/bundled/ultrawave-plugin.vst3 target/bundled/ultrawave-plugin.clap
 )
 
 echo "Created ${ZIP_PATH}"

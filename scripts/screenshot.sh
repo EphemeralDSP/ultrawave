@@ -26,8 +26,8 @@ PRELOAD_WAV="${PRELOAD_WAV:-$PROJECT_ROOT/tests/vinyl909.wav}"
 PRELOAD_CHANNEL="${PRELOAD_CHANNEL:-0}"
 OS_NAME="$(uname -s)"
 
-RECORD_BIN="$PROJECT_ROOT/target/release/ultrawave_record"
-PLAY_BIN="$PROJECT_ROOT/target/release/ultrawave_play"
+RECORD_BIN="$PROJECT_ROOT/target/release/ultrawave"
+PLAY_BIN="$RECORD_BIN"
 
 cleanup() {
     echo "Cleaning up..."
@@ -196,6 +196,7 @@ screenshot_plugin() {
     echo "Launching $name..."
     ULTRAWAVE_SCREENSHOT_WAV="$PRELOAD_WAV" \
     ULTRAWAVE_SCREENSHOT_CHANNEL="$PRELOAD_CHANNEL" \
+    ULTRAWAVE_SCREENSHOT_PAGE="${name#ultrawave_}" \
     "$bin" &
     local pid=$!
 

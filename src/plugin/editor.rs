@@ -9,81 +9,24 @@ use nice_plug_egui::{
     create_egui_editor, EguiEditor, EguiEditorState, EguiNiceSettings, Frame, NiceEguiApp,
     RepaintNotifier,
 };
-use std::sync::{atomic::Ordering, Arc, Mutex};
+use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 
 use super::UiState;
-use crate::machines::shared::BufferRegistry;
-use crate::params::{RamPlayParams, RamRecordParams};
+use crate::machines::memory::SampleMemory;
+use crate::params::UltrawaveParams;
 use crate::widgets::{parameter_value, rotary_knob, vertical_slider, waveform, WaveformCache};
 
-#[derive(Clone)]
-pub enum EditorParams {
-    Record(Arc<RamRecordParams>),
-    Play(Arc<RamPlayParams>),
-}
-
-impl EditorParams {
-    fn buffer(&self) -> &IntParam {
-        match self {
-            Self::Record(p) => &p.buffer,
-            Self::Play(p) => &p.buffer,
-        }
-    }
-    fn bank(&self) -> &IntParam {
-        match self {
-            Self::Record(p) => &p.bank,
-            Self::Play(p) => &p.bank,
-        }
-    }
-    fn level(&self) -> &FloatParam {
-        match self {
-            Self::Record(p) => &p.lev,
-            Self::Play(p) => &p.lev,
-        }
-    }
-    fn srr(&self) -> &FloatParam {
-        match self {
-            Self::Record(p) => &p.srr,
-            Self::Play(p) => &p.srr,
-        }
-    }
-    fn distortion(&self) -> &IntParam {
-        match self {
-            Self::Record(p) => &p.dist,
-            Self::Play(p) => &p.dist,
-        }
-    }
-    fn knob(&self, index: usize) -> &IntParam {
-        match self {
-            Self::Record(p) => [
-                &p.mlev,
-                &p.mbal,
-                &p.ilev,
-                &p.ibal,
-                &p.cue1,
-                &p.cue2,
-                &p.rec_len,
-                &p.rec_rate,
-            ][index],
-            Self::Play(p) => [
-                &p.pitch, &p.dec, &p.hold, &p.brr, &p.strt, &p.end, &p.rtrg, &p.rtim,
-            ][index],
-        }
-    }
-}
-
 pub struct UltrawaveEditorApp {
-    params: EditorParams,
+    params: Arc<UltrawaveParams>,
+    record_page: bool,
     ui_state: Arc<UiState>,
     gui: Option<GuiContext>,
     waveform: Arc<Vec<i16>>,
-    metadata: Option<(usize, usize, usize, u64)>,
+    metadata: Option<(usize, usize, u64)>,
     waveform_cache: WaveformCache,
-    // Retain the cached source so its address cannot be reused by another bank.
-    waveform_registry: Option<Arc<BufferRegistry>>,
     meter: f32,
-    registry: Arc<Mutex<Arc<BufferRegistry>>>,
+    memory: Arc<SampleMemory>,
 }
 
 pub type PluginEditor = EguiEditor<UltrawaveEditorApp>;
@@ -93,10 +36,10 @@ pub fn default_state() -> Arc<EguiEditorState> {
 }
 
 pub fn create(
-    params: EditorParams,
+    params: Arc<UltrawaveParams>,
     state: Arc<EguiEditorState>,
     ui: Arc<UiState>,
-    registry: Arc<Mutex<Arc<BufferRegistry>>>,
+    memory: Arc<SampleMemory>,
 ) -> Option<PluginEditor> {
     let repaint = RepaintNotifier::new();
     create_egui_editor(
@@ -105,14 +48,14 @@ pub fn create(
         EguiNiceSettings::new().with_tile("Ultrawave"),
         UltrawaveEditorApp {
             params,
+            record_page: std::env::var("ULTRAWAVE_SCREENSHOT_PAGE").as_deref() != Ok("play"),
             ui_state: ui,
             gui: None,
             waveform: Arc::new(Vec::new()),
             metadata: None,
             waveform_cache: WaveformCache::default(),
-            waveform_registry: None,
             meter: 0.0,
-            registry,
+            memory,
         },
     )
 }
@@ -177,37 +120,36 @@ impl NiceEguiApp for UltrawaveEditorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut Frame) {
         ui.ctx().request_repaint_after(Duration::from_millis(50));
         let Some(gui) = self.gui.clone() else { return };
-        let channel = self.params.buffer().unmodulated_plain_value() as usize;
-        let registry = self
-            .registry
-            .lock()
-            .expect("bank UI registry poisoned")
-            .clone();
-        let snapshot = registry.snapshot(channel);
+        let channel = self.params.buffer.unmodulated_plain_value() as usize;
+        let snapshot = self.memory.snapshot(channel);
         let (len, rate, revision) = snapshot.unwrap_or((0, 44_100.0, 0));
-        let registry_identity = Arc::as_ptr(&registry) as usize;
-        let metadata = Some((registry_identity, channel, len, revision));
+        let metadata = Some((channel, len, revision));
         if snapshot.is_none() {
             self.waveform = Arc::new(Vec::new());
             self.metadata = None;
         } else if metadata != self.metadata {
-            if let Some(samples) = registry.read_buffer(channel) {
+            if let Some(samples) = self.memory.read_buffer(channel) {
                 self.waveform = Arc::new(samples);
                 self.metadata = metadata;
-                self.waveform_registry = Some(registry.clone());
             } else {
                 self.waveform = Arc::new(Vec::new());
                 self.metadata = None;
             }
         }
-        let peak = f32::from_bits(self.ui_state.peak.swap(0, Ordering::Relaxed));
+        let capture_peak = self.ui_state.capture_peak.swap(0, Ordering::Relaxed);
+        let playback_peak = self.ui_state.playback_peak.swap(0, Ordering::Relaxed);
+        let peak = f32::from_bits(if self.record_page {
+            capture_peak
+        } else {
+            playback_peak
+        });
         let db = if peak > 0.000_001 {
             20.0 * peak.log10()
         } else {
             -120.0
         };
         self.meter = ((db + 60.0) / 60.0).clamp(0.0, 1.0).max(self.meter * 0.75);
-        let is_record = matches!(self.params, EditorParams::Record(_));
+        let is_record = self.record_page;
 
         // Fixed logical sections preserve the hardware panel at every host DPI. Explicit
         // bounds keep an expanding horizontal layout from pushing the waveform/footer out.
@@ -232,18 +174,13 @@ impl NiceEguiApp for UltrawaveEditorApp {
                 self.knob_grid(ui, &gui, is_record);
             },
         );
-        let markers = match &self.params {
-            EditorParams::Play(p) => Some((&p.strt, &p.end)),
-            _ => None,
-        };
-        let cursor =
-            self.ui_state
-                .playback_position(self.params.bank().value() as u8, channel, len);
+        let markers = (!is_record).then_some((&self.params.play.strt, &self.params.play.end));
+        let cursor = self.ui_state.playback_position(channel, len);
         waveform(
             ui,
             rect(14.0, 316.0, 732.0, 66.0),
             &self.waveform,
-            (registry_identity, channel, len, revision),
+            (Arc::as_ptr(&self.memory) as usize, channel, len, revision),
             &mut self.waveform_cache,
             markers,
             cursor,
@@ -269,6 +206,48 @@ impl NiceEguiApp for UltrawaveEditorApp {
 }
 
 impl UltrawaveEditorApp {
+    fn level(&self) -> &FloatParam {
+        if self.record_page {
+            &self.params.record.lev
+        } else {
+            &self.params.play.lev
+        }
+    }
+    fn srr(&self) -> &FloatParam {
+        if self.record_page {
+            &self.params.record.srr
+        } else {
+            &self.params.play.srr
+        }
+    }
+    fn distortion(&self) -> &IntParam {
+        if self.record_page {
+            &self.params.record.dist
+        } else {
+            &self.params.play.dist
+        }
+    }
+    fn knob(&self, index: usize) -> &IntParam {
+        if self.record_page {
+            let p = &self.params.record;
+            [
+                &p.mlev,
+                &p.mbal,
+                &p.ilev,
+                &p.ibal,
+                &self.params.record_note,
+                &self.params.play_note,
+                &p.rec_len,
+                &p.rec_rate,
+            ][index]
+        } else {
+            let p = &self.params.play;
+            [
+                &p.pitch, &p.dec, &p.hold, &p.brr, &p.strt, &p.end, &p.rtrg, &p.rtim,
+            ][index]
+        }
+    }
+
     fn header(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("ULTRAWAVE").font(FontId::monospace(21.0)));
@@ -289,11 +268,17 @@ impl UltrawaveEditorApp {
                     )
                     .clicked()
                 {
-                    self.ui_state.trigger.store(true, Ordering::Relaxed);
+                    let trigger = if record {
+                        &self.ui_state.record_trigger
+                    } else {
+                        &self.ui_state.play_trigger
+                    };
+                    trigger.store(true, Ordering::Relaxed);
                 }
-                if let EditorParams::Record(p) = &self.params {
+                if record {
+                    let p = &self.params.record;
                     let locked = self.ui_state.capture_locked.load(Ordering::Relaxed);
-                    let active = self.ui_state.active.load(Ordering::Relaxed);
+                    let active = self.ui_state.recording.load(Ordering::Relaxed);
                     if ui
                         .add_enabled(
                             locked && !active && p.one_shot.unmodulated_plain_value(),
@@ -330,20 +315,20 @@ impl UltrawaveEditorApp {
                             ui.label(label);
                             match kind {
                                 0 => {
-                                    vertical_slider(ui, self.params.level(), gui);
+                                    vertical_slider(ui, self.level(), gui);
                                 }
                                 1 => {
-                                    vertical_slider(ui, self.params.srr(), gui);
+                                    vertical_slider(ui, self.srr(), gui);
                                 }
                                 _ => {
-                                    vertical_slider(ui, self.params.distortion(), gui);
+                                    vertical_slider(ui, self.distortion(), gui);
                                 }
                             }
                             let id = ui.id().with(("sidebar-value", kind));
                             match kind {
-                                0 => parameter_value(ui, id, self.params.level(), gui),
-                                1 => parameter_value(ui, id, self.params.srr(), gui),
-                                _ => parameter_value(ui, id, self.params.distortion(), gui),
+                                0 => parameter_value(ui, id, self.level(), gui),
+                                1 => parameter_value(ui, id, self.srr(), gui),
+                                _ => parameter_value(ui, id, self.distortion(), gui),
                             }
                         },
                     );
@@ -375,7 +360,14 @@ impl UltrawaveEditorApp {
     fn knob_grid(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
         let labels = if record {
             [
-                "MLEV", "MBAL", "ILEV", "IBAL", "CUE1", "CUE2", "LEN", "RATE",
+                "MAIN",
+                "BAL",
+                "SIDE",
+                "BAL",
+                "REC NOTE",
+                "PLAY NOTE",
+                "LEN",
+                "RATE",
             ]
         } else {
             ["PTCH", "DEC", "HOLD", "BRR", "STRT", "END", "RTRG", "RTIM"]
@@ -398,27 +390,23 @@ impl UltrawaveEditorApp {
                     .layout(Layout::top_down(egui::Align::Center)),
                 |ui| {
                     ui.label(*label);
-                    rotary_knob(ui, self.params.knob(index), gui);
-                    parameter_value(
-                        ui,
-                        ui.id().with(("value", index)),
-                        self.params.knob(index),
-                        gui,
-                    );
+                    rotary_knob(ui, self.knob(index), gui);
+                    parameter_value(ui, ui.id().with(("value", index)), self.knob(index), gui);
                 },
             );
         }
     }
 
     fn status(&self, ui: &mut egui::Ui, len: usize, rate: f32, record: bool) {
-        let active = self.ui_state.active.load(Ordering::Relaxed);
-        let one_shot =
-            matches!(&self.params, EditorParams::Record(p) if p.one_shot.unmodulated_plain_value());
+        let active = if record {
+            &self.ui_state.recording
+        } else {
+            &self.ui_state.playing
+        }
+        .load(Ordering::Relaxed);
+        let one_shot = record && self.params.record.one_shot.unmodulated_plain_value();
         let locked = self.ui_state.capture_locked.load(Ordering::Relaxed);
-        let busy = self.ui_state.capture_busy.load(Ordering::Relaxed);
-        let phase = if busy && record {
-            "BUFFER BUSY — CAPTURE REJECTED"
-        } else if active {
+        let phase = if active {
             if record {
                 "RECORDING"
             } else {
@@ -454,32 +442,28 @@ impl UltrawaveEditorApp {
         });
     }
 
-    fn footer(&self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
+    fn footer(&mut self, ui: &mut egui::Ui, gui: &GuiContext, record: bool) {
         ui.horizontal(|ui| {
-            let selected = self.params.buffer().unmodulated_plain_value();
-            let bank = self.params.bank().unmodulated_plain_value();
-            let bank_status = self.ui_state.bank_status.load(Ordering::Relaxed);
-            let bank_text = match bank_status {
-                1 => format!("B{bank}…"),
-                3 => format!("B{bank}!"),
-                _ if bank == 0 => "OFF".into(),
-                _ => format!("B{bank}"),
-            };
-            ui.label(format!(
-                "▌▌ R{} ▐▐  {}",
-                selected + 1,
-                if record { "REC" } else { "PLAY" }
-            ));
-            ui.label("BANK");
+            let selected = self.params.buffer.unmodulated_plain_value();
+            ui.label(format!("▌▌ R{} ▐▐", selected + 1));
+            if ui.add_sized([66.0, 28.0], egui::Button::selectable(record, "RECORD")).clicked() {
+                self.record_page = true;
+                self.meter = 0.0;
+            }
+            if ui.add_sized([66.0, 28.0], egui::Button::selectable(!record, "PLAY")).clicked() {
+                self.record_page = false;
+                self.meter = 0.0;
+            }
+            let only = self.params.playback_only.unmodulated_plain_value();
             if ui
-                .add_sized([48.0, 28.0], egui::Button::new(bank_text))
+                .add_sized([152.0, 28.0], egui::Button::new(if only { "PLAYBACK ONLY" } else { "DRY + PLAYBACK" }))
+                .on_hover_text("Output routing. Playback Only mutes dry-through for capture/send buses. Capture always reads the input before playback.")
                 .clicked()
             {
-                let next = if bank >= 16 { 0 } else { bank + 1 };
-                let p = self.params.bank();
+                let p = &self.params.playback_only;
                 let setter = gui.param_setter();
                 setter.begin_set_parameter(p);
-                setter.set_parameter(p, next);
+                setter.set_parameter(p, !only);
                 setter.end_set_parameter(p);
             }
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
@@ -494,7 +478,7 @@ impl UltrawaveEditorApp {
                         )
                         .clicked()
                     {
-                        let p = self.params.buffer();
+                        let p = &self.params.buffer;
                         let setter = gui.param_setter();
                         setter.begin_set_parameter(p);
                         setter.set_parameter(p, index);

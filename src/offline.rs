@@ -1,6 +1,6 @@
+use crate::machines::memory::SampleMemory;
 use crate::machines::ram_play::{RamPlay, RamPlayParams};
 use crate::machines::ram_record::{RamRecord, RamRecordParams};
-use crate::machines::shared::BufferRegistry;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -128,9 +128,8 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         ));
     }
 
-    // Offline renders never clear or overwrite a running DAW's shared RAM.
-    let registry = Arc::new(BufferRegistry::new());
-    let mut rec = RamRecord::with_registry(SAMPLE_RATE_F, registry.clone());
+    let memory = Arc::new(SampleMemory::new());
+    let mut rec = RamRecord::new(SAMPLE_RATE_F, memory.clone());
     let params = RamRecordParams {
         mlev: 127,
         mbal: 64,
@@ -150,7 +149,7 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
     rec.stop_recording(config.channel);
 
     if let Some(output) = &config.output {
-        let buffer = registry
+        let buffer = memory
             .read_buffer(config.channel)
             .ok_or("failed to read buffer")?;
         // Scale 12-bit buffer values (-2048..2047) to 16-bit range so the WAV
@@ -186,9 +185,9 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
     }
     let output_samples = (output_secs * SAMPLE_RATE as f64) as usize;
 
-    let registry = Arc::new(BufferRegistry::new());
-    registry.replace_buffer(config.channel, samples);
-    let mut player = RamPlay::with_registry(SAMPLE_RATE_F, registry);
+    let memory = Arc::new(SampleMemory::new());
+    memory.replace_buffer(config.channel, samples);
+    let mut player = RamPlay::new(SAMPLE_RATE_F, memory);
     player.set_tempo(config.tempo_bpm);
     player.trigger(&config.params, config.channel);
 
@@ -237,7 +236,7 @@ fn parse_channel(args: &[String]) -> Result<usize, String> {
 }
 
 pub fn parse_record_args(args: &[String]) -> Option<RecordConfig> {
-    if !has_flag(args, "--input") {
+    if args.get(1).map(String::as_str) != Some("record") || !has_flag(args, "--input") {
         return None;
     }
     let input = get_arg(args, "--input").expect("--input requires a path");
@@ -254,7 +253,10 @@ pub fn parse_record_args(args: &[String]) -> Option<RecordConfig> {
 }
 
 pub fn parse_play_args(args: &[String]) -> Option<PlayConfig> {
-    if !has_flag(args, "--input") || !has_flag(args, "--output") {
+    if args.get(1).map(String::as_str) != Some("play")
+        || !has_flag(args, "--input")
+        || !has_flag(args, "--output")
+    {
         return None;
     }
     let input = get_arg(args, "--input").expect("--input requires a path");

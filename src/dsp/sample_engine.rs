@@ -1,11 +1,11 @@
-use crate::machines::shared::BufferRegistry;
+use crate::machines::memory::SampleMemory;
 use crate::Decimator;
 use std::sync::Arc;
 
 enum SampleSource {
     Owned(Vec<i16>),
-    Shared {
-        registry: Arc<BufferRegistry>,
+    Buffer {
+        memory: Arc<SampleMemory>,
         channel: usize,
         revision: u64,
         len: usize,
@@ -32,10 +32,10 @@ impl SampleEngine {
         self.position = 0.0;
     }
 
-    pub fn latch_shared(&mut self, registry: Arc<BufferRegistry>, channel: usize) -> Option<f32> {
-        let (len, rate, revision) = registry.snapshot(channel)?;
-        self.source = SampleSource::Shared {
-            registry,
+    pub fn latch_buffer(&mut self, memory: Arc<SampleMemory>, channel: usize) -> Option<f32> {
+        let (len, rate, revision) = memory.snapshot(channel)?;
+        self.source = SampleSource::Buffer {
+            memory,
             channel,
             revision,
             len,
@@ -48,12 +48,12 @@ impl SampleEngine {
     pub fn source_is_current(&self) -> bool {
         match &self.source {
             SampleSource::Owned(_) => true,
-            SampleSource::Shared {
-                registry,
+            SampleSource::Buffer {
+                memory,
                 channel,
                 revision,
                 ..
-            } => registry
+            } => memory
                 .snapshot(*channel)
                 .is_some_and(|(_, _, current)| current == *revision),
         }
@@ -84,16 +84,16 @@ impl SampleEngine {
         // RAM stores signed 12-bit codes in an i16 container, not 16-bit PCM.
         let pair = match &self.source {
             SampleSource::Owned(buffer) => Some((buffer[idx], buffer[(idx + 1).min(len - 1)])),
-            SampleSource::Shared {
-                registry,
+            SampleSource::Buffer {
+                memory,
                 channel,
                 revision,
                 ..
-            } => registry.read_sample_pair(*channel, idx, *revision, len),
+            } => memory.read_sample_pair(*channel, idx, *revision, len),
         };
         let Some((a, b)) = pair else {
             self.position = if reverse { 0.0 } else { len as f64 };
-            // SRR holds a previous sample; discard it when the latched shared
+            // SRR holds a previous sample; discard it when the latched buffer
             // revision is invalidated so a dead voice cannot leak old audio.
             self.decimator = Decimator::new();
             return 0.0;
@@ -124,7 +124,7 @@ impl SampleEngine {
     pub fn buffer_len(&self) -> usize {
         match &self.source {
             SampleSource::Owned(buffer) => buffer.len(),
-            SampleSource::Shared { len, .. } => *len,
+            SampleSource::Buffer { len, .. } => *len,
         }
     }
 

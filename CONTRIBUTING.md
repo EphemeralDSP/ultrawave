@@ -21,20 +21,17 @@ cargo build
 cargo build --release
 
 # Bundle all plugin formats
-cargo xtask bundle ultrawave --release
+cargo xtask bundle ultrawave-plugin --release
 ```
 
 ### Testing
 
 ```bash
-# Run unit tests
-cargo test
+# Quick offline audio/state regression loop
+./scripts/dev-loop.sh fast
 
-# Run clippy
-cargo clippy
-
-# Check formatting
-cargo fmt --check
+# Release tests, Clippy, validators, benchmark and editor lifecycle
+./scripts/dev-loop.sh full --editor
 ```
 
 ## Plugin Validation Requirements
@@ -45,27 +42,23 @@ Before submitting a PR, validate your changes locally:
 
 ```bash
 # Build the plugin
-cargo xtask bundle ultrawave --release
+cargo xtask bundle ultrawave-plugin --release
 
 # Validate VST3
-.\scripts\validate-vst3.ps1      # Windows
-./scripts/validate-vst3.sh       # macOS/Linux
+./scripts/validate-vst3.sh --plugin target/bundled/ultrawave-plugin.vst3
 
 # Validate CLAP
-.\scripts\validate-clap.ps1      # Windows
-./scripts/validate-clap.sh       # macOS/Linux
+./scripts/validate-clap.sh --plugin target/bundled/ultrawave-plugin.clap
 ```
 
 See [docs/testing/plugin-validation.md](docs/testing/plugin-validation.md) for detailed validation instructions.
 
 ### CI Validation
 
-GitHub Actions automatically validates plugins on:
-- Windows (VST3, CLAP)
-- macOS (VST3, CLAP, AU)
-- Linux (VST3, CLAP)
-
-PRs are blocked if validation fails.
+The [Buildkite pipeline](.buildkite/pipeline.yml) builds and validates VST3/CLAP
+on Linux and macOS for main-branch pushes and release tags. Ultrawave does not
+export AU. Run local checks before proposing changes; CI configuration alone
+does not prove a platform or DAW works.
 
 ## Pull Request Guidelines
 

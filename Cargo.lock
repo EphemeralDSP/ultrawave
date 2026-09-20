@@ -2774,27 +2774,16 @@ name = "ultrawave"
 version = "0.1.0"
 dependencies = [
  "clap-sys",
- "crossbeam-queue",
  "egui",
  "ephemeral-dsp",
  "hound",
- "libc",
  "libloading 0.8.9",
  "nice-plug",
  "nice-plug-egui",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
-name = "ultrawave-play"
-version = "0.1.0"
-dependencies = [
- "nice-plug",
- "ultrawave",
-]
-
-[[package]]
-name = "ultrawave-record"
+name = "ultrawave-plugin"
 version = "0.1.0"
 dependencies = [
  "nice-plug",

@@ -39,31 +39,6 @@ fn parse_buffer(string: &str) -> Option<i32> {
     parse_i32_clamped(string, 0, 3)
 }
 
-fn parse_bank(string: &str) -> Option<i32> {
-    let value = string.trim();
-    if value.eq_ignore_ascii_case("OFF") {
-        Some(0)
-    } else {
-        parse_i32_clamped(value, 0, 16)
-    }
-}
-
-fn format_bank(value: i32) -> String {
-    if value == 0 {
-        "OFF".into()
-    } else {
-        value.to_string()
-    }
-}
-
-fn default_bank() -> i32 {
-    std::env::var("ULTRAWAVE_BANK")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0)
-        .clamp(0, 16)
-}
-
 fn parse_level_db(string: &str) -> Option<f32> {
     let trimmed = string.trim();
     let stripped = trimmed.trim_end_matches([' ', 'd', 'D', 'b', 'B']);
@@ -95,15 +70,6 @@ fn parse_balance(string: &str) -> Option<i32> {
     }
 
     parse_0_127(trimmed)
-}
-
-fn parse_cue(string: &str) -> Option<i32> {
-    let trimmed = string.trim();
-    if trimmed.eq_ignore_ascii_case("-inf") {
-        Some(0)
-    } else {
-        parse_0_127(trimmed)
-    }
 }
 
 fn parse_rec_len(string: &str) -> Option<i32> {
@@ -187,15 +153,6 @@ fn format_balance(value: i32) -> String {
     }
 }
 
-/// Format CUE level: -inf at zero, otherwise a linear 0–127 gain control.
-fn format_cue(value: i32) -> String {
-    if value == 0 {
-        "-inf".to_string()
-    } else {
-        format!("{}", value)
-    }
-}
-
 /// Format record length: beat-synced durations
 fn format_rec_len(value: i32) -> String {
     match value {
@@ -271,12 +228,46 @@ fn format_rtim(value: i32) -> String {
 }
 
 #[derive(Params)]
-pub struct RamRecordParams {
-    #[id = "bank"]
-    pub bank: IntParam,
-    // Buffer selector (R1-R4)
-    #[id = "rec_buf"]
+pub struct UltrawaveParams {
+    #[id = "buffer"]
     pub buffer: IntParam,
+    #[id = "record_note"]
+    pub record_note: IntParam,
+    #[id = "play_note"]
+    pub play_note: IntParam,
+    /// False preserves the stereo main input and adds playback.
+    #[id = "playback_only"]
+    pub playback_only: BoolParam,
+    #[id = "playback"]
+    pub playback: BoolParam,
+    #[id = "rearm"]
+    pub rearm: BoolParam,
+    #[nested(group = "Record")]
+    pub record: RamRecordParams,
+    #[nested(group = "Play")]
+    pub play: RamPlayParams,
+}
+
+impl Default for UltrawaveParams {
+    fn default() -> Self {
+        Self {
+            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
+                .with_string_to_value(Arc::new(parse_buffer)),
+            record_note: IntParam::new("Record Note", 48, IntRange::Linear { min: 0, max: 127 })
+                .with_string_to_value(Arc::new(parse_0_127)),
+            play_note: IntParam::new("Play Note", 50, IntRange::Linear { min: 0, max: 127 })
+                .with_string_to_value(Arc::new(parse_0_127)),
+            playback_only: BoolParam::new("Playback Only", false),
+            playback: BoolParam::new("Playback", false),
+            rearm: BoolParam::new("Re-arm", false),
+            record: RamRecordParams::default(),
+            play: RamPlayParams::default(),
+        }
+    }
+}
+
+#[derive(Params)]
+pub struct RamRecordParams {
     /// Rising edge starts a timed capture, falling edge does not truncate it.
     #[id = "capture"]
     pub capture: BoolParam,
@@ -299,10 +290,6 @@ pub struct RamRecordParams {
     pub ilev: IntParam,
     #[id = "ibal"]
     pub ibal: IntParam,
-    #[id = "cue1"]
-    pub cue1: IntParam,
-    #[id = "cue2"]
-    pub cue2: IntParam,
     #[id = "rec_len"]
     pub rec_len: IntParam,
     #[id = "rec_rate"]
@@ -312,16 +299,10 @@ pub struct RamRecordParams {
 impl Default for RamRecordParams {
     fn default() -> Self {
         Self {
-            bank: IntParam::new("Bank", default_bank(), IntRange::Linear { min: 0, max: 16 })
-                .with_value_to_string(Arc::new(format_bank))
-                .with_string_to_value(Arc::new(parse_bank))
-                .non_automatable(),
-            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
-                .with_string_to_value(Arc::new(parse_buffer)),
             capture: BoolParam::new("Capture", false),
             one_shot: BoolParam::new("One Shot", false),
             lev: FloatParam::new(
-                "Level",
+                "Capture Level",
                 0.0,
                 FloatRange::Linear {
                     min: -60.0,
@@ -332,7 +313,7 @@ impl Default for RamRecordParams {
             .with_value_to_string(formatters::v2s_f32_rounded(1))
             .with_string_to_value(Arc::new(parse_level_db)),
             srr: FloatParam::new(
-                "SRR",
+                "Capture SRR",
                 0.0,
                 FloatRange::Skewed {
                     min: 0.0,
@@ -341,8 +322,12 @@ impl Default for RamRecordParams {
                 },
             )
             .with_value_to_string(formatters::v2s_f32_rounded(3)),
-            dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_string_to_value(Arc::new(parse_0_127)),
+            dist: IntParam::new(
+                "Capture Distortion",
+                0,
+                IntRange::Linear { min: 0, max: 127 },
+            )
+            .with_string_to_value(Arc::new(parse_0_127)),
             mlev: IntParam::new("Main Level", 127, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             mbal: IntParam::new("Main Balance", 64, IntRange::Linear { min: 0, max: 127 })
@@ -357,12 +342,6 @@ impl Default for RamRecordParams {
             )
             .with_value_to_string(Arc::new(format_balance))
             .with_string_to_value(Arc::new(parse_balance)),
-            cue1: IntParam::new("Dry Monitor", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_cue))
-                .with_string_to_value(Arc::new(parse_cue)),
-            cue2: IntParam::new("Capture Monitor", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_cue))
-                .with_string_to_value(Arc::new(parse_cue)),
             rec_len: IntParam::new("Rec Length", 48, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_rec_len))
                 .with_string_to_value(Arc::new(parse_rec_len)),
@@ -375,11 +354,6 @@ impl Default for RamRecordParams {
 
 #[derive(Params)]
 pub struct RamPlayParams {
-    #[id = "bank"]
-    pub bank: IntParam,
-    // Buffer selector (R1-R4)
-    #[id = "play_buf"]
-    pub buffer: IntParam,
     // Sidebar - Output/Effects
     #[id = "play_lev"]
     pub lev: FloatParam,
@@ -409,14 +383,8 @@ pub struct RamPlayParams {
 impl Default for RamPlayParams {
     fn default() -> Self {
         Self {
-            bank: IntParam::new("Bank", default_bank(), IntRange::Linear { min: 0, max: 16 })
-                .with_value_to_string(Arc::new(format_bank))
-                .with_string_to_value(Arc::new(parse_bank))
-                .non_automatable(),
-            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
-                .with_string_to_value(Arc::new(parse_buffer)),
             lev: FloatParam::new(
-                "Level",
+                "Playback Level",
                 0.0,
                 FloatRange::Linear {
                     min: -60.0,
@@ -427,7 +395,7 @@ impl Default for RamPlayParams {
             .with_value_to_string(formatters::v2s_f32_rounded(1))
             .with_string_to_value(Arc::new(parse_level_db)),
             srr: FloatParam::new(
-                "SRR",
+                "Playback SRR",
                 0.0,
                 FloatRange::Skewed {
                     min: 0.0,
@@ -436,8 +404,12 @@ impl Default for RamPlayParams {
                 },
             )
             .with_value_to_string(formatters::v2s_f32_rounded(3)),
-            dist: IntParam::new("Distortion", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_string_to_value(Arc::new(parse_0_127)),
+            dist: IntParam::new(
+                "Playback Distortion",
+                0,
+                IntRange::Linear { min: 0, max: 127 },
+            )
+            .with_string_to_value(Arc::new(parse_0_127)),
             brr: IntParam::new("Bit Reduction", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 })
@@ -487,7 +459,6 @@ mod tests {
     #[test]
     fn record_formatters_roundtrip_stable() {
         assert_roundtrip_stable(0, 127, format_balance, parse_balance);
-        assert_roundtrip_stable(0, 127, format_cue, parse_cue);
         assert_roundtrip_stable(0, 127, format_rec_len, parse_rec_len);
         assert_roundtrip_stable(0, 127, format_rate, parse_rate);
     }
@@ -504,9 +475,6 @@ mod tests {
 
     #[test]
     fn parsers_clamp_numeric_ranges() {
-        assert_eq!(parse_bank("0"), Some(0));
-        assert_eq!(parse_bank("off"), Some(0));
-        assert_roundtrip_stable(0, 16, format_bank, parse_bank);
         assert_eq!(parse_buffer("-1"), Some(0));
         assert_eq!(parse_buffer("99"), Some(3));
         assert_eq!(parse_0_127("-5"), Some(0));

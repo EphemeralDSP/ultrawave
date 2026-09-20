@@ -1,10 +1,39 @@
 use std::sync::Arc;
+use ultrawave::machines::memory::SampleMemory;
 use ultrawave::machines::ram_play::{RamPlay, RamPlayParams};
 use ultrawave::machines::ram_record::{RamRecord, RamRecordParams};
-use ultrawave::machines::shared::BufferRegistry;
-use ultrawave::offline::{run_offline_play, run_offline_record, PlayConfig, RecordConfig};
+use ultrawave::offline::{
+    parse_play_args, parse_record_args, run_offline_play, run_offline_record, PlayConfig,
+    RecordConfig,
+};
 
 const SR: f32 = 44100.0;
+
+fn args(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+#[test]
+fn unified_cli_subcommands_select_exactly_one_offline_action() {
+    let record = args(&["ultrawave", "record", "--input", "in.wav"]);
+    assert!(parse_record_args(&record).is_some());
+    assert!(parse_play_args(&record).is_none());
+
+    let play = args(&[
+        "ultrawave",
+        "play",
+        "--input",
+        "in.wav",
+        "--output",
+        "out.wav",
+    ]);
+    assert!(parse_record_args(&play).is_none());
+    assert!(parse_play_args(&play).is_some());
+
+    let ambiguous = args(&["ultrawave", "--input", "in.wav", "--output", "out.wav"]);
+    assert!(parse_record_args(&ambiguous).is_none());
+    assert!(parse_play_args(&ambiguous).is_none());
+}
 
 #[test]
 fn independent_recorders_do_not_cancel_each_other() {
@@ -13,10 +42,10 @@ fn independent_recorders_do_not_cancel_each_other() {
         ilev: 0,
         ..Default::default()
     };
-    let first_registry = Arc::new(BufferRegistry::new());
-    let second_registry = Arc::new(BufferRegistry::new());
-    let mut first = RamRecord::with_registry(SR, first_registry.clone());
-    let mut second = RamRecord::with_registry(SR, second_registry.clone());
+    let first_registry = Arc::new(SampleMemory::new());
+    let second_registry = Arc::new(SampleMemory::new());
+    let mut first = RamRecord::new(SR, first_registry.clone());
+    let mut second = RamRecord::new(SR, second_registry.clone());
     first.start_recording(&params, true, 0);
     second.start_recording(&params, true, 0);
     first.record_sample(0.25, 0.25, 0.0, 0.0, &params, 0);
@@ -27,8 +56,8 @@ fn independent_recorders_do_not_cancel_each_other() {
 
 #[test]
 fn signed_12bit_capture_preserves_level_and_every_sample() {
-    let registry = Arc::new(BufferRegistry::new());
-    let mut recorder = RamRecord::with_registry(SR, registry.clone());
+    let registry = Arc::new(SampleMemory::new());
+    let mut recorder = RamRecord::new(SR, registry.clone());
     let params = RamRecordParams {
         mlev: 127,
         ilev: 0,
@@ -45,7 +74,7 @@ fn signed_12bit_capture_preserves_level_and_every_sample() {
     recorder.stop_recording(0);
     assert_eq!(registry.read_buffer(0).unwrap(), expected_codes);
 
-    let mut player = RamPlay::with_registry(SR, registry);
+    let mut player = RamPlay::new(SR, registry);
     player.trigger(
         &RamPlayParams {
             vol: 127,
@@ -73,8 +102,8 @@ fn generate_sine(freq_hz: f32, duration_secs: f32, sample_rate: f32) -> Vec<(f32
 
 #[test]
 fn record_then_play_roundtrip() {
-    let registry = Arc::new(BufferRegistry::new());
-    let mut rec = RamRecord::with_registry(SR, registry.clone());
+    let registry = Arc::new(SampleMemory::new());
+    let mut rec = RamRecord::new(SR, registry.clone());
     let rec_params = RamRecordParams {
         mlev: 127,
         mbal: 64,
@@ -95,7 +124,7 @@ fn record_then_play_roundtrip() {
 
     assert!(registry.buffer_len(0) > 0);
 
-    let mut player = RamPlay::with_registry(SR, registry.clone());
+    let mut player = RamPlay::new(SR, registry.clone());
     let play_params = RamPlayParams {
         strt: 0,
         end: 127,
@@ -132,8 +161,8 @@ fn record_then_play_roundtrip() {
 
 #[test]
 fn channel_isolation() {
-    let registry = Arc::new(BufferRegistry::new());
-    let mut rec = RamRecord::with_registry(SR, registry.clone());
+    let registry = Arc::new(SampleMemory::new());
+    let mut rec = RamRecord::new(SR, registry.clone());
     let params = RamRecordParams {
         mlev: 127,
         mbal: 64,

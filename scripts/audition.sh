@@ -21,15 +21,14 @@ if (( BUILD )); then
   if [[ "$PROFILE" == release ]]; then build_args+=(--release); fi
   cargo build "${build_args[@]}"
 fi
-BIN="$ROOT/target/$PROFILE"
-[[ -x "$BIN/ultrawave_record" && -x "$BIN/ultrawave_play" ]] || { echo "$PROFILE binaries missing; omit --no-build" >&2; exit 1; }
+BIN="$ROOT/target/$PROFILE/ultrawave"
+[[ -x "$BIN" ]] || { echo "$PROFILE binary missing; omit --no-build" >&2; exit 1; }
 mkdir -p "$OUT"
-"$BIN/ultrawave_record" --input "$INPUT" --output "$OUT/recorded-12bit.wav"
-PLAY="$BIN/ultrawave_play"
-"$PLAY" --input "$OUT/recorded-12bit.wav" --output "$OUT/play-12bit.wav"
-"$PLAY" --input "$OUT/recorded-12bit.wav" --output "$OUT/pitch-down.wav" --pitch 52
-"$PLAY" --input "$OUT/recorded-12bit.wav" --output "$OUT/brr.wav" --brr 64
-"$PLAY" --input "$OUT/recorded-12bit.wav" --output "$OUT/srr.wav" --srr 0.75
-"$PLAY" --input "$OUT/recorded-12bit.wav" --output "$OUT/driven.wav" --dist 32 --pitch 52 --srr 0.5
+"$BIN" record --input "$INPUT" --output "$OUT/recorded-12bit.wav"
+"$BIN" play --input "$OUT/recorded-12bit.wav" --output "$OUT/play-12bit.wav"
+"$BIN" play --input "$OUT/recorded-12bit.wav" --output "$OUT/pitch-down.wav" --pitch 52
+"$BIN" play --input "$OUT/recorded-12bit.wav" --output "$OUT/brr.wav" --brr 64
+"$BIN" play --input "$OUT/recorded-12bit.wav" --output "$OUT/srr.wav" --srr 0.75
+"$BIN" play --input "$OUT/recorded-12bit.wav" --output "$OUT/driven.wav" --dist 32 --pitch 52 --srr 0.5
 python3 "$ROOT/scripts/audio-metrics.py" "$OUT"
 printf '\nAuditions: %s\nCompare recorded-12bit/play-12bit, then pitch-down, BRR, SRR, driven.\nStart monitoring quietly; distortion raises loudness. These are approximations, not hardware reference captures.\n' "$OUT"

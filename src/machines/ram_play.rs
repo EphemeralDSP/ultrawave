@@ -1,6 +1,6 @@
 use crate::dsp::effects::Distortion;
 use crate::dsp::sample_engine::{param_to_normalized, pitch_to_ratio, SampleEngine};
-use crate::machines::shared::{get_global_registry, BufferRegistry, CHANNEL_COUNT};
+use crate::machines::memory::{SampleMemory, CHANNEL_COUNT};
 use std::sync::Arc;
 
 /// Quarter-note beats between retriggers. Zero disables retriggering.
@@ -72,7 +72,7 @@ impl Default for RamPlayParams {
 }
 
 pub struct RamPlay {
-    registry: Arc<BufferRegistry>,
+    memory: Arc<SampleMemory>,
     engines: [SampleEngine; CHANNEL_COUNT],
     envelopes: [f32; CHANNEL_COUNT],
     is_playing: [bool; CHANNEL_COUNT],
@@ -92,13 +92,9 @@ pub struct RamPlay {
 
 #[allow(dead_code)]
 impl RamPlay {
-    pub fn new(sample_rate: f32) -> Self {
-        Self::with_registry(sample_rate, get_global_registry())
-    }
-
-    pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
+    pub fn new(sample_rate: f32, memory: Arc<SampleMemory>) -> Self {
         Self {
-            registry,
+            memory,
             engines: std::array::from_fn(|_| SampleEngine::new()),
             envelopes: [0.0; CHANNEL_COUNT],
             is_playing: [false; CHANNEL_COUNT],
@@ -125,16 +121,6 @@ impl RamPlay {
         self.sample_rate = sample_rate;
     }
 
-    /// Stop playback/retriggers before changing RAM ownership. The old Arc is
-    /// returned for non-audio-thread retirement.
-    pub fn rebind_registry(&mut self, registry: Arc<BufferRegistry>) -> Arc<BufferRegistry> {
-        self.stop_all();
-        // Engines only latch this registry. Release their references while
-        // self.registry still guards the allocation; no final drop occurs here.
-        self.engines = std::array::from_fn(|_| SampleEngine::new());
-        std::mem::replace(&mut self.registry, registry)
-    }
-
     /// Follow host tempo changes without restarting the current beat interval.
     /// Invalid or unavailable host tempo falls back to 120 BPM.
     pub fn set_tempo(&mut self, tempo_bpm: f64) {
@@ -155,14 +141,14 @@ impl RamPlay {
 
     pub fn load_buffer(&mut self, samples: Vec<i16>, channel: usize) {
         let channel = Self::clamp_channel(channel);
-        let _ = self.registry.replace_buffer(channel, samples);
+        let _ = self.memory.replace_buffer(channel, samples);
     }
 
     pub fn trigger(&mut self, params: &RamPlayParams, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.current_params[channel] = *params;
         self.update_params(params, channel);
-        let source_rate = self.engines[channel].latch_shared(Arc::clone(&self.registry), channel);
+        let source_rate = self.engines[channel].latch_buffer(Arc::clone(&self.memory), channel);
         if source_rate.is_none() {
             self.is_playing[channel] = false;
             self.retrigs_remaining[channel] = 0;
@@ -203,7 +189,7 @@ impl RamPlay {
         current.vol = params.vol;
         self.distortion[channel].set_drive(param_to_normalized(params.dist));
         self.playback_ratios[channel] = pitch_to_ratio(params.pitch);
-        if let Some((_, source_rate, _)) = self.registry.snapshot(channel) {
+        if let Some((_, source_rate, _)) = self.memory.snapshot(channel) {
             self.playback_ratios[channel] *= source_rate as f64 / self.sample_rate as f64;
         }
     }
@@ -334,14 +320,14 @@ impl RamPlay {
 
     pub fn buffer_len(&self, channel: usize) -> usize {
         let channel = Self::clamp_channel(channel);
-        self.registry.buffer_len(channel)
+        self.memory.buffer_len(channel)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::shared::BufferRegistry;
+    use crate::machines::memory::SampleMemory;
     use std::sync::Arc;
 
     fn make_test_buffer() -> Vec<i16> {
@@ -351,7 +337,7 @@ mod tests {
     }
 
     fn test_player() -> RamPlay {
-        RamPlay::with_registry(44100.0, Arc::new(BufferRegistry::new()))
+        RamPlay::new(44100.0, Arc::new(SampleMemory::new()))
     }
 
     #[test]
@@ -372,25 +358,6 @@ mod tests {
     }
 
     #[test]
-    fn rebinding_releases_all_latched_sources_before_old_guard_is_retired() {
-        let registry = Arc::new(BufferRegistry::new());
-        let weak = Arc::downgrade(&registry);
-        registry.replace_buffer(0, vec![1024; 4]);
-        let mut player = RamPlay::with_registry(44100.0, registry);
-        player.trigger(&RamPlayParams::default(), 0);
-        let guard = player.rebind_registry(Arc::new(BufferRegistry::new()));
-        assert!(!player.is_any_playing());
-        assert_eq!(player.process(0), 0.0);
-        assert_eq!(
-            weak.strong_count(),
-            1,
-            "only the retirement guard may remain"
-        );
-        drop(guard);
-        assert!(weak.upgrade().is_none());
-    }
-
-    #[test]
     fn test_process_outputs_audio() {
         let mut player = test_player();
         player.load_buffer(make_test_buffer(), 0);
@@ -403,11 +370,11 @@ mod tests {
     fn retrigger_timeline_has_exact_count_off_and_infinite_boundaries() {
         // At 120 BPM, sixteenth notes are 125 ms = 128 frames at 1024 Hz.
         // A one-frame impulse also checks restarting after playback has ended.
-        let registry = Arc::new(BufferRegistry::new());
+        let registry = Arc::new(SampleMemory::new());
         registry.replace_buffer_at_rate(0, vec![1024], 1024.0);
         for count in [0, 1, 2, 126, 127] {
             for time in [0, 127] {
-                let mut player = RamPlay::with_registry(1024.0, registry.clone());
+                let mut player = RamPlay::new(1024.0, registry.clone());
                 player.trigger(
                     &RamPlayParams {
                         rtrg: count,
@@ -440,9 +407,9 @@ mod tests {
     fn retrigger_cancels_on_buffer_replacement_even_between_hits() {
         for reverse in [false, true] {
             for frames_before_replace in [1, 8] {
-                let registry = Arc::new(BufferRegistry::new());
+                let registry = Arc::new(SampleMemory::new());
                 registry.replace_buffer_at_rate(0, vec![1024; 4], 1024.0);
-                let mut player = RamPlay::with_registry(1024.0, registry.clone());
+                let mut player = RamPlay::new(1024.0, registry.clone());
                 player.trigger(
                     &RamPlayParams {
                         strt: if reverse { 127 } else { 0 },
@@ -478,9 +445,9 @@ mod tests {
             (48_000.0, 90.0, 96, 4000.0),
             (96_000.0, 120.0, 109, 8000.0),
         ] {
-            let registry = Arc::new(BufferRegistry::new());
+            let registry = Arc::new(SampleMemory::new());
             registry.replace_buffer_at_rate(0, vec![1024], rate);
-            let mut player = RamPlay::with_registry(rate, registry);
+            let mut player = RamPlay::new(rate, registry);
             player.set_tempo(tempo);
             player.trigger(
                 &RamPlayParams {
@@ -503,9 +470,9 @@ mod tests {
 
     #[test]
     fn retrigger_tempo_change_preserves_phase_and_off_cancels_pending_hits() {
-        let registry = Arc::new(BufferRegistry::new());
+        let registry = Arc::new(SampleMemory::new());
         registry.replace_buffer_at_rate(0, vec![1024], 1024.0);
-        let mut player = RamPlay::with_registry(1024.0, registry);
+        let mut player = RamPlay::new(1024.0, registry);
         let params = RamPlayParams {
             rtrg: 127,
             rtim: 127,
@@ -593,11 +560,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cross_channel_isolation_from_shared_registry() {
-        let registry = Arc::new(BufferRegistry::new());
+    fn test_cross_channel_isolation() {
+        let registry = Arc::new(SampleMemory::new());
         assert!(registry.replace_buffer(0, vec![2047; 64]));
 
-        let mut player = RamPlay::with_registry(44100.0, registry);
+        let mut player = RamPlay::new(44100.0, registry);
         player.trigger(&RamPlayParams::default(), 1);
         let sample1 = player.process(1);
         assert!(sample1.abs() < 1.0e-6);
@@ -605,8 +572,8 @@ mod tests {
 
     #[test]
     fn test_trigger_on_empty_buffer_is_deterministic_silence() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut player = RamPlay::with_registry(44100.0, registry);
+        let registry = Arc::new(SampleMemory::new());
+        let mut player = RamPlay::new(44100.0, registry);
 
         player.trigger(&RamPlayParams::default(), 2);
 
@@ -673,14 +640,14 @@ mod tests {
 
     #[test]
     fn reverse_pitch_and_sample_rate_conversion_keep_interpolation_and_duration() {
-        let registry = Arc::new(BufferRegistry::new());
+        let registry = Arc::new(SampleMemory::new());
         assert!(registry.replace_buffer_at_rate(0, vec![-512, 1024, 1536], 44_100.0));
         for (output_rate, pitch, expected) in [
             (44_100.0, 52, vec![0.75, 0.625, 0.5, 0.125, -0.25, -0.25]),
             (88_200.0, 64, vec![0.75, 0.625, 0.5, 0.125, -0.25, -0.25]),
             (44_100.0, 76, vec![0.75, -0.25]),
         ] {
-            let mut player = RamPlay::with_registry(output_rate, registry.clone());
+            let mut player = RamPlay::new(output_rate, registry.clone());
             player.trigger(
                 &RamPlayParams {
                     strt: 127,
@@ -701,10 +668,10 @@ mod tests {
 
     #[test]
     fn reverse_retriggers_restart_at_start_and_replacement_stops_held_audio() {
-        let registry = Arc::new(BufferRegistry::new());
+        let registry = Arc::new(SampleMemory::new());
         // A 1/128 note at 120 BPM is four frames at 256 Hz.
         assert!(registry.replace_buffer_at_rate(0, vec![256, 512, 768, 1024], 256.0));
-        let mut player = RamPlay::with_registry(256.0, registry.clone());
+        let mut player = RamPlay::new(256.0, registry.clone());
         let params = RamPlayParams {
             strt: 127,
             end: 0,
@@ -741,8 +708,8 @@ mod tests {
 
     #[test]
     fn test_minimal_one_shot_reaches_end_and_stops() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut player = RamPlay::with_registry(44100.0, registry);
+        let registry = Arc::new(SampleMemory::new());
+        let mut player = RamPlay::new(44100.0, registry);
         player.load_buffer(vec![2047; 64], 0);
 
         let params = RamPlayParams {

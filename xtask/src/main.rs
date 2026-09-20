@@ -44,7 +44,7 @@ USAGE:
 
 COMMANDS:
     bundle              Bundle plugins (from nice-plug-xtask)
-    install             Build + install both plugins to platform plugin directories
+    install             Build + install Ultrawave to platform plugin directories
 
 VALIDATION COMMANDS:
     validate-vst3       Validate VST3 plugin using pluginval
@@ -59,8 +59,7 @@ VALIDATION OPTIONS:
     --verbose               Show detailed validation output
 
 EXAMPLES:
-    cargo xtask bundle ultrawave-record --release
-    cargo xtask bundle ultrawave-play --release
+    cargo xtask bundle ultrawave-plugin --release
     cargo xtask validate-vst3 --strictness 5
     cargo xtask validate-clap
     cargo xtask validate-all
@@ -71,7 +70,7 @@ EXAMPLES:
 }
 
 fn ensure_bundled(skip_bundle: bool) -> bool {
-    let plugins = ["ultrawave-record", "ultrawave-play"];
+    let plugins = ["ultrawave-plugin"];
     if skip_bundle {
         for plugin in plugins {
             for ext in ["vst3", "clap"] {
@@ -124,7 +123,8 @@ fn run_validate_vst3(args: &[String]) -> ExitCode {
     if !ensure_bundled(skip_bundle) {
         return ExitCode::FAILURE;
     }
-    for plugin in ["ultrawave-record", "ultrawave-play"] {
+    {
+        let plugin = "ultrawave-plugin";
         let mut command = Command::new("scripts/validate-vst3.sh");
         command.args([
             "--plugin",
@@ -162,7 +162,8 @@ fn run_validate_clap(args: &[String]) -> ExitCode {
     if !ensure_bundled(skip_bundle) {
         return ExitCode::FAILURE;
     }
-    for plugin in ["ultrawave-record", "ultrawave-play"] {
+    {
+        let plugin = "ultrawave-plugin";
         let mut command = Command::new("scripts/validate-clap.sh");
         command.args(["--plugin", &format!("target/bundled/{plugin}.clap")]);
         if let Some(t) = tests {
@@ -234,7 +235,7 @@ fn install_plugins() -> ExitCode {
     let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
     let system_install = args.iter().any(|a| a == "--system");
 
-    let plugins = ["ultrawave-record", "ultrawave-play"];
+    let plugins = ["ultrawave-plugin"];
     let bundle_dir = PathBuf::from("target/bundled");
 
     if !skip_bundle {

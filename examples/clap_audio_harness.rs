@@ -327,13 +327,23 @@ impl Event {
             value,
         })
     }
-    fn note(time: u32) -> Self {
+    fn note(time: u32, key: i16, velocity: f64) -> Self {
         Self::Note(clap_event_note {
             header: header::<clap_event_note>(time, CLAP_EVENT_NOTE_ON),
             note_id: -1,
             port_index: 0,
             channel: 0,
-            key: 60,
+            key,
+            velocity,
+        })
+    }
+    fn note_off(time: u32, key: i16) -> Self {
+        Self::Note(clap_event_note {
+            header: header::<clap_event_note>(time, CLAP_EVENT_NOTE_OFF),
+            note_id: -1,
+            port_index: 0,
+            channel: 0,
+            key,
             velocity: 1.0,
         })
     }
@@ -425,23 +435,27 @@ fn transport(playing: bool, tempo: f64, pos: i64, looping: bool) -> clap_event_t
     }
 }
 
-unsafe fn configure_record(p: &Plugin, bank: &str, monitor: &str) {
-    p.flush(&[
-        ("Bank", bank),
+fn approx(actual: f32, expected: f32, message: &str) {
+    assert!(
+        (actual - expected).abs() < 0.0006,
+        "{message}: got {actual}, expected {expected}"
+    );
+}
+
+fn quantize(sample: f32) -> f32 {
+    (sample * 2048.0).round().clamp(-2048.0, 2047.0) / 2048.0
+}
+
+unsafe fn configure(plugin: &Plugin) {
+    plugin.flush(&[
+        ("Playback Only", "On"),
         ("Main Level", "127"),
         ("Main Balance", "L64"),
         ("Sidechain Level", "127"),
         ("Sidechain Balance", "R64"),
-        ("Dry Monitor", monitor),
-        ("Capture Monitor", "-inf"),
-        ("Rec Length", "1/8"),
+        ("Rec Length", "INF"),
         ("Rec Rate", "HI"),
-        ("Level", "0 dB"),
-    ]);
-}
-unsafe fn configure_play(p: &Plugin, bank: &str) {
-    p.flush(&[
-        ("Bank", bank),
+        ("Capture Level", "0 dB"),
         ("Start", "0"),
         ("End", "127"),
         ("Pitch", "+0 st"),
@@ -449,337 +463,486 @@ unsafe fn configure_play(p: &Plugin, bank: &str) {
         ("Decay", "OFF"),
         ("Retrigger", "OFF"),
         ("Retrig Time", "OFF"),
-        ("Level", "0 dB"),
+        ("Playback Level", "0 dB"),
     ]);
 }
-fn approx(actual: f32, expected: f32, msg: &str) {
-    assert!(
-        (actual - expected).abs() < 0.0006,
-        "{msg}: got {actual}, expected {expected}"
-    )
+
+unsafe fn contract_and_default_insert(module: &Module) {
+    let factory = ((*module.entry).get_factory.unwrap()(CLAP_PLUGIN_FACTORY_ID.as_ptr()))
+        as *const clap_plugin_factory;
+    let descriptor = (*factory).get_plugin_descriptor.unwrap()(factory, 0);
+    assert_eq!(
+        CStr::from_ptr((*descriptor).id).to_bytes(),
+        b"com.ephemeraldsp.ultrawave"
+    );
+    assert_eq!(CStr::from_ptr((*descriptor).name).to_bytes(), b"Ultrawave");
+
+    let mut plugin = module.create();
+    assert_eq!(
+        plugin
+            .ports(true)
+            .iter()
+            .map(|port| port.channel_count)
+            .collect::<Vec<_>>(),
+        [2, 2],
+        "main and side inputs must both be stereo"
+    );
+    assert_eq!(
+        plugin
+            .ports(false)
+            .iter()
+            .map(|p| p.channel_count)
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    assert_ne!(
+        plugin.param("Playback Only").flags & CLAP_PARAM_IS_AUTOMATABLE,
+        0
+    );
+    assert_eq!(plugin.value("Record Note").round(), 48.0);
+    assert_eq!(plugin.value("Play Note").round(), 50.0);
+    plugin.activate(48000.0, 512);
+
+    let left: Vec<_> = (0..17).map(|i| (i as f32 - 8.0) * 0.073).collect();
+    let right: Vec<_> = (0..17).map(|i| (3.0 - i as f32) * 0.047).collect();
+    let side = vec![0.875; 17];
+    let tr = transport(true, 120.0, 0, false);
+    assert_eq!(
+        plugin.process([&left, &right, &side, &side], 17, &[], &tr),
+        [left.clone(), right.clone()],
+        "default insert must preserve stereo and ignore side input at the output"
+    );
+
+    // The runner deliberately supplies a valid screenshot WAV environment
+    // variable. Only the standalone may preload it; exported effects start empty.
+    let silence = [0.0; 512];
+    assert_eq!(
+        plugin.process([&silence; 4], 512, &[Event::note(0, 50, 1.0)], &tr),
+        [vec![0.0; 512], vec![0.0; 512]],
+        "an exported effect must not load screenshot audio"
+    );
+
+    // An event beyond the plugin's internal 64-frame mixing chunk proves that
+    // host automation subdivision remains sample accurate. Dry suppression is
+    // deliberately smoothed over 5 ms (240 frames at 48 kHz).
+    let ones = vec![1.0; 400];
+    let event = Event::param(
+        73,
+        plugin.param("Playback Only"),
+        plugin.text_value("Playback Only", "On"),
+    );
+    let output = plugin.process([&ones, &ones, &ones, &ones], 400, &[event], &tr);
+    for (i, (&left, &right)) in output[0].iter().zip(&output[1]).enumerate() {
+        let expected = if i < 73 {
+            1.0
+        } else {
+            1.0 - ((i - 73 + 1) as f32 / 240.0).min(1.0)
+        };
+        approx(
+            left,
+            expected,
+            &format!("Playback Only automation frame {i}"),
+        );
+        approx(
+            right,
+            expected,
+            &format!("Playback Only automation R frame {i}"),
+        );
+    }
 }
 
-unsafe fn run(record: &Module, play: &Module, rate: f64, frames: usize, bank: &str) {
-    let mut r = record.create();
-    let mut p = play.create();
-    assert_eq!(
-        r.ports(true)
-            .iter()
-            .map(|x| x.channel_count)
-            .collect::<Vec<_>>(),
-        [2, 2]
-    );
-    assert_eq!(r.ports(false)[0].channel_count, 2);
-    assert!(p.ports(true).is_empty());
-    assert_eq!(p.ports(false)[0].channel_count, 2);
-    assert_eq!(r.param("Bank").flags & CLAP_PARAM_IS_AUTOMATABLE, 0);
-    configure_record(&r, bank, "127");
-    configure_play(&p, bank);
-    r.activate(rate, frames as u32);
-    p.activate(rate, frames as u32);
-    let main_l: Vec<_> = (0..frames)
-        .map(|i| ((i % 17) as f32 - 8.0) / 64.0)
-        .collect();
-    let main_r = vec![0.3125; frames];
-    let side_l = vec![-0.4375; frames];
-    let side_r: Vec<_> = (0..frames)
-        .map(|i| ((i % 13) as f32 - 6.0) / 32.0)
-        .collect();
+unsafe fn capture_playback_at_rate(module: &Module, rate: f64, block: usize) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.activate(rate, block as u32);
     let tr = transport(true, 120.0, 0, false);
-    let capture_at = frames / 3;
-    let events = [Event::note(capture_at as u32)];
-    let monitored = r.process([&main_l, &main_r, &side_l, &side_r], frames, &events, &tr);
-    // Finish the take so reverse/state assertions see a fixed region.
-    r.reset();
-    // Asymmetric hard-pans prove lane exclusion and output duplication.
-    for i in [0, capture_at, frames - 1] {
-        let dry = main_l[i] + side_r[i];
-        approx(monitored[0][i], dry, "dry route L");
-        approx(monitored[1][i], dry, "dry route R");
-    }
-    let played = p.process([&[], &[], &[], &[]], frames, &[Event::note(5)], &tr);
-    for (i, sample) in played[0][..5].iter().enumerate() {
-        assert_eq!(*sample, 0.0, "MIDI offset {i}");
-    }
-    // Capture begins on the exact event frame; 12-bit conversion is the independent oracle.
-    for (i, sample) in played[0].iter().enumerate().skip(5) {
-        let source = capture_at + i - 5;
-        if source >= frames {
-            break;
-        }
-        let expected = ((main_l[source] + side_r[source]) * 2048.0)
-            .round()
-            .clamp(-2048.0, 2047.0)
-            / 2048.0;
-        assert_eq!(*sample, expected, "captured code-grid frame {i}");
-        assert_eq!(played[1][i], expected, "stereo play frame {i}");
-    }
-    p.flush(&[("Start", "127"), ("End", "0")]);
-    let reverse_state = p.save();
-    p.stop();
-    p.flush(&[("Bank", "OFF"), ("Start", "0"), ("End", "127")]);
-    p.load_state(&reverse_state);
-    assert_eq!(p.value("Bank"), p.text_value("Bank", bank));
-    p.activate(rate, frames as u32);
-    let reverse = p.process([&[]; 4], frames, &[Event::note(0)], &tr);
-    let length = frames - capture_at;
-    for i in 0..frames {
-        let expected = if i < length {
-            main_l[frames - 1 - i] + side_r[frames - 1 - i]
+    let main_l: Vec<_> = (0..block).map(|i| (i as f32 - 11.0) / 64.0).collect();
+    let main_r = vec![0.8125; block];
+    let side_l = vec![-0.6875; block];
+    let side_r: Vec<_> = (0..block).map(|i| ((i % 11) as f32 - 5.0) / 64.0).collect();
+    let at = block / 3;
+    let monitored = plugin.process(
+        [&main_l, &main_r, &side_l, &side_r],
+        block,
+        &[Event::note(at as u32, 48, 1.0)],
+        &tr,
+    );
+    assert_eq!(monitored, [vec![0.0; block], vec![0.0; block]]);
+    plugin.reset();
+
+    let play_at = 5;
+    let played = plugin.process(
+        [
+            &vec![0.0; block],
+            &vec![0.0; block],
+            &vec![0.0; block],
+            &vec![0.0; block],
+        ],
+        block,
+        &[Event::note(play_at as u32, 50, 0.5)],
+        &tr,
+    );
+    assert!(played[0][..play_at].iter().all(|&x| x == 0.0));
+    for (i, (&left, &right)) in played[0].iter().zip(&played[1]).enumerate().skip(play_at) {
+        let source = at + i - play_at;
+        let expected = if source < block {
+            quantize(main_l[source] + side_r[source]) * 0.5
         } else {
             0.0
         };
-        assert_eq!(reverse[0][i], expected, "restored reverse frame {i}");
-        assert_eq!(reverse[1][i], expected);
+        assert_eq!(left, expected, "{rate} Hz source frame {i}");
+        assert_eq!(right, expected);
     }
-    // Gain automation starts a 5ms ramp on its exact event frame.
-    let cue = r.param("Dry Monitor");
-    let zero = r.text_value("Dry Monitor", "-inf");
-    let automated = [Event::param(frames as u32 / 2, cue, zero)];
-    let out = r.process(
-        [&main_l, &main_r, &side_l, &side_r],
-        frames,
-        &automated,
+}
+
+unsafe fn reverse_pitch_notes_and_triggers(module: &Module) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.flush(&[("Record Note", "61"), ("Play Note", "63")]);
+    plugin.activate(48000.0, 64);
+    let tr = transport(true, 120.0, 0, false);
+    let source = [0.125, -0.25, 0.375, -0.5, 0.625];
+    let zero = [0.0; 5];
+    plugin.process(
+        [&source, &zero, &zero, &zero],
+        5,
+        &[Event::note(0, 61, 1.0)],
         &tr,
     );
-    approx(
-        out[0][frames / 2 - 1],
-        main_l[frames / 2 - 1] + side_r[frames / 2 - 1],
-        "automation pre-frame",
+    plugin.reset();
+
+    // Nearby MIDI notes do not transpose: only the assigned key triggers.
+    let ignored = plugin.process(
+        [&[0.0; 8]; 4],
+        8,
+        &[
+            Event::note(0, 62, 1.0),
+            Event::note(1, 63, 0.0),
+            Event::note_off(2, 63),
+        ],
+        &tr,
     );
-    let steps = (rate * 0.005).round() as usize;
-    for i in frames / 2..frames {
-        let gain = 1.0 - ((i - frames / 2 + 1) as f32 / steps as f32).min(1.0);
-        approx(out[0][i], (main_l[i] + side_r[i]) * gain, "automation ramp");
-    }
-    let state = r.save();
-    r.stop();
-    drop(r);
-    drop(p);
-    let mut restored = record.create();
-    restored.load_state(&state);
-    assert_eq!(restored.value("Bank"), restored.text_value("Bank", bank));
-    assert_eq!(restored.value("Dry Monitor"), 0.0);
-    restored.activate(rate, frames as u32);
-    drop(restored);
+    assert_eq!(ignored, [vec![0.0; 8], vec![0.0; 8]]);
+
+    plugin.flush(&[("Start", "127"), ("End", "0")]);
+    let reverse = plugin.process([&[0.0; 8]; 4], 8, &[Event::note(2, 63, 0.25)], &tr);
+    let expected = [0.0, 0.0, 0.15625, -0.125, 0.09375, -0.0625, 0.03125, 0.0];
+    assert_eq!(reverse[0], expected);
+    assert_eq!(reverse[1], expected);
+
+    plugin.flush(&[("Start", "0"), ("End", "127"), ("Pitch", "+12 st")]);
+    let pitched = plugin.process([&[0.0; 5]; 4], 5, &[Event::note(0, 63, 1.0)], &tr);
+    assert_eq!(pitched[0], [0.125, 0.375, 0.625, 0.0, 0.0]);
+
+    // Boolean controls are rising-edge triggers, not level gates.
+    plugin.flush(&[("Pitch", "+0 st"), ("Playback", "On")]);
+    let first = plugin.process([&[0.0; 3]; 4], 3, &[], &tr);
+    let held = plugin.process([&[0.0; 3]; 4], 3, &[], &tr);
+    assert_eq!(first[0], source[..3]);
+    assert_eq!(held[0], [source[3], source[4], 0.0]);
 }
 
-// Nonzero, unequal values on all four lanes catch swapped buses, duplicated
-// channels, or accidentally including a channel whose gain should be zero.
-unsafe fn routing(record: &Module, play: &Module) {
-    for (mbal, ibal, main, side, expected) in [
-        ("L64", "L64", "127", "0", 0.125),
-        ("R64", "L64", "127", "0", -0.25),
-        ("L64", "L64", "0", "127", 0.375),
-        ("L64", "R64", "0", "127", -0.5),
-        ("L-R", "L-R", "127", "127", -0.125),
-    ] {
-        let mut r = record.create();
-        let mut p = play.create();
-        configure_record(&r, "8", "-inf");
-        configure_play(&p, "8");
-        r.flush(&[
-            ("Main Level", main),
-            ("Sidechain Level", side),
-            ("Main Balance", mbal),
-            ("Sidechain Balance", ibal),
-        ]);
-        r.activate(48000.0, 17);
-        p.activate(48000.0, 17);
-        let source = [[0.125; 17], [-0.25; 17], [0.375; 17], [-0.5; 17]];
-        let tr = transport(true, 120.0, 0, false);
-        let silent = r.process(
-            source.each_ref().map(|v| v.as_slice()),
-            17,
-            &[Event::note(0)],
-            &tr,
-        );
-        assert_eq!(
-            silent,
-            [vec![0.0; 17], vec![0.0; 17]],
-            "monitor defaults must be silent"
-        );
-        let take = p.process([&[]; 4], 17, &[Event::note(0)], &tr);
-        assert_eq!(
-            take,
-            [vec![expected; 17], vec![expected; 17]],
-            "routing {mbal}/{ibal}/{main}/{side}"
-        );
-        r.flush(&[("Capture Monitor", "127")]);
-        // Let the monitor gain settle; starting a new take must not fade its edge.
-        for _ in 0..15 {
-            r.process(source.each_ref().map(|v| v.as_slice()), 17, &[], &tr);
-        }
-        let wet = r.process(source.each_ref().map(|v| v.as_slice()), 17, &[], &tr);
-        assert_eq!(
-            wet, take,
-            "capture monitor must use the captured mono signal"
-        );
-        // Another live bank must not hear bank 8 (not just OFF or a closed bank).
-        let mut other = play.create();
-        configure_play(&other, "7");
-        other.activate(48000.0, 17);
-        assert_eq!(
-            other.process([&[]; 4], 17, &[Event::note(0)], &tr),
-            [vec![0.0; 17], vec![0.0; 17]]
-        );
-    }
-}
-
-unsafe fn retriggers(record: &Module, play: &Module, rate: f64, block: usize) {
-    let mut r = record.create();
-    let mut p = play.create();
-    configure_record(&r, "6", "-inf");
-    configure_play(&p, "6");
-    r.activate(rate, block as u32);
-    p.activate(rate, block as u32);
+unsafe fn capture_control_is_a_rising_edge(module: &Module) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.activate(48000.0, 128);
     let tr = transport(true, 120.0, 0, false);
-    // A one-frame capture makes every hit and every silent gap observable.
-    r.process([&[0.25], &[0.0], &[0.0], &[0.0]], 1, &[Event::note(0)], &tr);
-    r.reset();
-    for (count, time, bpm, interval) in [
-        ("2", "127", 120.0, rate / 8.0),
-        ("2", "127", 60.0, rate / 4.0),
-        ("INF", "127", 120.0, rate / 8.0),
-        ("2", "OFF", 120.0, rate / 8.0),
-    ] {
-        p.reset();
-        p.flush(&[("Retrigger", count), ("Retrig Time", time)]);
-        let hits = if time == "OFF" {
-            1
-        } else if count == "INF" {
-            140
-        } else {
-            3
-        };
-        let end = 5 + ((hits + 1) as f64 * interval).ceil() as usize;
-        let mut next_hit = 0;
-        for start in (0..end).step_by(block) {
-            let len = block.min(end - start);
-            let notes = if start <= 5 && 5 < start + len {
-                vec![Event::note((5 - start) as u32)]
-            } else {
-                vec![]
-            };
-            let output = p.process([&[]; 4], len, &notes, &transport(true, bpm, 0, false));
-            for (offset, (left, right)) in output[0].iter().zip(&output[1]).enumerate() {
-                let frame = start + offset;
-                let hit_frame = 5 + (next_hit as f64 * interval).round() as usize;
-                let hit =
-                    frame == hit_frame && (count == "INF" && time != "OFF" || next_hit < hits);
-                let expected = if hit {
-                    next_hit += 1;
-                    0.25
-                } else {
-                    0.0
-                };
-                assert_eq!(
-                    *left, expected,
-                    "{rate}/{block} {count}/{time} bpm{bpm} frame{frame}"
-                );
-                assert_eq!(*right, expected);
-            }
-        }
-    }
+    let first: Vec<_> = (0..100).map(|i| i as f32 / 512.0).collect();
+    let second = [0.375; 8];
+    let zero100 = [0.0; 100];
+    let zero8 = [0.0; 8];
+    let capture_on = Event::param(
+        70,
+        plugin.param("Capture"),
+        plugin.text_value("Capture", "On"),
+    );
+    plugin.process(
+        [&first, &zero100, &zero100, &zero100],
+        100,
+        &[capture_on],
+        &tr,
+    );
+    // Holding Capture high across a block must continue, not restart, the take.
+    plugin.process([&second, &zero8, &zero8, &zero8], 8, &[], &tr);
+    plugin.flush(&[("Capture", "Off")]);
+    plugin.reset();
+    let silence = [0.0; 38];
+    let played = plugin.process([&silence; 4], 38, &[Event::note(0, 50, 1.0)], &tr);
+    let expected = first[70..]
+        .iter()
+        .chain(second.iter())
+        .copied()
+        .map(quantize)
+        .collect::<Vec<_>>();
+    assert_eq!(played[0], expected);
 }
 
-unsafe fn gain_automation(record: &Module, play: &Module) {
-    // Known DC lanes isolate control discontinuities from sample/retrigger edges.
-    for (rate, steps) in [(44100.0, 221), (48000.0, 240), (96000.0, 480)] {
-        for block in [17, 65, 257] {
-            for (control, target, side, dry, wet, before, after, playback) in [
-                ("Main Level", "0", "0", "127", "0", 0.5, 0.0, false),
-                ("Main Balance", "R64", "0", "127", "0", 0.5, -0.25, false),
-                ("Sidechain Level", "127", "0", "127", "0", 0.5, 0.375, false),
-                (
-                    "Sidechain Balance",
-                    "L64",
-                    "127",
-                    "127",
-                    "0",
-                    0.375,
-                    0.75,
-                    false,
-                ),
-                ("Dry Monitor", "0", "0", "127", "0", 0.5, 0.0, false),
-                ("Capture Monitor", "127", "0", "0", "0", 0.0, 0.5, false),
-                ("Level", "-6.0206 dB", "0", "0", "127", 0.5, 0.25, false),
-                ("Level", "-6.0206 dB", "0", "0", "0", 0.5, 0.25, true),
-            ] {
-                let mut r = record.create();
-                let mut p = play.create();
-                configure_record(&r, "11", dry);
-                r.flush(&[("Sidechain Level", side), ("Capture Monitor", wet)]);
-                configure_play(&p, "11");
-                r.activate(rate, 1025);
-                p.activate(rate, 1025);
-                let lanes = [[0.5; 1025], [-0.25; 1025], [0.25; 1025], [-0.125; 1025]];
-                let tr = transport(true, 120.0, 0, false);
-                if playback {
-                    r.process(
-                        lanes.each_ref().map(|s| s.as_slice()),
-                        1025,
-                        &[Event::note(0)],
-                        &tr,
-                    );
-                    r.reset();
-                }
-                let plugin = if playback { &p } else { &r };
-                let mut output = Vec::new();
-                for start in (0..1025).step_by(block) {
-                    let count = block.min(1025 - start);
-                    let mut events = Vec::new();
-                    if start == 0 {
-                        events.push(Event::note(0));
-                    }
-                    if (start..start + count).contains(&37) {
-                        events.push(Event::param(
-                            (37 - start) as u32,
-                            plugin.param(control),
-                            plugin.text_value(control, target),
-                        ));
-                    }
-                    if playback && (start..start + count).contains(&67) {
-                        events.push(Event::note((67 - start) as u32));
-                    }
-                    if control == "Dry Monitor" && (start..start + count).contains(&83) {
-                        events.push(Event::param(
-                            (83 - start) as u32,
-                            plugin.param(control),
-                            plugin.text_value(control, "127"),
-                        ));
-                    }
-                    let inputs = if playback {
-                        [&[][..]; 4]
-                    } else {
-                        lanes.each_ref().map(|s| &s[..count])
-                    };
-                    let out = plugin.process(inputs, count, &events, &tr);
-                    assert_eq!(out[0], out[1]);
-                    output.extend_from_slice(&out[0]);
-                }
-                for (i, &actual) in output.iter().enumerate() {
-                    let expected = if i < 37 {
-                        before
-                    } else if control == "Dry Monitor" && i >= 83 {
-                        // Retarget from the current gain, not the previous target.
-                        let pivot = before + (after - before) * 46.0 / steps as f32;
-                        pivot + (before - pivot) * ((i - 83 + 1) as f32 / steps as f32).min(1.0)
-                    } else if i >= 37 + steps {
-                        after
-                    } else {
-                        before + (after - before) * (i - 37 + 1) as f32 / steps as f32
-                    };
-                    let tolerance = if control == "Level" && !playback {
-                        0.00026
-                    } else {
-                        0.00001
-                    };
-                    assert!((actual-expected).abs() < tolerance, "5ms {control}, play={playback}, {rate}Hz block={block} frame={i}: {actual} != {expected}");
-                }
-            }
-        }
+unsafe fn record_priority_and_no_feedback(module: &Module) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.flush(&[("Record Note", "60"), ("Play Note", "60")]);
+    plugin.activate(48000.0, 64);
+    let tr = transport(true, 120.0, 0, false);
+    let quarter = [0.25; 32];
+    let zero = [0.0; 32];
+    let out = plugin.process(
+        [&quarter, &zero, &zero, &zero],
+        32,
+        &[Event::note(0, 60, 1.0)],
+        &tr,
+    );
+    assert_eq!(
+        out,
+        [vec![0.0; 32], vec![0.0; 32]],
+        "Record wins equal note assignment"
+    );
+    plugin.reset();
+    plugin.flush(&[("Play Note", "62")]);
+    let take = plugin.process([&zero[..8]; 4], 8, &[Event::note(0, 62, 1.0)], &tr);
+    assert_eq!(
+        take[0],
+        quarter[..8]
+            .iter()
+            .copied()
+            .map(quantize)
+            .collect::<Vec<_>>()
+    );
+
+    // Keep R1 playing, switch selection to R2, and capture silence there. If
+    // capture read the post-playback output, R2 would contain the R1 voice.
+    plugin.flush(&[("Buffer", "1"), ("Record Note", "61")]);
+    plugin.process([&zero[..16]; 4], 16, &[Event::note(0, 61, 1.0)], &tr);
+    plugin.reset();
+    let r2 = plugin.process([&zero[..16]; 4], 16, &[Event::note(0, 62, 1.0)], &tr);
+    assert_eq!(
+        r2,
+        [vec![0.0; 16], vec![0.0; 16]],
+        "capture must exclude playback feedback"
+    );
+}
+
+unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.flush(&[("One Shot", "On")]);
+    plugin.activate(48000.0, 64);
+    let tr = transport(true, 120.0, 0, false);
+    let a = [0.25; 8];
+    let b = [-0.5; 8];
+    let c = [0.75; 8];
+    let z = [0.0; 8];
+    plugin.process([&a, &z, &z, &z], 8, &[Event::note(0, 48, 1.0)], &tr);
+    plugin.reset();
+    plugin.process([&b, &z, &z, &z], 8, &[Event::note(0, 48, 1.0)], &tr);
+    plugin.reset();
+    let protected = plugin.process([&z; 4], 8, &[Event::note(0, 50, 1.0)], &tr);
+    assert_eq!(
+        protected[0],
+        a.map(quantize),
+        "reset must not clear One Shot latch"
+    );
+
+    plugin.flush(&[("Re-arm", "On")]);
+    plugin.process([&z[..1]; 4], 1, &[], &tr);
+    plugin.flush(&[("Re-arm", "Off")]);
+    plugin.process([&c, &z, &z, &z], 8, &[Event::note(0, 48, 1.0)], &tr);
+    // Re-arm while the take is active must not interrupt or unlock it.
+    plugin.flush(&[("Re-arm", "On")]);
+    plugin.process([&b, &z, &z, &z], 8, &[Event::note(0, 48, 1.0)], &tr);
+    plugin.reset();
+    let silence = [0.0; 16];
+    let replaced = plugin.process([&silence; 4], 16, &[Event::note(0, 50, 1.0)], &tr);
+    assert_eq!(
+        replaced[0],
+        [c, b]
+            .concat()
+            .into_iter()
+            .map(quantize)
+            .collect::<Vec<_>>()
+    );
+
+    // A same-length replacement invalidates a voice latched to the old revision.
+    plugin.flush(&[("One Shot", "Off"), ("Re-arm", "Off")]);
+    plugin.reset();
+    plugin.process([&z[..1]; 4], 1, &[Event::note(0, 50, 1.0)], &tr);
+    let replacement = [b, b].concat();
+    let invalidated = plugin.process(
+        [&replacement, &silence, &silence, &silence],
+        16,
+        &[Event::note(0, 48, 1.0)],
+        &tr,
+    );
+    assert_eq!(invalidated, [vec![0.0; 16], vec![0.0; 16]]);
+}
+
+unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.activate(48000.0, 16384);
+    let playing = transport(true, 120.0, 0, false);
+    plugin.process(
+        [&[0.25], &[0.0], &[0.0], &[0.0]],
+        1,
+        &[Event::note(0, 48, 1.0)],
+        &playing,
+    );
+    plugin.reset();
+    plugin.flush(&[("Retrigger", "2"), ("Retrig Time", "127")]);
+    let output = plugin.process(
+        [&vec![0.0; 12001]; 4],
+        12001,
+        &[Event::note(0, 50, 1.0)],
+        &playing,
+    );
+    for (i, &sample) in output[0].iter().enumerate() {
+        assert_eq!(
+            sample,
+            if matches!(i, 0 | 6000 | 12000) {
+                0.25
+            } else {
+                0.0
+            },
+            "120 BPM frame {i}"
+        );
     }
+    plugin.reset();
+    let silent = plugin.process(
+        [&vec![0.0; 6001]; 4],
+        6001,
+        &[],
+        &transport(true, 240.0, 0, false),
+    );
+    assert!(silent[0].iter().all(|&x| x == 0.0));
+    let at_240 = plugin.process(
+        [&vec![0.0; 6001]; 4],
+        6001,
+        &[Event::note(0, 50, 1.0)],
+        &transport(true, 240.0, 0, false),
+    );
+    assert_eq!(at_240[0][0], 0.25);
+    assert_eq!(at_240[0][3000], 0.25);
+    assert_eq!(at_240[0][6000], 0.25);
+    let stopped = plugin.process([&[0.0; 8]; 4], 8, &[], &transport(false, 240.0, 0, false));
+    assert_eq!(stopped, [vec![0.0; 8], vec![0.0; 8]]);
+}
+
+unsafe fn state_and_instance_isolation(module: &Module) {
+    let mut owner = module.create();
+    configure(&owner);
+    owner.flush(&[
+        ("Buffer", "3"),
+        ("Record Note", "44"),
+        ("Play Note", "45"),
+        ("One Shot", "On"),
+    ]);
+    owner.activate(48000.0, 16);
+    let tr = transport(true, 120.0, 0, false);
+    let source = [0.375; 8];
+    let zero = [0.0; 8];
+    owner.process(
+        [&source, &zero, &zero, &zero],
+        8,
+        &[Event::note(0, 44, 1.0)],
+        &tr,
+    );
+    owner.reset();
+    let state = owner.save();
+
+    let mut isolated = module.create();
+    isolated.load_state(&state);
+    assert_eq!(isolated.value("Buffer").round(), 3.0);
+    assert_eq!(isolated.value("Record Note").round(), 44.0);
+    assert_eq!(isolated.value("Play Note").round(), 45.0);
+    assert_eq!(isolated.value("Playback Only"), 1.0);
+    assert_eq!(isolated.value("One Shot"), 1.0);
+    isolated.activate(48000.0, 16);
+    let empty = isolated.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
+    assert_eq!(
+        empty,
+        [vec![0.0; 8], vec![0.0; 8]],
+        "RAM must not be serialized or shared"
+    );
+    // One Shot is a saved control, but its spent latch is runtime-only: this
+    // new instance must be able to capture immediately after loading.
+    isolated.process(
+        [&source, &zero, &zero, &zero],
+        8,
+        &[Event::note(0, 44, 1.0)],
+        &tr,
+    );
+    isolated.reset();
+    let recaptured = isolated.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
+    assert_eq!(
+        recaptured[0],
+        source.map(quantize),
+        "restored instance must be able to recapture"
+    );
+
+    let owner_take = owner.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
+    assert_eq!(
+        owner_take[0],
+        source.map(quantize),
+        "other instance retains only its own RAM"
+    );
+}
+
+unsafe fn restored_and_reset_commands_need_new_edges(module: &Module) {
+    let owner = module.create();
+    configure(&owner);
+    owner.flush(&[
+        ("One Shot", "On"),
+        ("Capture", "On"),
+        ("Playback", "On"),
+        ("Re-arm", "On"),
+    ]);
+    let state = owner.save();
+    let mut restored = module.create();
+    restored.load_state(&state);
+    restored.activate(48000.0, 32);
+    let tr = transport(true, 120.0, 0, false);
+    let a = [0.25; 8];
+    let b = [-0.5; 8];
+    let z = [0.0; 16];
+    restored.process([&a, &z[..8], &z[..8], &z[..8]], 8, &[], &tr);
+    restored.flush(&[("Capture", "Off"), ("Playback", "Off"), ("Re-arm", "Off")]);
+    restored.reset();
+    let empty = restored.process([&z; 4], 16, &[Event::note(0, 50, 1.0)], &tr);
+    assert_eq!(
+        empty,
+        [vec![0.0; 16], vec![0.0; 16]],
+        "restoring high commands must not capture audio"
+    );
+
+    restored.process(
+        [&a, &z[..8], &z[..8], &z[..8]],
+        8,
+        &[Event::note(0, 48, 1.0)],
+        &tr,
+    );
+    // A rising Re-arm during capture is ignored. Holding it across reset must
+    // not turn that ignored edge into permission to overwrite the protected take.
+    restored.flush(&[("Capture", "On"), ("Playback", "On"), ("Re-arm", "On")]);
+    restored.process([&a, &z[..8], &z[..8], &z[..8]], 8, &[], &tr);
+    restored.reset();
+    let stopped = restored.process(
+        [&b, &z[..8], &z[..8], &z[..8]],
+        8,
+        &[Event::note(0, 48, 1.0)],
+        &tr,
+    );
+    assert_eq!(
+        stopped,
+        [vec![0.0; 8], vec![0.0; 8]],
+        "held Playback must not restart after reset"
+    );
+    restored.flush(&[("Capture", "Off"), ("Playback", "Off"), ("Re-arm", "Off")]);
+    restored.reset();
+    let protected = restored.process([&z; 4], 16, &[Event::note(0, 50, 1.0)], &tr);
+    assert_eq!(
+        protected[0],
+        vec![quantize(0.25); 16],
+        "held Re-arm must not release One Shot on reset"
+    );
 }
 
 fn library(name: &str) -> PathBuf {
@@ -791,122 +954,28 @@ fn library(name: &str) -> PathBuf {
         .unwrap()
         .join(libloading::library_filename(name))
 }
+
 fn main() {
-    // SAFETY: load only the sibling build artifacts, keep modules in this scope
-    // until all fixture plugins drop, and drive every CLAP call synchronously.
+    // SAFETY: load only the sibling build artifact, keep it alive until all
+    // fixture plugins drop, and drive every CLAP callback synchronously.
     unsafe {
         let started = Instant::now();
-        let record = Module::load(&library("ultrawave_record"));
-        let play = Module::load(&library("ultrawave_play"));
-        gain_automation(&record, &play);
-        routing(&record, &play);
-        for (i, (rate, block)) in [(44100.0, 65), (48000.0, 257), (96000.0, 1025)]
-            .into_iter()
-            .enumerate()
-        {
-            run(&record, &play, rate, block, &format!("{}", i + 1));
-            retriggers(&record, &play, rate, block);
+        let module = Module::load(&library("ultrawave_plugin"));
+        contract_and_default_insert(&module);
+        for (rate, block) in [(44100.0, 65), (48000.0, 257), (96000.0, 1025)] {
+            capture_playback_at_rate(&module, rate, block);
         }
-        // The final lease destroys volatile RAM: reopening bank 1 is silent.
-        let mut cleared = play.create();
-        configure_play(&cleared, "1");
-        cleared.activate(44100.0, 65);
-        let silent = cleared.process(
-            [&[], &[], &[], &[]],
-            65,
-            &[Event::note(0)],
-            &transport(true, 120.0, 0, false),
-        );
-        assert!(
-            silent[0].iter().all(|x| *x == 0.0),
-            "bank RAM survived its last lease"
-        );
-        drop(cleared);
-        // OFF instances have private RAM even while alive.
-        let mut r = record.create();
-        let mut p = play.create();
-        configure_record(&r, "OFF", "-inf");
-        configure_play(&p, "OFF");
-        r.activate(44100.0, 33);
-        p.activate(44100.0, 33);
-        let one = vec![0.25; 33];
-        let z = vec![0.0; 33];
-        r.process(
-            [&one, &z, &z, &z],
-            33,
-            &[Event::note(0)],
-            &transport(true, 120.0, 0, false),
-        );
-        let o = p.process(
-            [&[], &[], &[], &[]],
-            33,
-            &[Event::note(0)],
-            &transport(true, 120.0, 0, false),
-        );
-        assert!(
-            o[0].iter().all(|x| *x == 0.0),
-            "OFF RAM leaked between instances"
-        );
-        // Reset and a playing->stopped edge cancel playback. Seek and loop metadata alone do not.
-        drop(r);
-        drop(p);
-        let mut r = record.create();
-        let mut p = play.create();
-        configure_record(&r, "9", "-inf");
-        configure_play(&p, "9");
-        r.activate(44100.0, 129);
-        p.activate(44100.0, 129);
-        let long_one: Vec<_> = (0..129).map(|i| (i as f32 - 64.0) / 2048.0).collect();
-        let long_zero = vec![0.0; 129];
-        r.process(
-            [&long_one, &long_zero, &long_zero, &long_zero],
-            129,
-            &[Event::note(0)],
-            &transport(true, 120.0, 0, false),
-        );
-        let a = p.process(
-            [&[], &[], &[], &[]],
-            33,
-            &[Event::note(0)],
-            &transport(true, 120.0, 0, false),
-        );
-        assert_eq!(a[0], long_one[..33]);
-        let seek = p.process(
-            [&[], &[], &[], &[]],
-            33,
-            &[],
-            &transport(true, 120.0, 99 << 31, true),
-        );
-        assert_eq!(
-            seek[0],
-            long_one[33..66],
-            "seek must neither stop nor restart the voice"
-        );
-        let looped = p.process([&[]; 4], 33, &[], &transport(true, 120.0, 0, true));
-        assert_eq!(
-            looped[0],
-            long_one[66..99],
-            "loop wrap must not restart the voice"
-        );
-        let stopped = p.process(
-            [&[], &[], &[], &[]],
-            33,
-            &[],
-            &transport(false, 120.0, 0, false),
-        );
-        assert!(stopped[0].iter().all(|x| *x == 0.0));
-        p.process(
-            [&[]; 4],
-            1,
-            &[Event::note(0)],
-            &transport(true, 120.0, 0, false),
-        );
-        p.reset();
-        assert_eq!(
-            p.process([&[]; 4], 33, &[], &transport(true, 120.0, 0, false)),
-            [vec![0.0; 33], vec![0.0; 33]]
-        );
+        reverse_pitch_notes_and_triggers(&module);
+        capture_control_is_a_rising_edge(&module);
+        record_priority_and_no_feedback(&module);
+        one_shot_rearm_and_invalidation(&module);
+        retrigger_tempo_transport_and_reset(&module);
+        state_and_instance_isolation(&module);
+        restored_and_reset_commands_need_new_edges(&module);
         assert!(started.elapsed() < Duration::from_secs(20));
-        println!("CLAP audio harness ok: rates=44.1/48/96k blocks=65/257/1025; seek/loop metadata preserves voices; stop/reset cancels ({:.2?})",started.elapsed());
+        println!(
+            "CLAP audio harness ok: unified insert; rates=44.1/48/96k; routing, offsets, automation, reverse, retrigger, One Shot, volatile RAM ({:.2?})",
+            started.elapsed()
+        );
     }
 }

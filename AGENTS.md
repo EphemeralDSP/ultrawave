@@ -10,22 +10,18 @@ migrations are unnecessary unless Jeff requests them.
 
 ## Project Overview
 
-**Ultrawave** is a pair of VST3/CLAP audio plugins for real-time RAM sampling, inspired by the Elektron Machinedrum UW RAM machines.
-
-### Two Plugins, One Shared Buffer
-
-| Plugin | Role | I/O | Description |
-|--------|------|-----|-------------|
-| **Ultrawave Record** | Sampler | Audio In | Captures audio to shared RAM buffer |
-| **Ultrawave Play** | Instrument | MIDI In → Audio Out | Plays back from shared buffer |
-
-Both plugins access a **global buffer registry** (`src/machines/shared.rs`) containing 4 buffers (R1-R4), each up to 10 seconds.
+**Ultrawave** is one MIDI-controlled VST3/CLAP audio effect for real-time RAM
+sampling, inspired by the Elektron Machinedrum UW. Each instance owns private,
+volatile R1–R4 mono RAM. Stereo main/sidechain feed capture before playback is
+added; dry stereo passes through by default. Playback Only suppresses dry.
+Renoise controls the existing effect through an FX alias instrument, not a
+second sampler. See README.md for routing, state and trigger semantics.
 
 ### Key Files
 
-- `src/plugin/record.rs` / `play.rs` - Record and Play plugins
-- `src/plugin/editor.rs` - Shared egui editor
-- `src/machines/shared.rs` - Global buffer registry (the bridge)
+- `src/plugin/sampler.rs` - Combined effect and MIDI/automation callback
+- `src/plugin/editor.rs` - Record/Play pages in one egui editor
+- `src/machines/memory.rs` - Private atomic sample RAM and UI snapshots
 - `src/machines/ram_record.rs` - Recording DSP
 - `src/machines/ram_play.rs` - Playback DSP with pitch/envelope
 - `technical_specs.md` - Elektron hardware specs for reference
@@ -35,8 +31,7 @@ Both plugins access a **global buffer registry** (`src/machines/shared.rs`) cont
 ```bash
 cargo build                                    # Debug build
 cargo build --release                          # Release build
-cargo xtask bundle ultrawave_record --release  # Bundle Record plugin
-cargo xtask bundle ultrawave_play --release    # Bundle Play plugin
+cargo xtask bundle ultrawave-plugin --release  # Bundle VST3 + CLAP effect
 cargo test                                     # Run tests
 ```
 
@@ -49,31 +44,30 @@ Capture GUI screenshots for LLM feedback on plugin UI. Requires Linux or WSL wit
 sudo apt install xvfb imagemagick
 
 # Capture screenshots locally
-./scripts/screenshot.sh              # Both plugins
-./scripts/screenshot.sh record       # Record only
-./scripts/screenshot.sh play         # Play only
+./scripts/screenshot.sh              # Both pages
+./scripts/screenshot.sh record       # Record page
+./scripts/screenshot.sh play         # Play page
 
 # Custom output directory
 SCREENSHOT_DIR=/tmp/shots ./scripts/screenshot.sh
 ```
 
-Screenshots save to `screenshots/` with timestamps. Also available as GitHub Action:
-**Actions → "GUI Screenshots" → Run workflow**
+Screenshots save to `screenshots/ultrawave_record.png` and `ultrawave_play.png`.
 
 #### Comparing Against Wireframes
 
 The GUI should match the wireframes in `docs/gui_wireframes.md`. When reviewing screenshots, check:
 
-**Record Plugin Layout:**
+**Record Page Layout:**
 - Sidebar (left ~20%): Level meter + 3 effect knobs (LEV, SRR, DIST) + buffer status
-- Main area (right ~80%): 4×2 grid of rotary encoders (MLEV, MBAL, ILEV, IBAL / CUE1, CUE2, LEN, RATE)
-- Footer: Breadcrumb navigation (RAM > R1 > REC) + buffer selector tabs [R1-R4]
+- Main area (right ~80%): 4×2 grid (MAIN, BAL, SIDE, BAL / REC NOTE, PLAY NOTE, LEN, RATE)
+- Footer: Record/Play pages, output routing, buffer selector tabs [R1-R4]
 - Waveform display: Shows recorded buffer with time indicator
 
-**Play Plugin Layout:**
+**Play Page Layout:**
 - Sidebar (left ~20%): Level meter + 3 effect knobs (LEV, SRR, DIST) + buffer status
 - Main area (right ~80%): 4×2 grid (PTCH, DEC, HOLD, BRR / STRT, END, RTRG, RTIM)
-- Footer: Breadcrumb navigation (RAM > R1 > PLAY) + buffer selector tabs [R1-R4]
+- Footer: Same page/output/buffer controls as Record
 - Waveform display: Shows playback buffer with start/end markers
 
 **Acceptance Criteria for GUI Tasks:**

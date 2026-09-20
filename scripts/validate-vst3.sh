@@ -19,7 +19,6 @@ mkdir -p "$ROOT/target/validation"
 LOG="$ROOT/target/validation/pluginval-$(basename "$PLUGIN_PATH").log"
 args=(--validate-in-process --strictness-level "$STRICTNESS" --validate "$PLUGIN_PATH")
 $VERBOSE && args+=(--verbose)
-export ULTRAWAVE_SHM_KEY="${ULTRAWAVE_SHM_KEY:-/uw-vst3-$$}"
 runner=()
 if [[ "$(uname -s)" == Linux ]]; then runner=(xvfb-run -a); fi
 set +e

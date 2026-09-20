@@ -1,9 +1,5 @@
 use std::sync::atomic::AtomicBool;
 
-#[cfg(test)]
-#[path = "../tests/support/allocations.rs"]
-mod allocations;
-
 pub mod dsp;
 pub mod machines;
 pub mod offline;
@@ -16,4 +12,4 @@ pub use ephemeral_dsp::Decimator;
 /// When set, standalone binaries skip the GUI (avoids baseview crash on some systems).
 pub static NO_GUI: AtomicBool = AtomicBool::new(false);
 
-// Core library - plugins are exported from separate crates in plugins/
+// Core library - the plugin is exported from plugins/ultrawave.

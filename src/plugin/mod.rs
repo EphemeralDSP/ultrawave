@@ -1,49 +1,38 @@
 pub mod editor;
-mod pairing;
-pub mod play;
-pub mod record;
+mod sampler;
 
-use crate::machines::shared::{BufferRegistry, CHANNEL_COUNT};
+use crate::machines::memory::{SampleMemory, CHANNEL_COUNT};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-pub use play::PlayPlugin;
-pub use record::RecordPlugin;
+pub use sampler::UltrawavePlugin;
 
 /// Per-instance UI communication. No process-global LEDs or audio-thread locks.
 #[derive(Default)]
 pub struct UiState {
-    pub trigger: AtomicBool,
+    pub record_trigger: AtomicBool,
+    pub play_trigger: AtomicBool,
     pub rearm: AtomicBool,
     pub capture_locked: AtomicBool,
-    pub active: AtomicBool,
-    pub peak: AtomicU32,
-    pub bank_status: AtomicU32,
-    pub capture_busy: AtomicBool,
-    /// One coherent snapshot: valid bit, bank, channel, absolute sample position.
+    pub recording: AtomicBool,
+    pub playing: AtomicBool,
+    pub capture_peak: AtomicU32,
+    pub playback_peak: AtomicU32,
+    /// One coherent snapshot: valid bit, channel, absolute sample position.
     playback_cursor: AtomicU64,
 }
 
 impl UiState {
-    pub fn publish(&self, active: bool, peak: f32) {
-        self.active.store(active, Ordering::Relaxed);
-        // The UI consumes the maximum since its last poll, not one tiny block.
-        self.peak.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
-    }
-
-    pub fn publish_playback(&self, bank: u8, channel: usize, position: usize) {
+    pub fn publish_playback(&self, channel: usize, position: usize) {
         self.playback_cursor.store(
-            (1 << 63) | ((bank as u64) << 40) | ((channel as u64) << 32) | position as u64,
+            (1 << 63) | ((channel as u64) << 32) | position as u64,
             Ordering::Relaxed,
         );
     }
 
-    pub fn playback_position(&self, bank: u8, channel: usize, displayed_len: usize) -> Option<f32> {
+    pub fn playback_position(&self, channel: usize, displayed_len: usize) -> Option<f32> {
         let packed = self.playback_cursor.load(Ordering::Relaxed);
-        (displayed_len != 0
-            && packed >> 63 != 0
-            && (packed >> 40) as u8 == bank
-            && (packed >> 32) as u8 as usize == channel)
+        (displayed_len != 0 && packed >> 63 != 0 && (packed >> 32) as u8 as usize == channel)
             .then(|| (packed as u32 as f32 / displayed_len as f32).clamp(0.0, 1.0))
     }
 
@@ -52,7 +41,7 @@ impl UiState {
     }
 }
 
-pub fn maybe_preload_buffer_from_env(registry: &BufferRegistry) -> Result<Option<usize>, String> {
+pub fn maybe_preload_buffer_from_env(registry: &SampleMemory) -> Result<Option<usize>, String> {
     let wav_path = match std::env::var("ULTRAWAVE_SCREENSHOT_WAV") {
         Ok(path) if !path.is_empty() => path,
         _ => return Ok(None),

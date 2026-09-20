@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ultrawave::dsp::{effects::Distortion, mix::mix_inputs};
+use ultrawave::machines::memory::SampleMemory;
 use ultrawave::machines::ram_play::{RamPlay, RamPlayParams};
 use ultrawave::machines::ram_record::{RamRecord, RamRecordParams};
-use ultrawave::machines::shared::BufferRegistry;
 
 fn main() {
     for drive in [0.0, 0.75] {
@@ -26,9 +26,9 @@ fn main() {
     }
 
     for (label, len) in [("short", 4_410), ("10s", 441_000)] {
-        let registry = Arc::new(BufferRegistry::new());
-        registry.replace_buffer(0, vec![512; len]);
-        let mut player = RamPlay::with_registry(44_100.0, registry);
+        let memory = Arc::new(SampleMemory::new());
+        memory.replace_buffer(0, vec![512; len]);
+        let mut player = RamPlay::new(44_100.0, memory);
         let params = RamPlayParams {
             vol: 127,
             ..Default::default()
@@ -62,9 +62,9 @@ fn main() {
             },
         ),
     ] {
-        let registry = Arc::new(BufferRegistry::new());
-        registry.replace_buffer(0, vec![512; 441_000]);
-        let mut player = RamPlay::with_registry(44_100.0, registry);
+        let memory = Arc::new(SampleMemory::new());
+        memory.replace_buffer(0, vec![512; 441_000]);
+        let mut player = RamPlay::new(44_100.0, memory);
         player.trigger(&params, 0);
         let start = Instant::now();
         for _ in 0..1_000_000 {
@@ -92,8 +92,8 @@ fn capture<const BATCHED: bool>(drive: f32) -> f64 {
         rec_len: 127,
         ..Default::default()
     };
-    let registry = Arc::new(BufferRegistry::new());
-    let mut recorder = RamRecord::with_registry(44100.0, registry);
+    let memory = Arc::new(SampleMemory::new());
+    let mut recorder = RamRecord::new(44100.0, memory);
     let mut decimator = ultrawave::Decimator::new();
     let mut distortion = Distortion::new();
     distortion.set_drive(drive);

@@ -39,6 +39,9 @@ screenshots/*.png
 *.reapeaks
 *.rpp-bak
 
+# Python host-fixture bytecode
+__pycache__/
+
 # Test-only lockfiles for the patched framework (the root lockfile is authoritative).
 /vendor/nice-plug/Cargo.lock
 /vendor/nice-plug-core/Cargo.lock

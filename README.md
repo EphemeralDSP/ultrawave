@@ -2,436 +2,189 @@
 
 [Buildkite CI](https://buildkite.com/jmlynn/ultrawave)
 
-Real-time RAM recording and playback plugins inspired by the Elektron Machinedrum UW RAM machines. Built with Rust and [NICE-plug](https://codeberg.org/RustAudio/nice-plug), with the official egui editor adapter.
+A MIDI-controlled **audio effect** for real-time 12-bit RAM sampling, inspired by
+the Elektron Machinedrum UW. One instance records and plays its own four mono
+buffers. Built in Rust with [NICE-plug](https://codeberg.org/RustAudio/nice-plug)
+and egui; available as VST3, CLAP, and a standalone application.
 
-## Overview
+## Record and play in one instance
 
-Ultrawave provides **two companion plugins** that share a global audio buffer:
+1. Insert **Ultrawave** on the audio track, group, send bus, or master you want to sample.
+2. Select R1. Leave MAIN at 127, SIDE at 0, balances centered, RATE at HI, LEN at 1 BAR.
+3. Send MIDI note **48** to record, then note **50** to play after capture finishes.
+   These are MIDI numbers, because DAWs use different octave names. Both are
+   assignable on the Record page. The Capture/Audition buttons and automatable
+   Capture/Playback rising edges provide alternatives to MIDI.
+4. The default **DRY + PLAYBACK** output preserves incoming stereo and adds the
+   mono sample to both channels. Select **PLAYBACK ONLY** on a capture/send bus
+   when the source is already audible elsewhere. Switching output modes ramps
+   dry gain over 5 ms; neither mode changes what is recorded.
 
-| Plugin | Purpose | Audio I/O |
-|--------|---------|-----------|
-| **Ultrawave Record** | Captures audio to shared RAM buffer | Stereo main + sidechain → optional mono monitoring |
-| **Ultrawave Play** | Plays back from shared RAM buffer | MIDI In → Stereo Out |
+The effect reads main/sidechain input **before adding playback**, so it does not
+implicitly record itself. There is no automatic access to the DAW master:
+insert on the master or route that mix to the effect. MAIN/BAL control the main
+input; SIDE/BAL control the optional stereo sidechain. These mix to mono before
+Capture LEV, SRR, DIST, RATE and signed 12-bit quantization. Capture controls do
+not color dry-through. Playback has its own level, SRR and distortion controls.
 
-Use them together in a DAW to sample and resample audio in real-time, similar to the Machinedrum UW's R1/R2 (record) and P1/P2 (play) machines.
+One shared selector chooses the buffer for the **next** record/play trigger.
+An existing take or voice keeps its latched buffer, so R2 can be recorded while
+R1 plays. A new take in the same buffer invalidates its old playing voice.
+Playback triggered during recording uses the available prefix at that instant.
 
-### Workflow
+### Renoise: use an FX alias, not a second plugin
 
-1. Insert **Ultrawave Record** on a track to capture audio
-2. Insert **Ultrawave Play** on an instrument track
-3. Set both plugins to the same **BANK (1–16)** and **buffer (R1–R4)**;
-   the default **OFF** bank is private to each instance
-4. Capture audio with Record, then play it via MIDI with pitch, start/end points,
-   and bit-crushing. Choose different banks for independent Record/Play groups
+1. Add **Ultrawave** to the source track's **Track DSP** chain.
+2. In an empty instrument slot's **Plugin** tab, choose the **FX Alias** entry
+   for that exact track's Ultrawave effect. The slot only sends notes to the
+   existing effect; it does not create another sampler or another RAM bank.
+3. Enter **C-4 (48)** to record and **D-4 (50)** to play using that alias
+   instrument. Place the playback note after LEN. Notes may be on a separate
+   pattern track; the sample audio comes out of the effect's track.
+4. Enable ONE SHOT to keep the first take when the pattern loops. RE-ARM allows
+   another capture without clearing the current take.
 
-## Features
+For a mix of tracks, use a send/group receiver with Ultrawave. A normal `#Send`
+feeds its **main input**. Renoise's `#Sidechain` device feeds its **sidechain**;
+choose the receiver track and Ultrawave device, then raise SIDE. Put a sidechain
+receiver **after the sending tracks**: Renoise refuses sends to previous tracks.
+Multiple sidechain senders sum. Use Playback Only if monitoring the sources
+elsewhere; leave dry-through enabled for an ordinary insert or master effect.
 
-- Undithered signed 12-bit capture/playback, with correct full-scale gain
-- 4 shared mono buffers (441,000 samples each: 10 seconds at 44.1 kHz)
-- Real-time recording and playback across plugin instances
-- RAM is not saved in presets/projects; recapture after all instances close or crash
-- Record One Shot captures once until re-armed; its mode is saved, its latch is volatile
-- Separate bit-depth reduction (BRR), sample-and-hold rate reduction (SRR), and distortion
-- Varispeed pitch with linear interpolation, start/end, hold/decay, and retriggers
-- Draggable waveform start/end handles (cross them for reverse), an active-voice
-  playback cursor, and click-to-type parameter values with Enter/Escape handling
-- Reverse playback when STRT is greater than END
-- MIDI-triggered playback with velocity sensitivity
-- Live level, input balance and monitor gains ramp over 5 ms; initial settings,
-  sample/retrigger edges and the stepped BRR/SRR effects remain immediate
-- Capture/Audition buttons, automatable Capture trigger, clickable R1–R4 tabs,
-  per-instance activity/peak meters, and source-rate-aware waveform duration
-- VST3 and CLAP formats
+### Ableton Live and other hosts
 
-## Screenshots
+Insert the VST3 effect on an audio/group track. On a MIDI track, choose that
+audio track in **MIDI To**, then **Ultrawave** as the destination device. Send
+48/50 notes or use host automation. Select a source in Live's plugin sidechain
+panel when using SIDE. This is standard MIDI-to-effect routing; Live execution
+has not yet been verified here. Hosts without MIDI-to-effect routing can use
+Capture and Playback automation instead. Live does not host CLAP natively.
 
-### Ultrawave Record
-![Ultrawave Record GUI](screenshots/ultrawave_record.png)
+## Character and playing controls
 
-### Ultrawave Play
-![Ultrawave Play GUI](screenshots/ultrawave_play.png)
+- Undithered, saturating signed **12-bit** capture: quiet tails lose precision,
+  hot inputs clip. BRR reduces playback resolution further, down to 2 bits.
+- SRR is sample-and-hold time reduction; it is independent of BRR. Distortion
+  uses tanh drive. Pitch is varispeed with linear interpolation.
+- **Cross STRT and END for reverse playback.** Inverted interior markers reverse
+  a slice; equal markers are silent. Direction/start latch on a trigger; end
+  remains live within that direction. Pitch is set by PTCH, not the trigger note.
+- Playback velocity controls loudness. NoteOff and zero-velocity notes do not
+  choke a one-shot. Other note numbers are ignored. If both note assignments
+  are equal, Record takes priority; use different notes for separate commands.
+- RTRG 1–126 adds that many repeats; 127 is **INF**. RTRG 0 or RTIM 0 cancels
+  repeats without cutting the current hit. A new note replaces the old train.
+  Host stop/reset stops recording and playback, preserving RAM.
+- RTIM follows host tempo (120 BPM fallback). Values 127/109/96/77/64/44/32 are
+  1/16, 1/16T, 1/32, 1/32T, 1/64, 1/64T, 1/128. Fractional intervals retain their
+  remainder; tempo changes preserve interval progress. Reported landmarks come
+  from [Tarekith's tips](https://tarekith.com/assets/machinedrum_tipsandtricks.htm#Reference),
+  not a measured firmware timing law.
 
-## Building
+### One Shot and project saving
 
-Building requires Rust 1.95 or newer and SSH access to `EphemeralDSP/ephemeral`.
-Its allocation-free Rust DSP is pinned to a Git revision; no sibling checkout or C++ build is needed.
-Linux also needs the audio/X11 development packages listed in
-`ci/scripts/deps-linux.sh` (that script installs system packages; inspect it first).
+ONE SHOT records on the first trigger for LEN (or capacity), then protects that
+take from subsequent triggers. RE-ARM, or a rising Re-arm automation edge,
+allows another take. Re-arming waits for the next trigger and is ignored during
+capture. Disabling One Shot restores repeated recording; enabling it during a
+take protects that take. Transport stop/start and buffer selection do not re-arm.
 
-NICE-plug/core 0.4.2, nice-plug-egui 0.5.1 and nice-plug-xtask 0.1.1 are pinned.
-The framework is ISC-licensed; the VST3 bindings use MIT/Apache-2.0. The build no
-longer depends on NIH-plug, Vizia or GPL-licensed `vst3-sys`. See
-[`vendor/README.md`](vendor/README.md) for the VST3 immediate-save and X11 teardown patches.
-Plugin IDs, parameter IDs/types and audio layouts are unchanged; existing project
-controls remain compatible. RAM is still deliberately volatile.
+**Projects save controls, not audio or the One Shot runtime latch.** A newly
+loaded instance starts with empty RAM and an armed recorder. An existing
+instance keeps RAM across transport resets. Restoring or resetting a held-high
+Capture, Playback or Re-arm control does not count as a new trigger: automate
+Off → On for a new command. MIDI triggers and editor buttons remain available.
+Every instance owns separate RAM:
+no banks, pairing, shared-memory files, cross-project leaks, or recovery workers.
+This replaces the old Record/Play pair; old plugin IDs/presets are not supported.
+
+## Editor
+
+Record and Play are pages of the same 760×460 monochrome editor. Click numeric
+values to type; drag waveform markers for a region or reverse playback.
+
+![Record page](screenshots/ultrawave_record.png)
+![Play page](screenshots/ultrawave_play.png)
+
+## Build and install
+
+Requires Rust 1.95+ and SSH access to the pinned `EphemeralDSP/ephemeral` DSP
+dependency. Linux development packages are listed in `ci/scripts/deps-linux.sh`.
+NICE-plug/core 0.4.2 and egui adapter 0.5.1 are pinned. The framework is ISC;
+VST3 bindings are MIT/Apache-2.0. See [vendor patches](vendor/README.md).
 
 ```bash
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Clone and build
-git clone https://github.com/EphemeralDSP/ultrawave.git
-cd ultrawave
 cargo build --release
-
-# Bundle plugins (both Record and Play)
-cargo xtask bundle ultrawave-record --release
-cargo xtask bundle ultrawave-play --release
-```
-
-Built plugins are placed in `target/bundled/`:
-- `ultrawave-record.clap` / `ultrawave-record.vst3`
-- `ultrawave-play.clap` / `ultrawave-play.vst3`
-
-## Installation
-
-Use a single Cargo command to build, bundle, and install both plugins:
-
-```bash
+cargo xtask bundle ultrawave-plugin --release
+# Produces target/bundled/ultrawave-plugin.{vst3,clap}
 cargo xtask install
 ```
 
-This performs a user install by default:
-- Linux: `~/.vst3` and `~/.clap`
-- macOS: `~/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/CLAP`
+Install destinations: `~/.vst3` / `~/.clap` on Linux, and
+`~/Library/Audio/Plug-Ins/{VST3,CLAP}` on macOS. Close hosts before replacing a
+loaded binary, then rescan. The new bundle does not overwrite the old pair.
 
-For system-wide install paths, use:
+## Fast offline iteration
 
 ```bash
-cargo xtask install --system
+./scripts/dev-loop.sh fast          # Tests, exported CLAP audio/state, VST3 state, WAVs
+./scripts/dev-loop.sh fast --watch  # Repeat after source changes
+./scripts/dev-loop.sh full --editor # Clippy, release tests, validators, benchmark, UI lifecycle
+./scripts/screenshot.sh            # Both pages; inspect screenshots/*.png
+./scripts/audition.sh              # Six deterministic WAVs + audio metrics, no DAW/device
 ```
 
-If your system paths need elevated permissions, run the command with `sudo`.
+The CLAP harness loads the actual cdylib and checks routing, timing, MIDI note
+assignment, One Shot, reverse/retrigger, saved controls, private RAM and instance
+recreation at 44.1/48/96 kHz. These are software regressions, not hardware A/Bs.
+Failures stop the pass. Validators belong on PATH or in `target/tools/`.
 
-## Plugin Formats
-
-Current milestone scope targets macOS/Linux first. Windows support is out-of-scope for this milestone.
-
-| Format | macOS | Linux |
-|--------|-------|-------|
-| VST3   | ✓     | ✓     |
-| CLAP   | ✓     | ✓     |
-
-## Test the sound without a DAW
+Individual offline renders use the same DSP and explicit private RAM:
 
 ```bash
-./scripts/audition.sh
-# Or supply your own 44.1 kHz WAV and an output directory:
-./scripts/audition.sh /path/to/drums.wav target/my-audition
-```
-
-This builds the standalone binaries and writes six mono WAVs to `target/audition`:
-12-bit capture, neutral playback, octave-down playback, BRR, SRR, and a driven
-combination. It requires no audio device, MIDI controller, or display. Compare
-against the input at matched listening levels; distortion raises loudness.
-Offline rendering uses isolated RAM and cannot erase a live DAW's samples.
-
-For individual renders:
-
-```bash
-target/release/ultrawave_record --input tests/vinyl909.wav --output target/capture.wav
-target/release/ultrawave_play --input target/capture.wav --output target/crunch.wav \
+target/release/ultrawave record --input tests/vinyl909.wav --output target/capture.wav
+target/release/ultrawave play --input target/capture.wav --output target/crunch.wav \
   --pitch 52 --brr 32 --srr 0.5 --dist 16
-target/release/ultrawave_play --input target/capture.wav --output target/reverse.wav \
+target/release/ultrawave play --input target/capture.wav --output target/reverse.wav \
   --start 127 --end 0
-target/release/ultrawave_play --input target/capture.wav --output target/retrig.wav \
+target/release/ultrawave play --input target/capture.wav --output target/retrig.wav \
   --retrigger 127 --retrig-time 127 --tempo 120 --output-secs 4
-cargo test --workspace
 ```
 
-Offline Play accepts `--pitch`, `--brr`, `--dist`, `--start`, `--end`, `--hold`,
-`--decay`, `--retrigger`, and `--retrig-time` as integers 0–127. Pitch 64 is unity;
-52/76 are one octave down/up. `--srr` ranges from 0 to 0.9629. `--output-secs`
-sets render length; use it for long retrigger tails. `--channel 0..3` selects RAM.
-`--tempo` sets a positive BPM (default 120) for offline retriggers. Infinite
-retriggering still renders only the requested duration; it cannot hang the CLI.
-The WAV tools currently require **44.1 kHz** input and capture at most 10 seconds.
+WAV tools require 44.1 kHz input. Integer synthesis controls range 0–127; pitch
+64 is unity, 52/76 one octave down/up. SRR ranges 0–0.9629. `--output-secs` bounds
+even infinite retrigger renders. Start listening quietly: drive raises loudness.
+For live standalone audio/MIDI device options use `target/release/ultrawave --help`.
+On Linux JACK/PipeWire connect source audio and MIDI through your patchbay.
 
-The tests check actual sample values, clipping, the last sample, CLI renders,
-Play's processing callback with MIDI sample offsets and velocity, block-size
-invariance, independent BRR/SRR controls, and cross-process shared-memory access.
-They are software regression checks, not comparisons against hardware captures.
-
-## Fast development loop
+### Actual Renoise regression
 
 ```bash
-./scripts/dev-loop.sh fast           # Format check, tests, six renders + metrics
-./scripts/dev-loop.sh fast --watch   # Repeat on repository input changes
-./scripts/dev-loop.sh full --editor  # Also Clippy, release builds, validators,
-                                    # benchmark and 10 editor lifecycle repetitions
-./scripts/screenshot.sh             # Render both editors; inspect the PNGs
-```
-
-Both loops include VST3 immediate-save/automation regressions. Run those alone
-with `./scripts/test-vst3-state.sh` (or append `--release`).
-They also build and load the actual CLAP cdylibs and run the bounded,
-isolated audio/state harness in `./scripts/test-clap-audio.sh`. The harness uses
-fresh shared-memory names and removes its mappings and lease directories. It
-checks four-lane main/sidechain routing, exact MIDI/automation offsets, reverse,
-finite/infinite/OFF retriggers at two tempos, saved controls and bank isolation
-at 44.1/48/96 kHz. The full loop uses release libraries (`--release`). It
-documents current transport behavior: a playing-to-stopped edge and reset stop
-voices, while host seek position and loop metadata do not restart or stop them.
-The warm fast loop takes about **9–10 seconds** on the development ThinkPad with
-debug symbols and incremental compilation disabled; first builds take longer.
-Listen to `target/audition/*.wav`,
-then inspect peak/RMS, neutral delta, and effect deltas printed by the script.
-Failures stop the pass; watch mode waits for an edit before retrying. The full
-loop also runs the plugin validators, which belong on PATH or in `target/tools/`.
-
-`cargo run --release --example dsp_bench` compares the original per-sample capture
-mix with the SIMD capture path, including SRR, distortion, atomic 12-bit storage
-and monitoring. On the development ThinkPad, seven-run medians measured about
-**11.3 → 8.2 ns/sample neutral** and **21.5 → 17.3 ns/sample driven** (roughly
-28% and 20% less CPU time). Playback remains about 18/22 ns/sample neutral/crunchy;
-trigger cost is about 20 ns regardless of buffer length. These are local DSP-path
-measurements, not whole-host CPU guarantees. Rerun on the target machine.
-
-Record mixes four time samples at once using SSE2 on x86-64 and NEON on enabled
-AArch64 targets, with a scalar fallback/tail. It uses bounded stack chunks, keeps
-the original floating-point sum order, and does not approximate tanh or change
-12-bit rounding. Stateful SRR, MIDI timing and envelopes remain sequential.
-Debug/release tests verify bit-exact scalar equivalence, unaligned/tail buffers,
-and MIDI around chunk/host-block boundaries. SSE2 was executed here; NEON awaits
-an ARM run. Allocation tests cover mixing, first trigger, recording and stopping.
-
-## Test in a DAW
-
-1. Run `cargo xtask install` to build and install both CLAP and VST3 plugins into
-   your user plugin directories. Rescan plugins in the DAW.
-2. Put a short drum WAV on a source track and insert
-   **Ultrawave Record**, or send the source audio to a separate Record track.
-3. Select R1. Set MLEV 127, ILEV 0, MBAL centered, RATE HI, LEN 1 BAR.
-   Click **Capture**, automate Capture from off to on, or send a MIDI note at
-   the start of the source. Falling Capture does not cut a timed recording short.
-   **Record is silent by default**. CUE1 adds the dry mono mix; CUE2 adds the
-   quantized capture while recording. Both monitor gains range from 0 to 127.
-4. Put **Ultrawave Play** on an instrument track, select R1, then trigger it with
-   MIDI **after capture completes** (one bar is 2 seconds at 120 BPM).
-5. Start with PTCH +0 st (raw 64), STRT 0%, END 100%, HOLD/DEC/RTRG/BRR/SRR/DIST zero,
-   LEV 0 dB. Change pitch, then BRR and SRR separately. Check that soft MIDI notes
-   are quieter and that changing buffer size does not shift the trigger.
-6. Capture in real time before bouncing Play. Hosts may render independent tracks
-   out of order during an offline bounce; the shared RAM is not a DAW routing edge.
-   Saving a project does **not** save RAM: recapture after all instances reload.
-
-**Flip STRT and END to play backwards.** STRT 100%, END 0% reverses the whole
-sample; inverted interior markers reverse a slice. Equal markers are silent.
-Direction is chosen on each note or retrigger. STRT is latched on the note;
-END remains live within the chosen direction. Pitch, retriggers, envelopes and
-12-bit effects work in either direction.
-
-For external capture, route a stereo send to Record's **sidechain**, set ILEV
-above zero, and adjust IBAL. MLEV/MBAL control the main input; ILEV/IBAL control
-the sidechain. Each bus is mixed to mono before LEV, SRR, DIST, RATE and 12-bit
-storage. CUE1 bypasses those effects; CUE2 monitors what reaches RAM. Avoid routing
-monitor output back into its own capture input unless you deliberately want feedback.
-
-### Tempo-synced retriggers
-
-RTRG 1–126 adds that many repeats after the initial note; 127 displays **INF**.
-RTRG 0 or RTIM 0 disables repeats. A repeat restarts the selected region and its
-envelope, forward or backward, including after a short sample has ended.
-RTIM follows host tempo; missing/invalid tempo falls back to 120 BPM. Fractional
-frame intervals retain their remainder rather than drifting on each repeat.
-Tempo changes preserve progress through the current interval.
-
-| RTIM raw value | Note interval |
-|---|---|
-| 127 | 1/16 |
-| 109 | 1/16 triplet |
-| 96 | 1/32 |
-| 77 | 1/32 triplet |
-| 64 | 1/64 |
-| 44 | 1/64 triplet |
-| 32 | 1/128 |
-
-These and the other reported landmarks follow Legofriendly's table in
-[Tarekith's Machinedrum tips](https://tarekith.com/assets/machinedrum_tipsandtricks.htm#Reference),
-not a firmware-derived timing law. Intermediate values use logarithmic
-interpolation; below 32 the doubling-per-32 trend is extrapolated. Hardware
-calibration is still needed. The editor shows musical lengths at the listed
-values and quarter-note beats (`bt`) elsewhere.
-
-Count/time controls latch on a new note, except setting either to OFF cancels
-pending repeats immediately without cutting the current hit. A new note replaces
-the old train. Host transport stop, plugin reset, or replacement of the sampled
-RAM cancels it; auditioning while transport is stopped is still available.
-NoteOff does not choke playback. **Compatibility:** saved parameter IDs and raw
-values are unchanged, but RTIM no longer uses the old 0–500 ms approximation,
-and RTRG 127 now means infinite. Existing retrigger patches will sound different.
-
-### Record once, then keep the take
-
-Enable **ONE SHOT**, then use Capture, MIDI or Capture automation as usual. The
-first successful trigger records for LEN (or until capacity); further triggers
-cannot restart or replace that take. The status moves from **ARMED** through
-**RECORDING** to **LOCKED**. This automates muting the record trigger after one
-pass without muting Play or changing CUE monitoring.
-
-Click **RE-ARM** after recording to allow one more capture. Arming does not erase
-RAM or start recording; it waits for the next trigger. Re-arm is unavailable
-during capture. Switching One Shot off restores repeated-trigger behavior;
-switching it back on arms it again. Enabling it during a take protects that take.
-A rejected trigger on a busy buffer does not consume the arm.
-
-The lock belongs to this Record instance: transport stop/start, editor reopening
-and selecting another R1–R4 buffer do not re-arm it. Stopping transport mid-take
-can leave a partial take locked; use Re-arm to replace it. Other Record instances
-can still write the same buffer when no writer owns it.
-
-**Projects/presets save controls, not samples or the One Shot latch.** After a
-full shutdown RAM is empty, and a fresh Record instance with One Shot enabled
-starts armed. No sample files or RAM snapshots are embedded in the project.
-
-### Pairing Record and Play
-
-Set **BANK** to the same number (1–16) in Record and Play to share R1–R4. BANK
-is saved with plugin state but is intentionally not automatable. The default is
-**OFF**: every new instance has private RAM and cannot accidentally hear another
-instance. Different banks are isolated. Choosing the same bank in another
-project deliberately joins that RAM; bank numbers are not project identities.
-Samples remain volatile, and fully closing a bank clears it when it is next
-opened even while other banks remain active. The footer shows `B…` while
-connecting and `B!` if attachment failed; failure uses disconnected private RAM
-rather than pretending pairing succeeded. Standalone/screenshot runs may set
-`ULTRAWAVE_BANK=1`; `ULTRAWAVE_SHM_KEY` remains the namespace prefix for all
-banks.
-
-To sample a single track, several tracks, or a master mix, route that source to
-Record's main or sidechain input in the DAW. Ultrawave does not implicitly tap the
-DAW's master; the DAW send/bus routing supplies the equivalent of the hardware's
-master or analog input. Use a separate capture bus to avoid silencing your master
-with Record's default-silent output.
-
-### Automated Renoise test (Linux, Renoise 3.5.4 installed)
-
-```bash
-cargo xtask bundle ultrawave-record --release
-cargo xtask bundle ultrawave-play --release
+cargo xtask bundle ultrawave-plugin --release
 ./scripts/renoise-test.sh
 ```
 
-The fixture uses Xvfb, an isolated HOME, and a unique shared-RAM key. It generates
-a left-only 440 Hz source **inside Renoise**, captures one bar through the Record
-track effect, and verifies that repeated One Shot triggers with an 880 Hz source
-leave that take bit-for-bit unchanged. Reversed STRT/END must render every frame
-of that take in reverse order. It also uses Renoise's native `#Sidechain` device
-to route independent right-only 660 Hz and 1100 Hz lanes into Record, checking a
-single send, a summed send, MBAL/IBAL and MLEV/ILEV exclusion, default-silent and
-opt-in capture monitoring, plus silent wrong-destination and rejected-balance
-controls. R1-R4 routing, dual-mono output, monitoring, and five editor open/close
-cycles are checked. Retrigger renders compare every sample at 60/120 BPM, with
-RTIM off, and through 256 infinite-mode hits.
+Requires Renoise 3.5.4, Xvfb, xdotool, ImageMagick and Python. Uses a disposable
+HOME/display and only the newly built bundle, leaving personal sessions and
+installed plugins untouched. Tests FX-alias notes, main/sidechain routing,
+dry-through/playback-only, One Shot, reverse/retrigger, project save and process
+reopen. Artifacts and logs: `target/renoise-test/`. This exercises VST3; the CLAP
+harness and clap-validator exercise CLAP. `tests/test.RPP` remains unverified
+historical scratch, not a supported setup.
 
-It then saves non-default controls, terminates that host, and opens the project
-in a fresh process with the **same RAM key**. Controls must survive, RAM must be
-silent, and One Shot must allow a fresh capture. It saves immediately after edits,
-without an intervening render to flush VST3 parameter changes. Requires `Xvfb`,
-`xdotool`, ImageMagick and Python on PATH. Artifacts, `.xrns`, logs and metrics are in `target/renoise-test/`.
-**Put the Record receiver after its source tracks:** Renoise refuses sidechain
-sends to previous tracks. Use native `#Sidechain`, choose the later receiver
-track and Ultrawave Record, and enable Mute Source if only the recorded playback
-should be audible. Multiple senders sum into the same stereo sidechain bus.
-The fixture uses unity track headroom for sample comparisons, since Renoise's
-default -6 dB headroom attenuates replay again. It checks destination readback
-and actual rendered samples. No personal session or plugin install is modified.
-This fixture exercises VST3; the offline CLAP harness and clap-validator cover CLAP.
+## Fidelity and platform limits
 
-`tests/test.RPP` is an old scratch session, **not** a verified ready-to-play test
-project (it lacks source→Record routing). Use the routing steps above.
+**UW-inspired, not bit-exact Machinedrum emulation.** Quantization, interpolation,
+envelopes, drive and intermediate retrigger curves still need hardware captures.
+No measured DAC equalization or fixed hardware sample-clock model is claimed.
+RAM stores its source rate; 44.1/48/96 kHz playback preserves duration and pitch.
+Each buffer has 441,000 samples: 10 s at 44.1 kHz, 9.19 s at 48 kHz, 4.59 s at
+96 kHz at RATE HI. Reduced RATE also observes the ten-second capture-time cap.
 
-For live testing outside a DAW, run `target/release/ultrawave_record --help` and
-`target/release/ultrawave_play --help` for audio/MIDI device options. Keep both
-running on the same audio backend/sample rate. On Linux JACK/PipeWire, connect
-source audio and MIDI to Record and MIDI to Play using your patchbay. A separate
-`ULTRAWAVE_SHM_KEY=/uw-test` environment variable on **both** processes isolates
-them from DAW instances. Without MIDI/audio routing, launching a window alone
-does not exercise recording or playback.
+Capture mixing uses SSE2 on x86-64 and NEON on supported AArch64 targets with
+scalar tails/fallback. Stateful SRR/envelopes remain sequential. Allocation
+checks and scalar equivalence tests protect the real-time path; run
+`cargo run --release --example dsp_bench` for local measurements. Linux x86-64
+is the exercised platform. macOS/ARM, Live, and hardware A/B remain to be verified.
 
-## Fidelity and current limits
-
-This is **UW-inspired, not a bit-exact Machinedrum emulation**. The current model
-uses saturating 12-bit rounding, mono RAM, linear varispeed interpolation,
-additional stepped BRR (12 down to 2 bits), sample-and-hold SRR, and tanh drive.
-Quantization is level-dependent: quiet tails lose detail; hot input clips.
-BRR changes amplitude resolution; SRR changes time resolution. Their parameter
-curves, interpolation, envelope times, and drive are not calibrated to hardware.
-`technical_specs.md` contains historical research with conflicting claims; it
-must not be treated as proof of hardware behavior.
-
-Play's synthesis controls latch on a trigger; pitch, end, BRR, SRR, distortion,
-and level also update during playback. NoteOff does not choke a one-shot.
-Record controls affect the capture/monitor paths described above.
-RAM stores its source rate, so 44.1/48/96
-kHz playback preserves duration/pitch, including reduced recording RATE. There is
-**no fixed hardware sample-clock model**. At RATE HI, capacity is 9.19 seconds at
-48 kHz and 4.59 seconds at 96 kHz; the additional ten-second capture-time cap applies
-at reduced RATE.
-
-Writers are exclusive across processes: a competing capture is ignored, never
-steals an active take. A new take invalidates an old playing voice rather than
-mixing revisions; Play latches the available prefix when triggered. Shared-memory
-**layout v3 uses a new default key**: update Record and Play together, restart all
-instances and recapture. If setting `ULTRAWAVE_SHM_KEY`, choose a fresh key rather
-than reusing a v2 mapping. Incompatible layouts are never resized or overwritten.
-All instances using a key still share R1–R4, even in different DAWs/projects.
-
-RAM lifecycle uses OS-held leases instead of persistent counters or PID checks:
-
-- The first plugin after every participant closes/crashes starts with empty RAM.
-  Simultaneous first registrations serialize initialization and clearing.
-- If another host remains open, a background worker checks abandoned sessions
-  every 100 ms (subject to OS scheduling). It discards unfinished takes owned by
-  the dead session, preserving other live writers and completed takes. Trigger
-  capture again after recovery; an earlier rejected trigger is not replayed.
-- A paused/live owner is never stolen because of a timeout. Crashes during file
-  sizing or initialization can also be recovered by the next loader.
-- RAM access on the audio thread remains atomic-only: no filesystem calls,
-  mutexes, allocation or worker startup. Final lease drop joins the worker before
-  library unload; final registry drop releases the mapping and descriptors.
-
-Unix lease files live in the private `/tmp/ultrawave-<uid>/<key>/` directory.
-They intentionally persist; **do not remove them while any instance is open**.
-A shared directory lock protects active namespaces from systemd temporary-file
-aging. There are 64 concurrent registry sessions per key; instances in one loaded
-plugin module share a session. Core-library callers using shared RAM must retain
-the guard returned by `register_instance()` through processing; isolated offline
-registries do not need a lease.
-
-Linux tests exercise real process termination, a stopped live owner, recovery in
-an already-attached survivor, concurrent first loads, odd revisions, interrupted
-initialization, incompatible layouts and orderly reload. This is crash-safe
-coordination, **not sample persistence or hardware calibration**. macOS/ARM
-verification, project isolation, hardware A/B and a verified REAPER/sidechain
-fixture remain open work.
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
-
-### Validation
-
-Ultrawave uses industry-standard plugin validators:
-
-```bash
-cargo xtask bundle ultrawave-record --release
-cargo xtask bundle ultrawave-play --release
-# Requires pluginval, clap-validator, and (Linux) xvfb-run on PATH:
-PATH="$PWD/target/tools:$PATH" bash ci/scripts/validate.sh
-```
-
-NICE-plug migration validated on Linux x86-64, 2026-09-19: 83 workspace tests and
-9 wrapper tests pass in debug/release, along with fmt, Clippy and six offline
-renders. Both CLAP bundles pass (18 tests each, 3 unsupported tests skipped);
-VST3 pluginval strictness 5 and ten repetitions per editor pass without teardown
-warnings or panics. Scripts check logs as well as exit status. Renoise validates
-capture/routing, immediate-save/reopen and pre-migration project compatibility.
-Both editors, trimmed waveform markers and Record armed/recording/locked/rearmed
-states were rendered and inspected. macOS and hardware A/B remain unverified.
-
-See [docs/testing/plugin-validation.md](docs/testing/plugin-validation.md) for details.
-
-## License
-
-See [LICENSE](LICENSE) for details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [LICENSE](LICENSE).

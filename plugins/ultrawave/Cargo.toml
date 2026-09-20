@@ -1,10 +1,10 @@
 [package]
-name = "ultrawave-play"
+name = "ultrawave-plugin"
 version = "0.1.0"
 edition = "2021"
 authors = ["EphemeralDSP"]
 license = "MIT"
-description = "Ultrawave RAM Play - VST3/CLAP plugin"
+description = "Ultrawave 12-bit RAM capture and playback effect - VST3/CLAP"
 
 [lib]
 crate-type = ["cdylib"]

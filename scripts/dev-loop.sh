@@ -26,8 +26,7 @@ run_once() {
     cargo test --workspace --release
     "$ROOT/scripts/test-clap-audio.sh" --release
     "$ROOT/scripts/test-vst3-state.sh" --release
-    cargo xtask bundle ultrawave-record --release
-    cargo xtask bundle ultrawave-play --release
+    cargo xtask bundle ultrawave-plugin --release
     "$ROOT/scripts/audition.sh" --profile release --no-build
     export PATH="$ROOT/target/tools:$PATH"
     cargo xtask validate-all --skip-bundle

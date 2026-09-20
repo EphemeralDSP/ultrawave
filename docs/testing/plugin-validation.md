@@ -1,180 +1,75 @@
-# Plugin Validation Guide
+# Plugin validation
 
-Ultrawave uses industry-standard plugin validators to ensure compatibility across major DAWs. This guide covers running validators locally, interpreting results, and integrating with CI.
+Ultrawave exports one VST3/CLAP audio effect. Validate the built bundle, not an
+installed copy that may be stale. Linux/macOS are the current targets; there is
+no AU export. Windows validation remains out of scope.
 
-Current milestone scope is macOS/Linux-first. Windows validation is explicitly out-of-scope for this milestone.
-
-## Quick Start
+## Fast iteration and full checks
 
 ```bash
-# Build the plugin
-cargo xtask bundle ultrawave --release
-
-# Validate VST3 (macOS/Linux)
-./scripts/validate-vst3.sh
-
-# Validate CLAP (macOS/Linux)
-./scripts/validate-clap.sh
+./scripts/dev-loop.sh fast
+./scripts/dev-loop.sh fast --watch
+./scripts/dev-loop.sh full --editor
 ```
 
-## Validation Tools
+The fast loop checks formatting, workspace tests, exported CLAP audio/state,
+VST3 wrapper state regressions and six deterministic WAV renders. The full loop
+also runs Clippy, release tests, bundles, validators, editor lifecycle stress
+and a DSP benchmark. Every failing command stops that pass.
 
-### pluginval (VST3/AU)
+The exported CLAP harness exercises stereo dry-through, main/sidechain capture,
+MIDI timing/assignment/velocity, automation, One Shot/re-arm, reverse/retrigger,
+private RAM and state recreation at 44.1/48/96 kHz. Validators complement these
+audible-output assertions; neither replaces a real DAW test or hardware A/B.
 
-[pluginval](https://github.com/Tracktion/pluginval) is the industry-standard validator created by Tracktion. It tests VST2, VST3, and AU plugins for host compatibility.
+## Validators
 
-#### Installation
-
-| Platform | Installation |
-|----------|--------------|
-| macOS | Download from [releases](https://github.com/Tracktion/pluginval/releases), extract to `./tools/pluginval.app` |
-| Linux | Download from [releases](https://github.com/Tracktion/pluginval/releases), extract to `./tools/pluginval` |
-
-The scripts also check common system locations (`~/.local/bin`, `/usr/local/bin`, PATH).
-
-#### Strictness Levels
-
-| Level | Description | Use Case |
-|-------|-------------|----------|
-| 1-4 | Basic validation | Development debugging |
-| **5** | **Recommended minimum** | **PR requirements** |
-| 8+ | Strict validation | "Verified by pluginval" badge |
-| 10 | Maximum strictness | Release validation |
-
-### clap-validator (CLAP)
-
-[clap-validator](https://github.com/free-audio/clap-validator) is the official CLAP plugin validator, written in Rust with parallel test execution and crash isolation.
-
-#### Installation
+Install [pluginval](https://github.com/Tracktion/pluginval/releases) and
+[clap-validator](https://github.com/free-audio/clap-validator/releases).
+Put them on PATH or use the explicit executable options below. The full loop
+also adds `target/tools/` to PATH. Linux VST3 validation requires `xvfb-run`.
 
 ```bash
-# Via cargo (recommended)
-cargo install clap-validator
+cargo xtask bundle ultrawave-plugin --release
+./scripts/validate-vst3.sh --plugin target/bundled/ultrawave-plugin.vst3 \
+  --pluginval-path target/tools/pluginval --strictness 5
+./scripts/validate-clap.sh --plugin target/bundled/ultrawave-plugin.clap \
+  --validator-path target/tools/clap-validator
 
-# Or download from releases
-https://github.com/free-audio/clap-validator/releases
-```
-
-#### Test Categories
-
-- **Fuzzing tests**: Random parameter changes
-- **Thread safety**: Concurrent access validation
-- **State validation**: Save/load, presets
-- **Preset discovery**: Factory preset enumeration
-- **Parameter validation**: Bounds, steps, formatting
-
-## Running Validators
-
-### VST3 Validation
-
-**macOS/Linux (Bash):**
-```bash
-# Default (strictness 5)
-./scripts/validate-vst3.sh
-
-# Custom strictness
-./scripts/validate-vst3.sh --strictness 8
-
-# Verbose output
-./scripts/validate-vst3.sh --verbose
-
-# Specify plugin path
-./scripts/validate-vst3.sh --plugin ./target/release/Ultrawave.vst3
-```
-
-### CLAP Validation
-
-**macOS/Linux (Bash):**
-```bash
-# All tests
-./scripts/validate-clap.sh
-
-# List available tests
+# Optional focused CLAP check
 ./scripts/validate-clap.sh --list-tests
-
-# Run specific tests
-./scripts/validate-clap.sh --tests state-reproducibility-basic
-
-# Verbose output
-./scripts/validate-clap.sh --verbose
+./scripts/validate-clap.sh --plugin target/bundled/ultrawave-plugin.clap \
+  --tests state-reproducibility-basic
 ```
 
-## Interpreting Results
+Use pluginval strictness 5 minimum for changes and 10 for releases. Both scripts
+retain logs under `target/validation/`, propagate failures and reject caught
+panic/window-error signatures even when a validator exits successfully. Missing
+tools or plugin paths are errors, not skipped successes. Run `--help` for options.
 
-### Success Output
+## Editor and real host
 
-```
-[INFO] =========================================
-[INFO] VST3 Plugin Validation
-[INFO] =========================================
-
-[INFO] Pluginval: ./tools/pluginval.exe
-[INFO] Plugin: ./target/release/Ultrawave.vst3
-[INFO] Strictness Level: 5
-
-[INFO] Running validation...
-[... test output ...]
-
-[SUCCESS] ✓ All tests passed!
-[SUCCESS] Plugin is compatible with strictness level 5
+```bash
+cargo build --release
+./scripts/screenshot.sh
+./scripts/test-editor-lifecycle.sh
+./scripts/renoise-test.sh
 ```
 
-**Exit code: `0`** - Plugin passed all tests.
+Inspect both screenshots and any changed interactive state; a screenshot file
+alone is not verification. The Renoise fixture uses a disposable HOME/display
+and the unified bundle to test actual FX-alias notes, audio routing and project
+save/reopen. See the [README](../../README.md#actual-renoise-regression) for
+requirements, safety and artifact paths. Do not overwrite plugins loaded by a
+personal DAW session.
 
-### Failure Output
+## CI and release checks
 
-```
-[ERROR] ✗ Validation failed (exit code: 1)
-[WARNING] Some tests did not pass at strictness level 5
-```
+[Buildkite](../../.buildkite/pipeline.yml) runs Linux/macOS builds, tests and
+VST3/CLAP validation on main pushes and release tags. Release jobs package only
+the unified bundles. No Windows/AU or Ableton test is implied by this pipeline.
 
-**Exit code: `1`** - Some tests failed. Review the detailed output above the summary for specific failures.
-
-### Common Validation Output Patterns
-
-| Pattern | Meaning |
-|---------|---------|
-| `✓ PASSED` | Test passed |
-| `✗ FAILED` | Test failed - needs investigation |
-| `⚠ WARNING` | Non-fatal issue - consider fixing |
-| `SKIPPED` | Test not applicable to this plugin |
-
-## CI Integration
-
-Plugin validation runs automatically on every push and pull request via GitHub Actions. See `.github/workflows/plugin-validation.yml`.
-
-### CI Matrix
-
-| Platform | Formats Tested |
-|----------|---------------|
-| macOS | VST3, CLAP, AU |
-| Linux | VST3, CLAP |
-
-### CI Behavior
-
-- **Exit code 0**: All tests pass → PR can merge
-- **Exit code 1**: Tests failed → PR blocked
-
-### Validation Artifacts
-
-CI uploads validation logs and built plugins as artifacts:
-- `validation-logs-{os}`: Full validation output
-- `ultrawave-validated-{os}`: Validated plugin binaries
-
-## Release Validation Checklist
-
-Before releasing a new version:
-
-- [ ] Build release version: `cargo xtask bundle ultrawave --release`
-- [ ] VST3 passes at strictness level 5+ on macOS
-- [ ] VST3 passes at strictness level 5+ on Linux
-- [ ] AU passes at strictness level 5+ on macOS
-- [ ] CLAP passes all tests on macOS and Linux
-- [ ] All CI validation checks pass
-- [ ] Update `scripts/VALIDATION_BASELINE.md` with results
-
-## See Also
-
-- [Troubleshooting Guide](troubleshooting.md) - Common validation failures and fixes
-- [scripts/TESTING.md](../../scripts/TESTING.md) - Low-level script documentation
-- [scripts/VALIDATION_BASELINE.md](../../scripts/VALIDATION_BASELINE.md) - Baseline results
+Before releasing, verify both formats on each target platform, inspect editor
+states, run the exported audio harness and an actual host routing/state test,
+and report any untested platform or host explicitly. Hardware character and DAC
+response require separate Machinedrum measurements.

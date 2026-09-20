@@ -12,10 +12,10 @@ ZIP_PATH="${DIST_DIR}/Ultrawave-${VERSION}-linux.zip"
 
 rm -f "${TAR_PATH}" "${ZIP_PATH}"
 
-tar -czf "${TAR_PATH}" -C "${PROJECT_ROOT}" target/bundled
+tar -czf "${TAR_PATH}" -C "${PROJECT_ROOT}" target/bundled/ultrawave-plugin.vst3 target/bundled/ultrawave-plugin.clap
 (
     cd "${PROJECT_ROOT}"
-    zip -rq "${ZIP_PATH}" target/bundled
+    zip -rq "${ZIP_PATH}" target/bundled/ultrawave-plugin.vst3 target/bundled/ultrawave-plugin.clap
 )
 
 echo "Created ${TAR_PATH}"

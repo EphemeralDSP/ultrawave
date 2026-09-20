@@ -1,7 +1,5 @@
 use crate::dsp::sample_engine::param_to_normalized;
-use crate::machines::shared::{
-    get_global_registry, BufferRegistry, CHANNEL_COUNT, MAX_BUFFER_SAMPLES,
-};
+use crate::machines::memory::{SampleMemory, CHANNEL_COUNT, MAX_BUFFER_SAMPLES};
 use std::sync::Arc;
 
 pub struct RamRecordParams {
@@ -62,7 +60,7 @@ pub fn rec_len_to_beats(rec_len: i32) -> Option<f64> {
 }
 
 pub struct RamRecord {
-    registry: Arc<BufferRegistry>,
+    memory: Arc<SampleMemory>,
     sample_rate: f32,
     max_length: usize,
     target_lengths: [usize; CHANNEL_COUNT],
@@ -72,21 +70,16 @@ pub struct RamRecord {
     rec_rate_counters: [f32; CHANNEL_COUNT],
     rec_rate_divisors: [f32; CHANNEL_COUNT],
     monitor: [f32; CHANNEL_COUNT],
-    owner_tokens: [u64; CHANNEL_COUNT],
 }
 
 impl RamRecord {
     const MAX_RECORD_SECONDS: f32 = 10.0;
 
-    pub fn new(sample_rate: f32) -> Self {
-        Self::with_registry(sample_rate, get_global_registry())
-    }
-
-    pub fn with_registry(sample_rate: f32, registry: Arc<BufferRegistry>) -> Self {
+    pub fn new(sample_rate: f32, memory: Arc<SampleMemory>) -> Self {
         let max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
 
         Self {
-            registry,
+            memory,
             sample_rate,
             max_length,
             target_lengths: [MAX_BUFFER_SAMPLES; CHANNEL_COUNT],
@@ -96,7 +89,6 @@ impl RamRecord {
             rec_rate_counters: [0.0; CHANNEL_COUNT],
             rec_rate_divisors: [1.0; CHANNEL_COUNT],
             monitor: [0.0; CHANNEL_COUNT],
-            owner_tokens: [0; CHANNEL_COUNT],
         }
     }
 
@@ -108,20 +100,13 @@ impl RamRecord {
         }
     }
 
-    /// Stop all writers before changing RAM ownership. The old Arc is returned
-    /// so its final drop can be retired away from the audio thread.
-    pub fn rebind_registry(&mut self, registry: Arc<BufferRegistry>) -> Arc<BufferRegistry> {
-        self.stop_all_recording();
-        std::mem::replace(&mut self.registry, registry)
-    }
-
     fn clamp_channel(channel: usize) -> usize {
         channel.min(CHANNEL_COUNT - 1)
     }
 
-    /// Starts capturing audio into the requested shared buffer channel.
+    /// Starts capturing audio into the requested buffer channel.
     /// Retriggering while recording restarts from the beginning.
-    pub fn start_recording(&mut self, params: &RamRecordParams, clear: bool, channel: usize) {
+    pub fn start_recording(&mut self, params: &RamRecordParams, _clear: bool, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.stop_recording(channel);
 
@@ -144,19 +129,12 @@ impl RamRecord {
         self.monitor[channel] = 0.0;
 
         let stored_rate = self.sample_rate / self.rec_rate_divisors[channel].ceil();
-        // Registration happens after construction. Allocate the take's identity
-        // here using only atomics, once a live session exists.
-        self.owner_tokens[channel] = self.registry.writer_token();
-        self.is_recording[channel] =
-            self.registry
-                .claim_writer(channel, self.owner_tokens[channel], clear, stored_rate);
+        self.is_recording[channel] = self.memory.begin_recording(channel, stored_rate);
     }
 
     pub fn stop_recording(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
         self.is_recording[channel] = false;
-        self.registry
-            .release_writer(channel, self.owner_tokens[channel]);
     }
 
     pub fn stop_all_recording(&mut self) {
@@ -201,8 +179,6 @@ impl RamRecord {
             self.elapsed_samples[channel] += 1;
             if self.elapsed_samples[channel] >= self.target_lengths[channel] {
                 self.is_recording[channel] = false;
-                self.registry
-                    .release_writer(channel, self.owner_tokens[channel]);
             }
             return;
         }
@@ -210,13 +186,8 @@ impl RamRecord {
 
         let sample_12bit = (mono * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
 
-        if !self
-            .registry
-            .write_sample_owned(channel, self.owner_tokens[channel], sample_12bit)
-        {
+        if !self.memory.write_sample(channel, sample_12bit) {
             self.is_recording[channel] = false;
-            self.registry
-                .release_writer(channel, self.owner_tokens[channel]);
             return;
         }
 
@@ -226,8 +197,6 @@ impl RamRecord {
 
         if self.elapsed_samples[channel] >= self.target_lengths[channel] {
             self.is_recording[channel] = false;
-            self.registry
-                .release_writer(channel, self.owner_tokens[channel]);
         }
     }
 
@@ -236,11 +205,11 @@ impl RamRecord {
     }
 
     pub fn get_buffer(&self, channel: usize) -> Vec<i16> {
-        self.registry.read_buffer(channel).unwrap_or_default()
+        self.memory.read_buffer(channel).unwrap_or_default()
     }
 
     pub fn buffer_len(&self, channel: usize) -> usize {
-        self.registry.buffer_len(channel)
+        self.memory.buffer_len(channel)
     }
 
     pub fn target_length(&self, channel: usize) -> usize {
@@ -260,9 +229,7 @@ impl RamRecord {
 
     pub fn clear(&mut self, channel: usize) {
         let channel = Self::clamp_channel(channel);
-        self.registry
-            .release_writer(channel, self.owner_tokens[channel]);
-        self.registry.clear_buffer(channel);
+        self.memory.clear_buffer(channel);
         self.samples_recorded[channel] = 0;
         self.elapsed_samples[channel] = 0;
         self.is_recording[channel] = false;
@@ -272,7 +239,7 @@ impl RamRecord {
 
     pub fn clear_all(&mut self) {
         self.stop_all_recording();
-        self.registry.clear_all();
+        self.memory.clear_all();
         for channel in 0..CHANNEL_COUNT {
             self.samples_recorded[channel] = 0;
             self.elapsed_samples[channel] = 0;
@@ -301,7 +268,7 @@ impl Drop for RamRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::shared::BufferRegistry;
+    use crate::machines::memory::SampleMemory;
     use std::sync::Arc;
 
     const SAMPLE_RATE: f32 = 100.0;
@@ -322,8 +289,8 @@ mod tests {
 
     #[test]
     fn note_on_starts_recording_and_writes_to_registry() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
         let params = basic_params();
 
         rec.start_recording(&params, true, 0);
@@ -335,8 +302,8 @@ mod tests {
 
     #[test]
     fn recording_stops_at_beat_synced_length() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
         // 1 BAR at 120 BPM = 4 beats * 0.5s/beat = 2s = 200 samples @ 100Hz
         let params = basic_params();
 
@@ -356,8 +323,8 @@ mod tests {
 
     #[test]
     fn retrigger_restarts_recording() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
         let params = basic_params();
 
         rec.start_recording(&params, true, 2);
@@ -378,8 +345,8 @@ mod tests {
 
     #[test]
     fn recording_length_is_locked_at_trigger_time() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
         let start_params = RamRecordParams {
             rec_len: 0, // 1/8 note = 0.5 beats
             tempo_bpm: 120.0,
@@ -409,8 +376,8 @@ mod tests {
 
     #[test]
     fn recording_writes_only_to_selected_channel() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
         let params = basic_params();
 
         rec.start_recording(&params, true, 2);
@@ -426,8 +393,8 @@ mod tests {
     fn beat_to_sample_at_various_tempos() {
         // 1 BAR = 4 beats
         // At 60 BPM: 4 beats * 1s/beat = 4s = 400 samples @ 100Hz
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry);
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry);
         let params_60 = RamRecordParams {
             rec_len: 48, // 1 BAR
             tempo_bpm: 60.0,
@@ -466,8 +433,8 @@ mod tests {
 
     #[test]
     fn inf_mode_records_until_buffer_full() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
         let params = RamRecordParams {
             rec_len: 127, // INF
             tempo_bpm: 120.0,
@@ -480,26 +447,9 @@ mod tests {
     }
 
     #[test]
-    fn second_recorder_cannot_take_active_channel() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
-        let mut contender = RamRecord::with_registry(SAMPLE_RATE, registry.clone());
-        let params = basic_params();
-
-        rec.start_recording(&params, true, 0);
-        record_one_sample(&mut rec, &params, 0);
-        assert!(rec.is_recording(0));
-        contender.start_recording(&params, true, 0);
-        assert!(!contender.is_recording(0));
-        assert_eq!(registry.buffer_len(0), 1);
-        record_one_sample(&mut rec, &params, 0);
-        assert_eq!(registry.buffer_len(0), 2);
-    }
-
-    #[test]
     fn samples_remaining_counts_down_to_zero() {
-        let registry = Arc::new(BufferRegistry::new());
-        let mut rec = RamRecord::with_registry(SAMPLE_RATE, registry);
+        let registry = Arc::new(SampleMemory::new());
+        let mut rec = RamRecord::new(SAMPLE_RATE, registry);
         let params = RamRecordParams {
             rec_len: 0, // 1/8 note = 0.5 beats at 120 BPM = 0.25s = 25 samples
             tempo_bpm: 120.0,

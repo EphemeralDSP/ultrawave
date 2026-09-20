@@ -20,7 +20,7 @@ fi
 
 mkdir -p "${LOG_DIR}"
 
-for plugin in ultrawave-record ultrawave-play; do
+for plugin in ultrawave-plugin; do
     bundle="${ROOT_DIR}/target/bundled/${plugin}.vst3"
     log="${LOG_DIR}/${plugin}.log"
 
@@ -31,8 +31,7 @@ for plugin in ultrawave-record ultrawave-play; do
 
     echo "Stress-testing ${plugin} editor lifecycle (${REPEATS} repeats)"
     set +e
-    ULTRAWAVE_SHM_KEY="/uw-editor-lifecycle-${plugin}-$$" \
-        xvfb-run -a "${PLUGINVAL}" \
+    xvfb-run -a "${PLUGINVAL}" \
             --validate-in-process \
             --strictness-level "${STRICTNESS}" \
             --repeat "${REPEATS}" \

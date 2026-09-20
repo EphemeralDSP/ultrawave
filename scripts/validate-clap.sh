@@ -35,7 +35,6 @@ if (( VERBOSE )); then args+=(--verbosity trace); fi
 args+=(validate)
 if [[ -n "$FILTER" ]]; then args+=(--test-filter "$FILTER"); fi
 args+=("$PLUGIN")
-export ULTRAWAVE_SHM_KEY="${ULTRAWAVE_SHM_KEY:-/uw-clap-$$}"
 mkdir -p "$ROOT/target/validation"
 LOG="$ROOT/target/validation/clap-validator-$(basename "$PLUGIN").log"
 set +e
