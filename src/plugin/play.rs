@@ -128,6 +128,7 @@ impl Plugin for PlayPlugin {
                 channel.fill(0.0);
             }
             self.ui.publish(false, 0.0);
+            self.ui.clear_playback();
             return ProcessStatus::Normal;
         }
         let transport = context.transport();
@@ -186,6 +187,12 @@ impl Plugin for PlayPlugin {
         }
         self.ui
             .publish(self.ram_play.is_playing(self.active_channel), peak);
+        if let Some((position, len)) = self.ram_play.playback_position(self.active_channel) {
+            self.ui
+                .publish_playback(bank, self.active_channel, position, len);
+        } else {
+            self.ui.clear_playback();
+        }
         ProcessStatus::Normal
     }
 
@@ -195,6 +202,7 @@ impl Plugin for PlayPlugin {
         self.ui.active.store(false, Ordering::Relaxed);
         self.ui.peak.store(0, Ordering::Relaxed);
         self.ui.trigger.store(false, Ordering::Relaxed);
+        self.ui.clear_playback();
     }
 }
 
@@ -317,6 +325,32 @@ mod tests {
         );
         assert_eq!(left, right);
         left
+    }
+
+    #[test]
+    fn cursor_tracks_reverse_voice_and_hides_during_retrigger_gaps_and_reset() {
+        let registry = Arc::new(crate::machines::shared::BufferRegistry::new());
+        registry.replace_buffer_at_rate(0, vec![1024; 16], 1024.0);
+        let mut plugin = PlayPlugin {
+            ram_play: RamPlay::with_registry(1024.0, registry),
+            ..Default::default()
+        };
+        let params = Arc::get_mut(&mut plugin.params).unwrap();
+        params.strt = IntParam::new("Start", 127, IntRange::Linear { min: 0, max: 127 });
+        params.end = IntParam::new("End", 0, IntRange::Linear { min: 0, max: 127 });
+        params.rtrg = IntParam::new("Retrigger", 2, IntRange::Linear { min: 0, max: 127 });
+        params.rtim = IntParam::new("Retrig Time", 127, IntRange::Linear { min: 0, max: 127 });
+        render(&mut plugin, 4, &[(0, 1.0)]);
+        assert_eq!(plugin.ui.playback_position(0, 0), Some(0.75));
+        assert_eq!(plugin.ui.playback_position(1, 0), None);
+        assert_eq!(plugin.ui.playback_position(0, 1), None);
+        render(&mut plugin, 12, &[]);
+        assert!(plugin.ui.active.load(Ordering::Relaxed));
+        assert_eq!(plugin.ui.playback_position(0, 0), None);
+        render(&mut plugin, 116, &[]);
+        assert_eq!(plugin.ui.playback_position(0, 0), Some(0.75));
+        plugin.reset();
+        assert_eq!(plugin.ui.playback_position(0, 0), None);
     }
 
     #[test]

@@ -31,6 +31,8 @@ Use them together in a DAW to sample and resample audio in real-time, similar to
 - Record One Shot captures once until re-armed; its mode is saved, its latch is volatile
 - Separate bit-depth reduction (BRR), sample-and-hold rate reduction (SRR), and distortion
 - Varispeed pitch with linear interpolation, start/end, hold/decay, and retriggers
+- Draggable waveform start/end handles (cross them for reverse), an active-voice
+  playback cursor, and click-to-type parameter values with Enter/Escape handling
 - Reverse playback when STRT is greater than END
 - MIDI-triggered playback with velocity sensitivity
 - Capture/Audition buttons, automatable Capture trigger, clickable R1–R4 tabs,

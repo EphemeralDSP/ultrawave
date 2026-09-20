@@ -314,6 +314,15 @@ impl RamPlay {
         self.is_playing[channel] || self.retrigs_remaining[channel] > 0
     }
 
+    /// The currently audible voice, excluding silent waits between retriggers.
+    pub fn playback_position(&self, channel: usize) -> Option<(usize, usize)> {
+        let channel = Self::clamp_channel(channel);
+        if !self.is_playing[channel] {
+            return None;
+        }
+        Some(self.engines[channel].playback_position())
+    }
+
     pub fn is_any_playing(&self) -> bool {
         for ch in 0..CHANNEL_COUNT {
             if self.is_playing(ch) {

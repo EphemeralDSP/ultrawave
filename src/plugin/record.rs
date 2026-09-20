@@ -128,6 +128,7 @@ impl Plugin for RecordPlugin {
         self.ui.active.store(false, Ordering::Relaxed);
         self.ui.peak.store(0, Ordering::Relaxed);
         self.ui.trigger.store(false, Ordering::Relaxed);
+        self.ui.capture_busy.store(false, Ordering::Relaxed);
     }
 }
 
@@ -136,12 +137,15 @@ impl RecordPlugin {
         if self.params.one_shot.value() && self.one_shot_spent {
             return;
         }
+        self.ui.capture_busy.store(false, Ordering::Relaxed);
         self.ram_record.stop_all_recording();
         self.active_channel = self.params.buffer.value() as usize;
         self.decimator = crate::Decimator::new();
         self.ram_record
             .start_recording(params, true, self.active_channel);
-        if self.params.one_shot.value() && self.ram_record.is_recording(self.active_channel) {
+        let started = self.ram_record.is_recording(self.active_channel);
+        self.ui.capture_busy.store(!started, Ordering::Relaxed);
+        if self.params.one_shot.value() && started {
             self.one_shot_spent = true;
         }
     }
@@ -157,6 +161,7 @@ impl RecordPlugin {
         if self.pairing.request(bank) {
             self.ram_record.stop_all_recording();
             self.capture_was_high = self.params.capture.value();
+            self.ui.capture_busy.store(false, Ordering::Relaxed);
         }
         self.pairing
             .adopt(|registry| self.ram_record.rebind_registry(registry));
@@ -185,6 +190,7 @@ impl RecordPlugin {
         // Ignore requests during a take instead of truncating or queuing one.
         if self.ui.rearm.swap(false, Ordering::Relaxed) && !self.ram_record.is_any_recording() {
             self.one_shot_spent = false;
+            self.ui.capture_busy.store(false, Ordering::Relaxed);
         }
         let machine_params = RamRecordMachineParams {
             mlev: self.params.mlev.value(),
@@ -540,9 +546,12 @@ mod tests {
         Arc::get_mut(&mut plugin.params).unwrap().one_shot = BoolParam::new("One Shot", true);
         render(&mut plugin, &[[0.75; 4]; 4], Some(0));
         assert_eq!(registry.read_buffer(0).unwrap(), [-512]);
+        assert!(plugin.ui.capture_busy.load(Ordering::Relaxed));
+        assert!(!plugin.ui.capture_locked.load(Ordering::Relaxed));
         owner.stop_all_recording();
         render(&mut plugin, &[[0.5; 4]; 64], Some(0));
         assert_eq!(registry.read_buffer(0).unwrap(), [1024; 64]);
+        assert!(!plugin.ui.capture_busy.load(Ordering::Relaxed));
 
         // Selecting another buffer does not silently re-arm this recorder.
         Arc::get_mut(&mut plugin.params).unwrap().buffer = int(2);

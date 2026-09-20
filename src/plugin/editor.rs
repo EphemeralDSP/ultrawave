@@ -15,7 +15,7 @@ use std::time::Duration;
 use super::UiState;
 use crate::machines::shared::BufferRegistry;
 use crate::params::{RamPlayParams, RamRecordParams};
-use crate::widgets::{rotary_knob, vertical_slider, waveform};
+use crate::widgets::{parameter_value, rotary_knob, vertical_slider, waveform, WaveformCache};
 
 #[derive(Clone)]
 pub enum EditorParams {
@@ -78,7 +78,10 @@ pub struct UltrawaveEditorApp {
     ui_state: Arc<UiState>,
     gui: Option<GuiContext>,
     waveform: Arc<Vec<i16>>,
-    metadata: Option<(usize, usize, u64)>,
+    metadata: Option<(usize, usize, usize, u64)>,
+    waveform_cache: WaveformCache,
+    // Retain the cached source so its address cannot be reused by another bank.
+    waveform_registry: Option<Arc<BufferRegistry>>,
     meter: f32,
     registry: Arc<Mutex<Arc<BufferRegistry>>>,
 }
@@ -106,6 +109,8 @@ pub fn create(
             gui: None,
             waveform: Arc::new(Vec::new()),
             metadata: None,
+            waveform_cache: WaveformCache::default(),
+            waveform_registry: None,
             meter: 0.0,
             registry,
         },
@@ -178,12 +183,21 @@ impl NiceEguiApp for UltrawaveEditorApp {
             .lock()
             .expect("bank UI registry poisoned")
             .clone();
-        let (len, rate, revision) = registry.snapshot(channel).unwrap_or((0, 44_100.0, 0));
-        let metadata = Some((channel, len, revision));
-        if metadata != self.metadata {
+        let snapshot = registry.snapshot(channel);
+        let (len, rate, revision) = snapshot.unwrap_or((0, 44_100.0, 0));
+        let registry_identity = Arc::as_ptr(&registry) as usize;
+        let metadata = Some((registry_identity, channel, len, revision));
+        if snapshot.is_none() {
+            self.waveform = Arc::new(Vec::new());
+            self.metadata = None;
+        } else if metadata != self.metadata {
             if let Some(samples) = registry.read_buffer(channel) {
                 self.waveform = Arc::new(samples);
                 self.metadata = metadata;
+                self.waveform_registry = Some(registry.clone());
+            } else {
+                self.waveform = Arc::new(Vec::new());
+                self.metadata = None;
             }
         }
         let peak = f32::from_bits(self.ui_state.peak.swap(0, Ordering::Relaxed));
@@ -219,13 +233,22 @@ impl NiceEguiApp for UltrawaveEditorApp {
             },
         );
         let markers = match &self.params {
-            EditorParams::Play(p) => Some((
-                p.strt.unmodulated_plain_value() as f32 / 127.0,
-                p.end.unmodulated_plain_value() as f32 / 127.0,
-            )),
+            EditorParams::Play(p) => Some((&p.strt, &p.end)),
             _ => None,
         };
-        waveform(ui, rect(14.0, 316.0, 732.0, 66.0), &self.waveform, markers);
+        let cursor = self
+            .ui_state
+            .playback_position(self.params.bank().value() as u8, channel);
+        waveform(
+            ui,
+            rect(14.0, 316.0, 732.0, 66.0),
+            &self.waveform,
+            (registry_identity, channel, len, revision),
+            &mut self.waveform_cache,
+            markers,
+            cursor,
+            &gui,
+        );
         ui.scope_builder(
             UiBuilder::new().max_rect(rect(14.0, 392.0, 732.0, 18.0)),
             |ui| {
@@ -316,17 +339,12 @@ impl UltrawaveEditorApp {
                                     vertical_slider(ui, self.params.distortion(), gui);
                                 }
                             }
-                            let value = match kind {
-                                0 => {
-                                    format!("{:.0}", self.params.level().unmodulated_plain_value())
-                                }
-                                1 => format!("{:.2}", self.params.srr().unmodulated_plain_value()),
-                                _ => self.params.distortion().normalized_value_to_string(
-                                    self.params.distortion().unmodulated_normalized_value(),
-                                    false,
-                                ),
-                            };
-                            ui.label(value);
+                            let id = ui.id().with(("sidebar-value", kind));
+                            match kind {
+                                0 => parameter_value(ui, id, self.params.level(), gui),
+                                1 => parameter_value(ui, id, self.params.srr(), gui),
+                                _ => parameter_value(ui, id, self.params.distortion(), gui),
+                            }
                         },
                     );
                 }
@@ -381,10 +399,12 @@ impl UltrawaveEditorApp {
                 |ui| {
                     ui.label(*label);
                     rotary_knob(ui, self.params.knob(index), gui);
-                    ui.label(self.params.knob(index).normalized_value_to_string(
-                        self.params.knob(index).unmodulated_normalized_value(),
-                        false,
-                    ));
+                    parameter_value(
+                        ui,
+                        ui.id().with(("value", index)),
+                        self.params.knob(index),
+                        gui,
+                    );
                 },
             );
         }
@@ -395,7 +415,10 @@ impl UltrawaveEditorApp {
         let one_shot =
             matches!(&self.params, EditorParams::Record(p) if p.one_shot.unmodulated_plain_value());
         let locked = self.ui_state.capture_locked.load(Ordering::Relaxed);
-        let phase = if active {
+        let busy = self.ui_state.capture_busy.load(Ordering::Relaxed);
+        let phase = if busy && record {
+            "BUFFER BUSY — CAPTURE REJECTED"
+        } else if active {
             if record {
                 "RECORDING"
             } else {

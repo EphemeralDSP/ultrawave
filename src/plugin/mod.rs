@@ -5,7 +5,7 @@ pub mod record;
 
 use crate::machines::shared::{BufferRegistry, CHANNEL_COUNT};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 pub use play::PlayPlugin;
 pub use record::RecordPlugin;
@@ -19,6 +19,9 @@ pub struct UiState {
     pub active: AtomicBool,
     pub peak: AtomicU32,
     pub bank_status: AtomicU32,
+    pub capture_busy: AtomicBool,
+    /// One coherent snapshot: valid bit, bank, channel, normalized f32 position.
+    playback_cursor: AtomicU64,
 }
 
 impl UiState {
@@ -26,6 +29,33 @@ impl UiState {
         self.active.store(active, Ordering::Relaxed);
         // The UI consumes the maximum since its last poll, not one tiny block.
         self.peak.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn publish_playback(&self, bank: u8, channel: usize, position: usize, len: usize) {
+        let normalized = if len == 0 {
+            0.0
+        } else {
+            position as f32 / len as f32
+        };
+        self.playback_cursor.store(
+            (1 << 63)
+                | ((bank as u64) << 40)
+                | ((channel as u64) << 32)
+                | normalized.clamp(0.0, 1.0).to_bits() as u64,
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn playback_position(&self, bank: u8, channel: usize) -> Option<f32> {
+        let packed = self.playback_cursor.load(Ordering::Relaxed);
+        (packed >> 63 != 0
+            && (packed >> 40) as u8 == bank
+            && (packed >> 32) as u8 as usize == channel)
+            .then(|| f32::from_bits(packed as u32))
+    }
+
+    pub fn clear_playback(&self) {
+        self.playback_cursor.store(0, Ordering::Relaxed);
     }
 }
 

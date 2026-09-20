@@ -4,7 +4,86 @@ pub mod waveform;
 
 pub use rotary_knob::rotary_knob;
 pub use vertical_slider::vertical_slider;
-pub use waveform::waveform;
+pub use waveform::{waveform, WaveformCache};
+
+#[derive(Clone, Default)]
+struct ValueEdit {
+    text: String,
+    editing: bool,
+    focus: bool,
+    invalid: bool,
+    // Host value at submission and the snapped requested value.
+    pending: Option<(f32, f32)>,
+}
+
+pub fn parameter_value<P: nice_plug::prelude::Param>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    param: &P,
+    gui: &nice_plug::context::gui::GuiContext,
+) {
+    let mut state = ui.data(|d| d.get_temp::<ValueEdit>(id)).unwrap_or_default();
+    if let Some((before, value)) = state.pending {
+        let current = param.unmodulated_normalized_value();
+        if current != before || current == value {
+            state.pending = None;
+        }
+    }
+    if state.editing {
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut state.text)
+                .id(id.with("input"))
+                .desired_width(ui.available_width().min(110.0)),
+        );
+        if state.focus {
+            response.request_focus();
+            state.focus = false;
+        }
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if escape || (response.lost_focus() && !enter) {
+            state.editing = false;
+            state.invalid = false;
+        }
+        if enter {
+            if let Some(normalized) = param.string_to_normalized_value(&state.text) {
+                let setter = gui.param_setter();
+                let snapped = param.preview_normalized(param.preview_plain(normalized));
+                setter.begin_set_parameter(param);
+                setter.set_parameter(param, param.preview_plain(snapped));
+                setter.end_set_parameter(param);
+                state.pending = Some((param.unmodulated_normalized_value(), snapped));
+                state.editing = false;
+                state.invalid = false;
+            } else {
+                state.invalid = true;
+                response.request_focus();
+            }
+        }
+        if state.invalid {
+            response.on_hover_text("Invalid value — Enter to retry, Esc to cancel");
+        }
+    } else {
+        let normalized = state
+            .pending
+            .map(|(_, value)| value)
+            .unwrap_or_else(|| param.unmodulated_normalized_value());
+        if ui
+            .add(
+                egui::Label::new(param.normalized_value_to_string(normalized, false))
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_text("Click to type a value. Enter commits; Esc cancels.")
+            .clicked()
+        {
+            state.text = param.normalized_value_to_string(normalized, false);
+            state.editing = true;
+            state.focus = true;
+            state.invalid = false;
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(id, state));
+}
 
 /// Keep unsnapped drag progress locally: integer steps and delayed host echoes
 /// must not discard small movements. Only the host setter updates the parameter.
@@ -60,7 +139,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
-    struct Host(Mutex<Vec<Option<f32>>>);
+    pub(super) struct Host(pub(super) Mutex<Vec<Option<f32>>>);
     impl GuiContextInner for Host {
         fn plugin_api(&self) -> PluginApi {
             PluginApi::Vst3
@@ -82,6 +161,87 @@ mod tests {
             unreachable!()
         }
         fn request_restart(&self) {}
+    }
+
+    #[test]
+    fn typed_value_commits_one_gesture_and_rejects_invalid_text() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "test".into(),
+            Arc::new(egui::FontData::from_static(include_bytes!(
+                "../../assets/fonts/DejaVuSans.ttf"
+            ))),
+        );
+        fonts
+            .families
+            .insert(egui::FontFamily::Proportional, vec!["test".into()]);
+        ctx.set_fonts(fonts);
+        let host = Arc::new(Host::default());
+        let gui = GuiContext::new(host.clone());
+        let param = IntParam::new("Value", 32, IntRange::Linear { min: 0, max: 127 });
+        let id = egui::Id::new("value-test");
+        let frame = |events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(200.0, 200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    parameter_value(ui, id, &param, &gui);
+                },
+            )
+            .drop_without_applying_deltas();
+        };
+        frame(vec![]);
+        let at = egui::pos2(10.0, 10.0);
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        frame(vec![]);
+        let select_all = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        };
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![
+            select_all.clone(),
+            egui::Event::Text("invalid".into()),
+            enter.clone(),
+        ]);
+        assert!(host.0.lock().unwrap().is_empty());
+        frame(vec![select_all, egui::Event::Text("93".into()), enter]);
+        let events = host.0.lock().unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0], None);
+        assert_eq!(param.preview_plain(events[1].unwrap()), 93);
+        assert_eq!(events[2], None);
+        assert_eq!(param.value(), 32, "only the host changes DSP parameters");
     }
 
     #[test]
