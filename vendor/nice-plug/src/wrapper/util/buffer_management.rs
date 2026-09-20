@@ -275,14 +275,14 @@ impl BufferManager {
             )
         {
             // Since these buffers are backed by our own storage, we can fill them with zeroes if
-            // the pointers are missing for whatever reason that might be
-            crate::nice_debug_assert!(input_channel_pointers.is_some());
+            // the pointers are missing for whatever reason that might be. Missing buses/channels
+            // must have the current block length too, not the previous block's length.
+            for channel in input_storage.iter_mut() {
+                crate::nice_debug_assert!(num_samples <= channel.capacity());
+                channel.resize(num_samples, 0.0);
+            }
             match input_channel_pointers {
                 Some(input_channel_pointers) => {
-                    crate::nice_debug_assert_eq!(
-                        input_channel_pointers.num_channels,
-                        input_storage.len()
-                    );
                     for (channel_idx, channel) in input_storage
                         .iter_mut()
                         .enumerate()
@@ -291,8 +291,6 @@ impl BufferManager {
                         let input_channel_pointer =
                             unsafe { input_channel_pointers.ptrs.as_ptr().add(channel_idx) };
 
-                        crate::nice_debug_assert!(num_samples <= channel.capacity());
-                        channel.resize(num_samples, 0.0);
                         channel.copy_from_slice(unsafe {
                             std::slice::from_raw_parts_mut(
                                 (*input_channel_pointer).add(sample_offset),
@@ -371,9 +369,8 @@ impl BufferManager {
                                 .fill_with(|| &mut [])
                         }
                         None => {
-                            crate::nice_debug_assert_eq!(output_slices.len(), 0);
-
-                            // Same as above
+                            // Missing auxiliary outputs leave empty slices so the wrapper can
+                            // skip processing rather than reusing the previous host buffers.
                             output_slices.fill_with(|| &mut [])
                         }
                     }

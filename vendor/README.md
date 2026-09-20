@@ -46,6 +46,27 @@ When upgrading, reproduce the immediate save against upstream first. Remove
 these patches and the two local crates when upstream satisfies the regression
 tests.
 
+## VST3 auxiliary-bus bounds and absent buffers
+
+`vst3/wrapper.rs` used reversed main/aux offsets during bus negotiation, bounded
+auxiliary inputs by the output count, and allowed one-past-the-end bus accesses.
+Negotiation now skips exactly one bus when a main bus exists and permits null
+arrays only for zero buses. Processing checks each direction's own count before
+pointer arithmetic and rejects negative bus/sample counts before unsigned casts.
+
+Missing auxiliary inputs are silent; missing required outputs skip the DSP call.
+The shared `util/buffer_management.rs` helper now resizes all auxiliary input
+storage to the current block length, including missing buses/channels, within its
+preallocated capacity. Assertions contradicting these fallback paths were removed.
+CLAP also uses this helper; neither plugin's DSP or saved state is changed.
+
+`vst3/tests.rs` exercises the actual host entry points with asymmetric layouts,
+more inputs than outputs, absent/null buses, changing block lengths, and allocated
+sentinels beyond advertised bus counts. These reproduce wrong audio and unwanted
+writes safely, without intentionally reading unallocated memory. Run the same
+wrapper test script in debug and release, the full dev loop, and isolated Renoise
+sidechain/routing tests when upgrading or removing this patch.
+
 ## baseview 0.3.4: join the X11 thread on editor close
 
 This is the published MIT/Apache-2.0 crate, upstream revision

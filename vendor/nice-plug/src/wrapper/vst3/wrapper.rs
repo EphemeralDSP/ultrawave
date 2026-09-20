@@ -819,10 +819,12 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
         outputs: *mut SpeakerArrangement,
         num_outs: int32,
     ) -> tresult {
-        check_null_ptr!(inputs, outputs);
-
-        // Why are these signed integers again?
-        if num_ins < 0 || num_outs < 0 {
+        // Hosts may omit an array when there are no buses in that direction.
+        if num_ins < 0
+            || num_outs < 0
+            || (num_ins > 0 && inputs.is_null())
+            || (num_outs > 0 && outputs.is_null())
+        {
             return kInvalidArgument;
         }
 
@@ -851,7 +853,7 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                 // NOTE: We completely ignore the speaker arrangements and only look at the channel
                 //       counts here. This may cause issues at some point, but it works for now.
                 let has_main_input = layout.main_input_channels.is_some();
-                let aux_input_start_idx = if has_main_input { 0 } else { 1 };
+                let aux_input_start_idx = if has_main_input { 1 } else { 0 };
                 if has_main_input
                     && unsafe {
                         (*inputs).count_ones() != layout.main_input_channels.unwrap().get()
@@ -869,14 +871,12 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                 }
 
                 let has_main_output = layout.main_output_channels.is_some();
-                let aux_output_start_idx = if has_main_output { 0 } else { 1 };
-                if unsafe {
-                    (*outputs).count_ones()
-                        != layout
-                            .main_output_channels
-                            .map(NonZeroU32::get)
-                            .unwrap_or_default()
-                } {
+                let aux_output_start_idx = if has_main_output { 1 } else { 0 };
+                if has_main_output
+                    && unsafe {
+                        (*outputs).count_ones() != layout.main_output_channels.unwrap().get()
+                    }
+                {
                     return false;
                 }
                 for (aux_output_idx, channel_count) in layout.aux_output_ports.iter().enumerate() {
@@ -1074,9 +1074,11 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                 .expect("Process call without prior setup call")
                 .sample_rate;
 
-            crate::nice_debug_assert!(data.numInputs >= 0 && data.numOutputs >= 0);
+            // Reject negative host counts before casting them to unsigned indices/lengths.
+            if data.numInputs < 0 || data.numOutputs < 0 || data.numSamples < 0 {
+                return kInvalidArgument;
+            }
             crate::nice_debug_assert_eq!(data.symbolicSampleSize, K_SYMBOLIC_SAMPLE_SIZE_32);
-            crate::nice_debug_assert!(data.numSamples >= 0);
 
             let total_buffer_len = data.numSamples as usize;
 
@@ -1470,7 +1472,7 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                                     .enumerate()
                                 {
                                     let aux_input_idx = aux_input_no + aux_input_start_idx;
-                                    if aux_input_idx > data.numOutputs as usize {
+                                    if aux_input_idx >= data.numInputs as usize {
                                         break;
                                     }
 
@@ -1494,7 +1496,7 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                                     .enumerate()
                                 {
                                     let aux_output_idx = aux_output_no + aux_output_start_idx;
-                                    if aux_output_idx > data.numOutputs as usize {
+                                    if aux_output_idx >= data.numOutputs as usize {
                                         break;
                                     }
 
@@ -1531,7 +1533,6 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                             break;
                         }
                     }
-                    crate::nice_debug_assert!(buffer_is_valid);
 
                     // Some of the fields are left empty because VST3 does not provide this
                     // information, but the methods on [`Transport`] can reconstruct these values

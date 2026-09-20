@@ -310,3 +310,297 @@ fn edit_during_block_survives_a_b_a_and_delayed_notification_yields_to_automatio
     process(&wrapper, "level", &[(0, 0.5)], 5, || {});
     assert_eq!(saved_level(&wrapper), -18.0);
 }
+
+mod buses {
+    use super::*;
+
+    #[derive(Default)]
+    struct BusPlugin {
+        params: Arc<TestParams>,
+        calls: usize,
+    }
+    impl Plugin for BusPlugin {
+        const NAME: &'static str = "Bus test";
+        const VENDOR: &'static str = "Test";
+        const URL: &'static str = "";
+        const EMAIL: &'static str = "";
+        const VERSION: &'static str = "1.0.0";
+        const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
+            AudioIOLayout {
+                main_input_channels: NonZeroU32::new(1),
+                main_output_channels: NonZeroU32::new(1),
+                aux_input_ports: &[new_nonzero_u32(2), new_nonzero_u32(1), new_nonzero_u32(1)],
+                aux_output_ports: &[new_nonzero_u32(2)],
+                ..AudioIOLayout::const_default()
+            },
+            AudioIOLayout {
+                aux_input_ports: &[new_nonzero_u32(2), new_nonzero_u32(1), new_nonzero_u32(1)],
+                aux_output_ports: &[new_nonzero_u32(2)],
+                ..AudioIOLayout::const_default()
+            },
+            AudioIOLayout::const_default(),
+        ];
+        type Editor = ();
+        type SysExMessage = ();
+        type BackgroundTask = ();
+        fn params(&self) -> Arc<dyn Params> {
+            self.params.clone()
+        }
+        fn process(
+            &mut self,
+            buffer: &mut Buffer,
+            aux: &mut AuxiliaryBuffers,
+            _: &mut impl ProcessContext<Self>,
+        ) -> ProcessStatus {
+            self.calls += 1;
+            let mut mix = [0.0; 16];
+            for (input, gain) in aux.inputs.iter().zip([1.0, 10.0, 100.0]) {
+                for (channel, samples) in input.as_slice_immutable().iter().enumerate() {
+                    assert_eq!(samples.len(), buffer.samples());
+                    for (mixed, sample) in mix.iter_mut().zip(samples.iter()) {
+                        *mixed += sample * gain * (channel + 1) as f32;
+                    }
+                }
+            }
+            for samples in buffer.as_slice() {
+                samples.copy_from_slice(&mix[..samples.len()]);
+            }
+            for output in aux.outputs.iter_mut() {
+                for samples in output.as_slice() {
+                    samples.copy_from_slice(&mix[..samples.len()]);
+                }
+            }
+            ProcessStatus::Normal
+        }
+    }
+    impl Vst3Plugin for BusPlugin {
+        const VST3_CLASS_ID: [u8; 16] = *b"AuxBusBoundsTest";
+        const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[];
+    }
+
+    // Own every allocation referenced by the host bus array. Truncating numInputs/numOutputs
+    // leaves real allocated sentinel buses beyond the advertised count: a wrong access is
+    // observable as wrong audio/a changed canary, rather than undefined behavior in the test.
+    struct HostBuses {
+        audio: Vec<Vec<Vec<f32>>>,
+        _pointers: Vec<Vec<*mut f32>>,
+        buses: Vec<AudioBusBuffers>,
+    }
+    impl HostBuses {
+        fn new(values: &[&[f32]]) -> Self {
+            let mut audio: Vec<Vec<Vec<f32>>> = values
+                .iter()
+                .map(|channels| channels.iter().map(|value| vec![*value; 16]).collect())
+                .collect();
+            let mut pointers: Vec<Vec<*mut f32>> = audio
+                .iter_mut()
+                .map(|channels| {
+                    channels
+                        .iter_mut()
+                        .map(|samples| samples.as_mut_ptr())
+                        .collect()
+                })
+                .collect();
+            let buses = pointers
+                .iter_mut()
+                .map(|channels| AudioBusBuffers {
+                    numChannels: channels.len() as i32,
+                    silenceFlags: 0,
+                    __field0: AudioBusBuffers__type0 {
+                        channelBuffers32: channels.as_mut_ptr(),
+                    },
+                })
+                .collect();
+            Self {
+                audio,
+                _pointers: pointers,
+                buses,
+            }
+        }
+        fn assert_audio(&self, samples: usize, value: f32) {
+            for channel in self.audio.iter().flatten() {
+                assert_eq!(&channel[..samples], vec![value; samples]);
+            }
+        }
+    }
+    fn fixture() -> (Wrapper<BusPlugin>, HostBuses, HostBuses) {
+        let wrapper = Wrapper::new();
+        // SAFETY: initialized setup lives through setupProcessing; all calls follow host lifecycle.
+        unsafe {
+            let mut setup: ProcessSetup = mem::zeroed();
+            setup.maxSamplesPerBlock = 16;
+            setup.sampleRate = 48000.0;
+            assert_eq!(wrapper.setupProcessing(&mut setup), kResultOk);
+            assert_eq!(wrapper.setActive(1), kResultOk);
+            assert_eq!(wrapper.setProcessing(1), kResultOk);
+        }
+        (
+            wrapper,
+            HostBuses::new(&[&[99.0], &[1.0, 2.0], &[3.0], &[4.0]]),
+            HostBuses::new(&[&[-999.0], &[-999.0, -999.0]]),
+        )
+    }
+    fn data(inputs: &mut HostBuses, outputs: &mut HostBuses, samples: i32) -> ProcessData {
+        // SAFETY: zero initializes optional pointers and selects 32-bit realtime processing.
+        let mut data: ProcessData = unsafe { mem::zeroed() };
+        data.numSamples = samples;
+        data.numInputs = inputs.buses.len() as i32;
+        data.numOutputs = outputs.buses.len() as i32;
+        data.inputs = inputs.buses.as_mut_ptr();
+        data.outputs = outputs.buses.as_mut_ptr();
+        data
+    }
+
+    #[test]
+    fn arrangements_use_the_main_bus_offset_in_each_direction() {
+        let wrapper = Wrapper::<BusPlugin>::new();
+        // Extra allocated sentinels also make the old, reversed offsets safe to observe.
+        let mut inputs = [1, 3, 1, 1, 0];
+        let mut outputs = [1, 3, 0];
+        // SAFETY: every advertised arrangement and the sentinels live throughout these calls.
+        unsafe {
+            assert_eq!(
+                wrapper.setBusArrangements(inputs.as_mut_ptr(), 4, outputs.as_mut_ptr(), 2),
+                kResultOk
+            );
+            inputs[1] = 1;
+            assert_eq!(
+                wrapper.setBusArrangements(inputs.as_mut_ptr(), 4, outputs.as_mut_ptr(), 2),
+                kResultFalse
+            );
+            inputs[1] = 3;
+            outputs[1] = 1;
+            assert_eq!(
+                wrapper.setBusArrangements(inputs.as_mut_ptr(), 4, outputs.as_mut_ptr(), 2),
+                kResultFalse
+            );
+            outputs[1] = 3;
+            assert_eq!(
+                wrapper.setBusArrangements(
+                    inputs.as_mut_ptr().add(1),
+                    3,
+                    outputs.as_mut_ptr().add(1),
+                    1
+                ),
+                kResultOk
+            );
+        }
+    }
+
+    #[test]
+    fn empty_arrangement_arrays_may_be_null() {
+        let synth = Wrapper::<TestPlugin<false>>::new();
+        let empty = Wrapper::<BusPlugin>::new();
+        let mut mono = 1;
+        // SAFETY: null arrays have zero length; the nonempty output array points to mono.
+        unsafe {
+            assert_eq!(
+                synth.setBusArrangements(std::ptr::null_mut(), 0, &mut mono, 1),
+                kResultOk
+            );
+            assert_eq!(
+                empty.setBusArrangements(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0),
+                kResultOk
+            );
+            for (ins, outs) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
+                assert_eq!(
+                    empty.setBusArrangements(std::ptr::null_mut(), ins, std::ptr::null_mut(), outs),
+                    kInvalidArgument
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_aux_inputs_are_read_when_there_are_fewer_output_buses() {
+        let (wrapper, mut inputs, mut outputs) = fixture();
+        let mut data = data(&mut inputs, &mut outputs, 16);
+        // SAFETY: fixture owns all bus/channel/sample arrays through process.
+        assert_eq!(unsafe { wrapper.process(&mut data) }, kResultOk);
+        outputs.assert_audio(16, 435.0); // 1 + 2*2 + 10*3 + 100*4
+    }
+
+    #[test]
+    fn unadvertised_input_buses_are_silent_even_with_nonnull_sentinels() {
+        let (wrapper, mut inputs, mut outputs) = fixture();
+        let mut data = data(&mut inputs, &mut outputs, 16);
+        for (count, expected) in [(2, 5.0), (1, 0.0), (0, 0.0), (4, 435.0)] {
+            data.numInputs = count;
+            // SAFETY: all advertised buses and additional sentinels are allocated by the fixture.
+            assert_eq!(unsafe { wrapper.process(&mut data) }, kResultOk);
+            outputs.assert_audio(16, expected);
+        }
+    }
+
+    #[test]
+    fn unadvertised_output_bus_is_untouched_and_processing_is_skipped() {
+        let (wrapper, mut inputs, mut outputs) = fixture();
+        let mut data = data(&mut inputs, &mut outputs, 16);
+        for count in [1, 0] {
+            data.numOutputs = count;
+            // SAFETY: output bus 1 is allocated but not advertised; it must not be touched.
+            assert_eq!(unsafe { wrapper.process(&mut data) }, kResultOk);
+            assert_eq!(wrapper.inner.plugin.try_lock().unwrap().calls, 0);
+            assert_eq!(outputs.audio[1], [vec![-999.0; 16], vec![-999.0; 16]]);
+        }
+    }
+
+    #[test]
+    fn missing_input_buses_and_channels_match_the_current_block_length() {
+        let (wrapper, mut inputs, mut outputs) = fixture();
+        let mut data = data(&mut inputs, &mut outputs, 16);
+        // SAFETY: all pointers remain fixture-owned; null bus arrays denote missing audio.
+        unsafe {
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+            outputs.assert_audio(16, 435.0);
+            let stereo = inputs.buses[1].__field0.channelBuffers32;
+            inputs.buses[1].__field0.channelBuffers32 = std::ptr::null_mut();
+            data.numSamples = 5;
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+            outputs.assert_audio(5, 430.0);
+            inputs.buses[1].__field0.channelBuffers32 = stereo;
+            inputs.buses[1].numChannels = 1;
+            data.numSamples = 11;
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+            outputs.assert_audio(11, 431.0);
+            data.inputs = std::ptr::null_mut();
+            data.numSamples = 3;
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+            outputs.assert_audio(3, 0.0);
+        }
+        assert_eq!(wrapper.inner.plugin.try_lock().unwrap().calls, 4);
+    }
+
+    #[test]
+    fn null_output_arrays_skip_processing_without_reusing_previous_buffers() {
+        let (wrapper, mut inputs, mut outputs) = fixture();
+        let mut data = data(&mut inputs, &mut outputs, 16);
+        // SAFETY: pointers are fixture-owned or null; the host calls are sequential.
+        unsafe {
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+            inputs.audio[1][0].fill(8.0);
+            outputs.buses[1].__field0.channelBuffers32 = std::ptr::null_mut();
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+            assert_eq!(outputs.audio[1], [vec![435.0; 16], vec![435.0; 16]]);
+            data.outputs = std::ptr::null_mut();
+            assert_eq!(wrapper.process(&mut data), kResultOk);
+        }
+        assert_eq!(wrapper.inner.plugin.try_lock().unwrap().calls, 1);
+    }
+
+    #[test]
+    fn negative_process_counts_are_rejected_before_unsigned_conversion() {
+        let (wrapper, _, _) = fixture();
+        for (inputs, outputs, samples) in [(-1, 0, 0), (0, -1, 0), (0, 0, -1)] {
+            // SAFETY: no audio arrays are supplied; the malformed counts must be rejected.
+            unsafe {
+                let mut data: ProcessData = mem::zeroed();
+                data.numInputs = inputs;
+                data.numOutputs = outputs;
+                data.numSamples = samples;
+                assert_eq!(wrapper.process(&mut data), kInvalidArgument);
+            }
+        }
+        assert_eq!(wrapper.inner.plugin.try_lock().unwrap().calls, 0);
+    }
+}
