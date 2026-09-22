@@ -46,12 +46,12 @@ fn independent_recorders_do_not_cancel_each_other() {
     let second_registry = Arc::new(SampleMemory::new());
     let mut first = RamRecord::new(SR, first_registry.clone());
     let mut second = RamRecord::new(SR, second_registry.clone());
-    first.start_recording(&params, true, 0);
-    second.start_recording(&params, true, 0);
-    first.record_sample(0.25, 0.25, 0.0, 0.0, &params, 0);
-    second.record_sample(-0.5, -0.5, 0.0, 0.0, &params, 0);
-    assert_eq!(first_registry.read_buffer(0).unwrap(), [512]);
-    assert_eq!(second_registry.read_buffer(0).unwrap(), [-1024]);
+    first.start_recording(&params);
+    second.start_recording(&params);
+    first.record_sample(0.25, 0.25, 0.0, 0.0, &params);
+    second.record_sample(-0.5, -0.5, 0.0, 0.0, &params);
+    assert_eq!(first_registry.read_buffer().unwrap(), [512]);
+    assert_eq!(second_registry.read_buffer().unwrap(), [-1024]);
 }
 
 #[test]
@@ -67,26 +67,23 @@ fn signed_12bit_capture_preserves_level_and_every_sample() {
     // Includes clipping, both signs, sub-LSB values, and a nonzero last sample.
     let input = [-1.5, -0.5, -0.0003, 0.0001, 0.0003, 0.25, 1.5, 0.75];
     let expected_codes = [-2048, -1024, -1, 0, 1, 512, 2047, 1536];
-    recorder.start_recording(&params, true, 0);
+    recorder.start_recording(&params);
     for sample in input {
-        recorder.record_sample(sample, sample, 0.0, 0.0, &params, 0);
+        recorder.record_sample(sample, sample, 0.0, 0.0, &params);
     }
-    recorder.stop_recording(0);
-    assert_eq!(registry.read_buffer(0).unwrap(), expected_codes);
+    recorder.stop_recording();
+    assert_eq!(registry.read_buffer().unwrap(), expected_codes);
 
     let mut player = RamPlay::new(SR, registry);
-    player.trigger(
-        &RamPlayParams {
-            vol: 127,
-            ..Default::default()
-        },
-        0,
-    );
+    player.trigger(&RamPlayParams {
+        vol: 127,
+        ..Default::default()
+    });
     for code in expected_codes {
-        assert_eq!(player.process(0), code as f32 / 2048.0);
+        assert_eq!(player.process(), code as f32 / 2048.0);
     }
-    assert!(!player.is_playing(0));
-    assert_eq!(player.process(0), 0.0);
+    assert!(!player.is_playing());
+    assert_eq!(player.process(), 0.0);
 }
 
 fn generate_sine(freq_hz: f32, duration_secs: f32, sample_rate: f32) -> Vec<(f32, f32)> {
@@ -116,13 +113,13 @@ fn record_then_play_roundtrip() {
 
     let sine = generate_sine(1000.0, 0.1, SR);
 
-    rec.start_recording(&rec_params, true, 0);
+    rec.start_recording(&rec_params);
     for (l, r) in &sine {
-        rec.record_sample(*l, *r, *l, *r, &rec_params, 0);
+        rec.record_sample(*l, *r, *l, *r, &rec_params);
     }
-    rec.stop_recording(0);
+    rec.stop_recording();
 
-    assert!(registry.buffer_len(0) > 0);
+    assert!(registry.buffer_len() > 0);
 
     let mut player = RamPlay::new(SR, registry.clone());
     let play_params = RamPlayParams {
@@ -133,17 +130,17 @@ fn record_then_play_roundtrip() {
         ..Default::default()
     };
 
-    player.trigger(&play_params, 0);
+    player.trigger(&play_params);
 
     // Collect audio from playback
-    let buffer_len = registry.buffer_len(0);
+    let buffer_len = registry.buffer_len();
     let render_len = buffer_len + 4410; // buffer + 0.1s tail
 
     let mut has_nonzero = false;
     let mut has_silence_after = false;
 
     for i in 0..render_len {
-        let sample = player.process(0);
+        let sample = player.process();
         if i < buffer_len && sample.abs() > 1e-6 {
             has_nonzero = true;
         }
@@ -157,34 +154,6 @@ fn record_then_play_roundtrip() {
         has_silence_after,
         "playback should go silent after buffer ends"
     );
-}
-
-#[test]
-fn channel_isolation() {
-    let registry = Arc::new(SampleMemory::new());
-    let mut rec = RamRecord::new(SR, registry.clone());
-    let params = RamRecordParams {
-        mlev: 127,
-        mbal: 64,
-        ilev: 127,
-        ibal: 64,
-        rec_len: 127,
-        rec_rate: 127,
-        tempo_bpm: 120.0,
-    };
-
-    let sine = generate_sine(440.0, 0.05, SR);
-
-    rec.start_recording(&params, true, 2);
-    for (l, r) in &sine {
-        rec.record_sample(*l, *r, *l, *r, &params, 2);
-    }
-    rec.stop_recording(2);
-
-    assert!(registry.buffer_len(2) > 0, "channel 2 should have data");
-    for ch in [0, 1, 3] {
-        assert_eq!(registry.buffer_len(ch), 0, "channel {ch} should be empty");
-    }
 }
 
 #[test]
@@ -217,7 +186,6 @@ fn wav_file_roundtrip() {
     run_offline_record(&RecordConfig {
         input: input_wav.clone(),
         output: Some(buffer_wav.clone()),
-        channel: 0,
     })
     .expect("offline record should succeed");
 
@@ -237,7 +205,6 @@ fn wav_file_roundtrip() {
         input: buffer_wav.clone(),
         output: output_wav.clone(),
         output_secs: Some(0.2),
-        channel: 0,
         tempo_bpm: 120.0,
         params: RamPlayParams {
             vol: 127,
@@ -262,7 +229,6 @@ fn wav_file_roundtrip() {
         input: buffer_wav.clone(),
         output: reverse_wav.clone(),
         output_secs: Some(0.2),
-        channel: 0,
         tempo_bpm: 120.0,
         params: RamPlayParams {
             strt: 127,
@@ -308,7 +274,6 @@ fn vinyl909_record_then_play() {
     run_offline_record(&RecordConfig {
         input: input_wav,
         output: Some(record_output.clone()),
-        channel: 0,
     })
     .expect("offline record of vinyl909.wav should succeed");
 
@@ -341,7 +306,6 @@ fn vinyl909_record_then_play() {
         input: record_output,
         output: play_output.clone(),
         output_secs: Some(input_duration_secs + 0.5),
-        channel: 0,
         tempo_bpm: 120.0,
         params: RamPlayParams {
             vol: 127,

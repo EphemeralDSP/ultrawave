@@ -9,7 +9,7 @@ const DISPLAY_DB_FLOOR: f32 = -60.0;
 
 #[derive(Default)]
 pub struct WaveformCache {
-    key: Option<(usize, usize, usize, u64, usize)>,
+    key: Option<(usize, usize, u64, usize)>,
     peaks: Vec<(i16, i16)>,
 }
 
@@ -22,8 +22,8 @@ struct MarkerEdit {
 }
 
 impl WaveformCache {
-    fn update(&mut self, identity: (usize, usize, usize, u64), width: usize, samples: &[i16]) {
-        let key = (identity.0, identity.1, identity.2, identity.3, width);
+    fn update(&mut self, identity: (usize, usize, u64), width: usize, samples: &[i16]) {
+        let key = (identity.0, identity.1, identity.2, width);
         if self.key == Some(key) && !samples.is_empty() {
             return;
         }
@@ -60,7 +60,7 @@ pub fn waveform(
     ui: &mut Ui,
     rect: Rect,
     samples: &[i16],
-    identity: (usize, usize, usize, u64),
+    identity: (usize, usize, u64),
     cache: &mut WaveformCache,
     markers: Option<(&IntParam, &IntParam)>,
     cursor: Option<f32>,
@@ -153,11 +153,24 @@ pub fn waveform(
         if let Some(state) = edit {
             ui.data_mut(|d| d.insert_temp(drag_id, state));
         }
+        let left = rect.left() + rect.width() * values[0].min(values[1]);
+        let right = rect.left() + rect.width() * values[0].max(values[1]);
+        for outside in [
+            Rect::from_min_max(rect.min, pos2(left, rect.bottom())),
+            Rect::from_min_max(pos2(right, rect.top()), rect.max),
+        ] {
+            painter.rect_filled(outside, 0.0, Color32::from_black_alpha(180));
+        }
         for (index, position) in values.into_iter().enumerate() {
             let x = rect.left() + rect.width() * position;
+            let color = if index == 0 {
+                Color32::from_rgb(237, 175, 128)
+            } else {
+                Color32::from_rgb(183, 208, 222)
+            };
             painter.line_segment(
                 [pos2(x, rect.top() + 3.0), pos2(x, rect.bottom() - 3.0)],
-                Stroke::new(2.0, Color32::WHITE),
+                Stroke::new(2.0, color),
             );
             let bracket = if index == 0 {
                 Rect::from_min_max(
@@ -170,7 +183,17 @@ pub fn waveform(
                     pos2(x, rect.bottom() - 7.0),
                 )
             };
-            painter.rect_filled(bracket, 0.0, Color32::WHITE);
+            painter.rect_filled(bracket, 0.0, color);
+            painter.text(
+                pos2(
+                    x.clamp(rect.left() + 10.0, rect.right() - 10.0),
+                    rect.top() + 5.0,
+                ),
+                egui::Align2::CENTER_TOP,
+                if index == 0 { "S" } else { "E" },
+                egui::FontId::monospace(11.0),
+                color,
+            );
         }
     }
     if let Some(position) = cursor {
@@ -222,7 +245,7 @@ mod tests {
                         ui,
                         Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(400.0, 60.0)),
                         &[],
-                        (0, 0, 0, 0),
+                        (0, 0, 0),
                         &mut cache,
                         Some((&start, end)),
                         None,
@@ -283,15 +306,15 @@ mod tests {
     }
 
     #[test]
-    fn cache_key_includes_registry_identity_and_reduces_before_scaling() {
+    fn cache_key_includes_memory_identity_and_reduces_before_scaling() {
         let mut cache = WaveformCache::default();
-        cache.update((1, 0, 4, 2), 2, &[-10, 20, -30, 40]);
+        cache.update((1, 4, 2), 2, &[-10, 20, -30, 40]);
         assert_eq!(cache.peaks, [(-10, 20), (-30, 40)]);
-        cache.update((2, 0, 4, 2), 2, &[1, 2, 3, 4]);
+        cache.update((2, 4, 2), 2, &[1, 2, 3, 4]);
         assert_eq!(cache.peaks, [(0, 2), (0, 4)]);
-        cache.update((2, 0, 4, 2), 2, &[]);
+        cache.update((2, 4, 2), 2, &[]);
         assert_eq!(cache.peaks, [(0, 0), (0, 0)]);
-        cache.update((2, 0, 4, 2), 2, &[-3, 8, -5, 9]);
+        cache.update((2, 4, 2), 2, &[-3, 8, -5, 9]);
         assert_eq!(cache.peaks, [(-3, 8), (-5, 9)]);
     }
 }

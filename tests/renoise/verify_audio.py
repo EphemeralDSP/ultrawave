@@ -92,7 +92,7 @@ def assert_source_tone(samples, frequency, source_step=1):
 
 out = pathlib.Path(sys.argv[1])
 capture = metrics(out / "capture-pass.wav")
-r1, r2 = metrics(out / "play-r1.wav"), metrics(out / "play-r2.wav")
+original = metrics(out / "play-original.wav")
 
 # Default output is exact stereo dry-through. The source is left-only, so this
 # also catches accidental mono dry summing or the old zero-monitor behavior.
@@ -102,11 +102,10 @@ assert max(map(abs, capture_right)) < 1e-7
 assert capture["stereo_delta_peak"] > 0.1
 
 # MIDI Play Note through the FX alias emits the private mono take to both sides.
-assert r1["peak"] > 1e-4 and r1["rms"] > 1e-5, r1
-assert r1["stereo_delta_peak"] < 1e-7, r1
-assert 435 < r1["estimated_frequency_hz"] < 445, r1
-assert 90000 < r1["active_extent_frames"] < 100000, r1
-assert r2["peak"] < 1e-7, r2
+assert original["peak"] > 1e-4 and original["rms"] > 1e-5, original
+assert original["stereo_delta_peak"] < 1e-7, original
+assert 435 < original["estimated_frequency_hz"] < 445, original
+assert 90000 < original["active_extent_frames"] < 100000, original
 
 # With normal dry-through, playback is added equally to both source channels.
 # Subtracting right from left must recover the exact left-only dry input.
@@ -118,16 +117,16 @@ playback_only = metrics(out / "playback-only.wav")
 assert playback_only["peak"] > 1e-4, playback_only
 assert playback_only["stereo_delta_peak"] < 1e-7, playback_only
 
-# A second MIDI Record Note reaches the dry output at 880 Hz but One Shot stays
+# A second MIDI Capture Note reaches the dry output at 880 Hz but Record Once stays
 # spent across the intervening host render/reset. Playback remains sample-exact.
 second_input = metrics(out / "second-capture.wav")
 assert 875 < second_input["estimated_frequency_hz"] < 885, second_input
-protected = metrics(out / "play-one-shot.wav")
-assert read_wav(out / "play-r1.wav") == read_wav(out / "play-one-shot.wav"), protected
-assert read_wav(out / "play-r1.wav") == read_wav(out / "playback-control.wav")
+protected = metrics(out / "play-record-once.wav")
+assert read_wav(out / "play-original.wav") == read_wav(out / "play-record-once.wav"), protected
+assert read_wav(out / "play-original.wav") == read_wav(out / "playback-control.wav")
 
 reverse = metrics(out / "play-reverse.wav")
-forward_samples = read_wav(out / "play-r1.wav")[2]
+forward_samples = read_wav(out / "play-original.wav")[2]
 reverse_samples = read_wav(out / "play-reverse.wav")[2]
 expected_reverse = [
     sample
@@ -153,12 +152,25 @@ for name, interval, count in [
         for channel in range(2):
             expected = forward_samples[source_frame * 2 + channel] if source_frame < 96000 else 0.0
             assert values[frame * 2 + channel] == expected, (name, frame, channel)
-assert read_wav(out / "play-retrig-off.wav") == read_wav(out / "play-r1.wav")
+assert read_wav(out / "play-retrig-off.wav") == read_wav(out / "play-original.wav")
 
-# Re-arm is another rising edge. It permits the denied 880 Hz take to replace R1.
+# Re-arm is another rising edge. It permits the denied 880 Hz take to replace the sample.
 rearmed = metrics(out / "play-rearmed.wav")
 assert rearmed["peak"] > 1e-4 and rearmed["stereo_delta_peak"] < 1e-7, rearmed
 assert 875 < rearmed["estimated_frequency_hz"] < 885, rearmed
+
+# One instance has one sample. Starting a new capture at frame 24000 must stop
+# the currently playing 880 Hz take immediately, then replace it with 440 Hz.
+replacement_left, replacement_right = channels(out / "replacement-stops-playback.wav")
+rearmed_samples = read_wav(out / "play-rearmed.wav")[2][0::2]
+assert replacement_right[:24000] == rearmed_samples[:24000]
+assert max(map(abs, replacement_right[24000:])) < 1e-7
+assert_source_tone(
+    [left - right for left, right in zip(replacement_left[24000:], replacement_right[24000:])],
+    440,
+)
+replacement_play = metrics(out / "play-replacement.wav")
+assert read_wav(out / "play-replacement.wav") == read_wav(out / "play-original.wav"), replacement_play
 
 # Keep the substantive main/sidechain routing checks. Sidechain capture is mono;
 # wrong effect routing and the rejected balance channel remain silent.
@@ -185,13 +197,13 @@ amp_1100 = tone_amplitude(sum_left, 48000, 1100)
 assert 2.4 < amp_660 / amp_1100 < 2.6, (amp_660, amp_1100)
 
 # The state saved into the XRNS must be genuinely spent, not merely have the
-# One Shot control switched on. A final 440 Hz Record Note is followed by a
-# denied 880 Hz Record Note, and playback must reproduce the original take
+# Record Once switched on. A final 440 Hz Capture Note is followed by a denied
+# 880 Hz Capture Note, and playback must reproduce the original take
 # sample-for-sample while leaving the latch locked for the screenshot/save.
-save_denied = metrics(out / "save-one-shot-denied.wav")
+save_denied = metrics(out / "save-record-once-denied.wav")
 assert 875 < save_denied["estimated_frequency_hz"] < 885, save_denied
-save_protected = metrics(out / "save-one-shot-play.wav")
-assert read_wav(out / "save-one-shot-play.wav") == read_wav(out / "play-r1.wav"), save_protected
+save_protected = metrics(out / "save-record-once-play.wav")
+assert read_wav(out / "save-record-once-play.wav") == read_wav(out / "play-original.wav"), save_protected
 
 host_result = (out / "host-result.txt").read_text()
 assert "ultrawave_effect_matches=1" in host_result, host_result
@@ -200,8 +212,8 @@ assert "fx_alias_target=1/2" in host_result, host_result
 assert "sidechain_receiver=5/1" in host_result, host_result
 assert "project_controls_and_fx_alias_restored=true" in host_result, host_result
 
-# Actual process destruction clears RAM and the spent latch. The saved FX alias
-# then records and plays with its restored custom MIDI note assignments.
+# Actual process destruction clears the sample and spent latch. The saved FX alias
+# then captures and plays with its restored custom MIDI note assignments.
 reopened = metrics(out / "play-after-reopen.wav")
 assert reopened["peak"] < 1e-7, reopened
 recapture = metrics(out / "recapture-after-reopen.wav")
@@ -212,14 +224,15 @@ assert 435 < recaptured["estimated_frequency_hz"] < 445, recaptured
 
 summary = {
     "capture_dry_through": capture,
-    "fx_alias_playback": r1,
-    "empty_r2": r2,
+    "fx_alias_playback": original,
+    "replacement_stops_old_playback": metrics(out / "replacement-stops-playback.wav"),
+    "replacement_take": replacement_play,
     "dry_plus_playback": metrics(out / "dry-plus-playback.wav"),
     "playback_only": playback_only,
-    "one_shot_second_input": second_input,
-    "one_shot_protected_take": protected,
-    "saved_one_shot_denied_input": save_denied,
-    "saved_one_shot_protected_take": save_protected,
+    "record_once_second_input": second_input,
+    "record_once_protected_take": protected,
+    "saved_record_once_denied_input": save_denied,
+    "saved_record_once_protected_take": save_protected,
     "reverse": reverse,
     "rearmed_take": rearmed,
     "after_reopen": reopened,
@@ -240,13 +253,14 @@ summary = {
         "default_output_is_stereo_dry_plus_mono_playback": True,
         "playback_only_mutes_dry": True,
         "playback_parameter_rising_edge": True,
-        "one_shot_survives_host_reset": True,
-        "saved_instance_one_shot_is_spent_and_audio_protected": True,
-        "rearm_rising_edge_releases_one_shot": True,
+        "record_once_survives_host_reset": True,
+        "replacement_stops_old_take_and_installs_new_take": True,
+        "saved_instance_record_once_is_spent_and_audio_protected": True,
+        "rearm_rising_edge_releases_record_once": True,
         "reverse_and_retrigger_are_sample_exact": True,
         "main_and_sidechain_routing": True,
         "project_controls_and_fx_alias_restored": True,
-        "ram_and_one_shot_latch_private_to_instance": True,
+        "fresh_instance_starts_without_sample_or_spent_latch": True,
     },
 }
 (out / "audio-assertions.json").write_text(json.dumps(summary, indent=2) + "\n")

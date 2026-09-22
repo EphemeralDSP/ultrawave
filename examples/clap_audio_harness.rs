@@ -113,6 +113,18 @@ impl Plugin {
     unsafe fn params(&self) -> &clap_plugin_params {
         self.ext(CLAP_EXT_PARAMS)
     }
+    unsafe fn param_names(&self) -> Vec<String> {
+        let ext = self.params();
+        (0..ext.count.unwrap()(self.raw))
+            .map(|index| {
+                let mut info = MaybeUninit::zeroed();
+                assert!(ext.get_info.unwrap()(self.raw, index, info.as_mut_ptr()));
+                CStr::from_ptr(info.assume_init().name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
     unsafe fn param(&self, name: &str) -> clap_param_info {
         // SAFETY: indices are below count; get_info initializes the POD output on
         // success and its name is NUL-terminated under the CLAP ABI contract.
@@ -449,12 +461,12 @@ fn quantize(sample: f32) -> f32 {
 unsafe fn configure(plugin: &Plugin) {
     plugin.flush(&[
         ("Playback Only", "On"),
-        ("Main Level", "127"),
-        ("Main Balance", "L64"),
+        ("Track Input Level", "127"),
+        ("Track Input Balance", "L64"),
         ("Sidechain Level", "127"),
         ("Sidechain Balance", "R64"),
-        ("Rec Length", "INF"),
-        ("Rec Rate", "HI"),
+        ("Capture Length", "INF"),
+        ("Capture Rate", "HI"),
         ("Capture Level", "0 dB"),
         ("Start", "0"),
         ("End", "127"),
@@ -495,11 +507,49 @@ unsafe fn contract_and_default_insert(module: &Module) {
             .collect::<Vec<_>>(),
         [2]
     );
+    let names = plugin.param_names();
+    // The previous 28 parameters included Buffer. Removing it without adding a
+    // replacement leaves 27 exported host parameters.
+    assert_eq!(names.len(), 27, "single-sample plugin parameter count");
+    assert!(!names.iter().any(|name| name == "Buffer"));
+    for name in [
+        "Record Once",
+        "Capture Note",
+        "Track Input Level",
+        "Track Input Balance",
+        "Capture Length",
+        "Capture Rate",
+    ] {
+        assert!(names.iter().any(|actual| actual == name), "missing {name}");
+    }
+    for removed in [
+        "Buffer",
+        "One Shot",
+        "Record Note",
+        "Main Level",
+        "Main Balance",
+        "Rec Length",
+        "Rec Rate",
+    ] {
+        assert!(
+            !names.iter().any(|actual| actual == removed),
+            "obsolete parameter name still exported: {removed}"
+        );
+    }
+    for (name, expected) in [
+        ("Capture Note", 48.0),
+        ("Track Input Level", 127.0),
+        ("Track Input Balance", 64.0),
+        ("Capture Length", 48.0),
+        ("Capture Rate", 127.0),
+    ] {
+        assert_eq!(plugin.value(name).round(), expected, "default {name}");
+    }
+    assert_eq!(plugin.value("Record Once"), 0.0);
     assert_ne!(
         plugin.param("Playback Only").flags & CLAP_PARAM_IS_AUTOMATABLE,
         0
     );
-    assert_eq!(plugin.value("Record Note").round(), 48.0);
     assert_eq!(plugin.value("Play Note").round(), 50.0);
     plugin.activate(48000.0, 512);
 
@@ -598,7 +648,7 @@ unsafe fn capture_playback_at_rate(module: &Module, rate: f64, block: usize) {
 unsafe fn reverse_pitch_notes_and_triggers(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
-    plugin.flush(&[("Record Note", "61"), ("Play Note", "63")]);
+    plugin.flush(&[("Capture Note", "61"), ("Play Note", "63")]);
     plugin.activate(48000.0, 64);
     let tr = transport(true, 120.0, 0, false);
     let source = [0.125, -0.25, 0.375, -0.5, 0.625];
@@ -680,7 +730,7 @@ unsafe fn capture_control_is_a_rising_edge(module: &Module) {
 unsafe fn record_priority_and_no_feedback(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
-    plugin.flush(&[("Record Note", "60"), ("Play Note", "60")]);
+    plugin.flush(&[("Capture Note", "60"), ("Play Note", "60")]);
     plugin.activate(48000.0, 64);
     let tr = transport(true, 120.0, 0, false);
     let quarter = [0.25; 32];
@@ -708,23 +758,25 @@ unsafe fn record_priority_and_no_feedback(module: &Module) {
             .collect::<Vec<_>>()
     );
 
-    // Keep R1 playing, switch selection to R2, and capture silence there. If
-    // capture read the post-playback output, R2 would contain the R1 voice.
-    plugin.flush(&[("Buffer", "1"), ("Record Note", "61")]);
-    plugin.process([&zero[..16]; 4], 16, &[Event::note(0, 61, 1.0)], &tr);
+    // Replace the single sample with silence while its old voice is still
+    // active. Replacement must invalidate that voice immediately, and capture
+    // must read host input rather than feeding the outgoing voice back to RAM.
+    plugin.flush(&[("Capture Note", "61")]);
+    let replacement = plugin.process([&zero; 4], 32, &[Event::note(0, 61, 1.0)], &tr);
+    assert_eq!(replacement, [vec![0.0; 32], vec![0.0; 32]]);
     plugin.reset();
-    let r2 = plugin.process([&zero[..16]; 4], 16, &[Event::note(0, 62, 1.0)], &tr);
+    let replaced = plugin.process([&zero; 4], 32, &[Event::note(0, 62, 1.0)], &tr);
     assert_eq!(
-        r2,
-        [vec![0.0; 16], vec![0.0; 16]],
-        "capture must exclude playback feedback"
+        replaced,
+        [vec![0.0; 32], vec![0.0; 32]],
+        "single-sample replacement must exclude playback feedback"
     );
 }
 
 unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
-    plugin.flush(&[("One Shot", "On")]);
+    plugin.flush(&[("Record Once", "On")]);
     plugin.activate(48000.0, 64);
     let tr = transport(true, 120.0, 0, false);
     let a = [0.25; 8];
@@ -739,7 +791,7 @@ unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
     assert_eq!(
         protected[0],
         a.map(quantize),
-        "reset must not clear One Shot latch"
+        "reset must not clear Record Once latch"
     );
 
     plugin.flush(&[("Re-arm", "On")]);
@@ -762,7 +814,7 @@ unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
     );
 
     // A same-length replacement invalidates a voice latched to the old revision.
-    plugin.flush(&[("One Shot", "Off"), ("Re-arm", "Off")]);
+    plugin.flush(&[("Record Once", "Off"), ("Re-arm", "Off")]);
     plugin.reset();
     plugin.process([&z[..1]; 4], 1, &[Event::note(0, 50, 1.0)], &tr);
     let replacement = [b, b].concat();
@@ -830,10 +882,9 @@ unsafe fn state_and_instance_isolation(module: &Module) {
     let mut owner = module.create();
     configure(&owner);
     owner.flush(&[
-        ("Buffer", "3"),
-        ("Record Note", "44"),
+        ("Capture Note", "44"),
         ("Play Note", "45"),
-        ("One Shot", "On"),
+        ("Record Once", "On"),
     ]);
     owner.activate(48000.0, 16);
     let tr = transport(true, 120.0, 0, false);
@@ -850,11 +901,10 @@ unsafe fn state_and_instance_isolation(module: &Module) {
 
     let mut isolated = module.create();
     isolated.load_state(&state);
-    assert_eq!(isolated.value("Buffer").round(), 3.0);
-    assert_eq!(isolated.value("Record Note").round(), 44.0);
+    assert_eq!(isolated.value("Capture Note").round(), 44.0);
     assert_eq!(isolated.value("Play Note").round(), 45.0);
     assert_eq!(isolated.value("Playback Only"), 1.0);
-    assert_eq!(isolated.value("One Shot"), 1.0);
+    assert_eq!(isolated.value("Record Once"), 1.0);
     isolated.activate(48000.0, 16);
     let empty = isolated.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
     assert_eq!(
@@ -862,7 +912,7 @@ unsafe fn state_and_instance_isolation(module: &Module) {
         [vec![0.0; 8], vec![0.0; 8]],
         "RAM must not be serialized or shared"
     );
-    // One Shot is a saved control, but its spent latch is runtime-only: this
+    // Record Once is a saved control, but its spent latch is runtime-only: this
     // new instance must be able to capture immediately after loading.
     isolated.process(
         [&source, &zero, &zero, &zero],
@@ -890,7 +940,7 @@ unsafe fn restored_and_reset_commands_need_new_edges(module: &Module) {
     let owner = module.create();
     configure(&owner);
     owner.flush(&[
-        ("One Shot", "On"),
+        ("Record Once", "On"),
         ("Capture", "On"),
         ("Playback", "On"),
         ("Re-arm", "On"),
@@ -941,7 +991,7 @@ unsafe fn restored_and_reset_commands_need_new_edges(module: &Module) {
     assert_eq!(
         protected[0],
         vec![quantize(0.25); 16],
-        "held Re-arm must not release One Shot on reset"
+        "held Re-arm must not release Record Once on reset"
     );
 }
 
@@ -974,7 +1024,7 @@ fn main() {
         restored_and_reset_commands_need_new_edges(&module);
         assert!(started.elapsed() < Duration::from_secs(20));
         println!(
-            "CLAP audio harness ok: unified insert; rates=44.1/48/96k; routing, offsets, automation, reverse, retrigger, One Shot, volatile RAM ({:.2?})",
+            "CLAP audio harness ok: one sample per instance; 27 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM ({:.2?})",
             started.elapsed()
         );
     }

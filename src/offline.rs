@@ -14,14 +14,12 @@ const SAMPLE_RATE_F: f32 = SAMPLE_RATE as f32;
 pub struct RecordConfig {
     pub input: PathBuf,
     pub output: Option<PathBuf>,
-    pub channel: usize,
 }
 
 pub struct PlayConfig {
     pub input: PathBuf,
     pub output: PathBuf,
     pub output_secs: Option<f64>,
-    pub channel: usize,
     pub tempo_bpm: f64,
     pub params: RamPlayParams,
 }
@@ -140,18 +138,16 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
         tempo_bpm: 120.0,
     };
 
-    rec.start_recording(&params, true, config.channel);
+    rec.start_recording(&params);
 
     for (l, r) in &frames {
-        rec.record_sample(*l, *r, 0.0, 0.0, &params, config.channel);
+        rec.record_sample(*l, *r, 0.0, 0.0, &params);
     }
 
-    rec.stop_recording(config.channel);
+    rec.stop_recording();
 
     if let Some(output) = &config.output {
-        let buffer = memory
-            .read_buffer(config.channel)
-            .ok_or("failed to read buffer")?;
+        let buffer = memory.read_buffer().ok_or("failed to read buffer")?;
         // Scale 12-bit buffer values (-2048..2047) to 16-bit range so the WAV
         // represents correct audio levels and round-trips through read_wav_as_i16_buffer.
         let scaled: Vec<i16> = buffer.iter().map(|&s| s.saturating_mul(16)).collect();
@@ -186,14 +182,14 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
     let output_samples = (output_secs * SAMPLE_RATE as f64) as usize;
 
     let memory = Arc::new(SampleMemory::new());
-    memory.replace_buffer(config.channel, samples);
+    memory.replace_buffer(samples);
     let mut player = RamPlay::new(SAMPLE_RATE_F, memory);
     player.set_tempo(config.tempo_bpm);
-    player.trigger(&config.params, config.channel);
+    player.trigger(&config.params);
 
     let mut output = Vec::with_capacity(output_samples);
     for _ in 0..output_samples {
-        output.push(player.process(config.channel));
+        output.push(player.process());
     }
 
     write_wav_f32(&config.output, &output, SAMPLE_RATE)?;
@@ -222,33 +218,15 @@ fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|a| a == flag)
 }
 
-fn parse_channel(args: &[String]) -> Result<usize, String> {
-    match get_arg(args, "--channel") {
-        Some(s) => {
-            let ch: usize = s.parse().map_err(|_| format!("invalid channel: {s}"))?;
-            if ch > 3 {
-                return Err(format!("channel must be 0-3, got {ch}"));
-            }
-            Ok(ch)
-        }
-        None => Ok(0),
-    }
-}
-
 pub fn parse_record_args(args: &[String]) -> Option<RecordConfig> {
     if args.get(1).map(String::as_str) != Some("record") || !has_flag(args, "--input") {
         return None;
     }
     let input = get_arg(args, "--input").expect("--input requires a path");
     let output = get_arg(args, "--output").map(PathBuf::from);
-    let channel = parse_channel(args).unwrap_or_else(|e| {
-        eprintln!("error: {e}");
-        std::process::exit(1);
-    });
     Some(RecordConfig {
         input: PathBuf::from(input),
         output,
-        channel,
     })
 }
 
@@ -272,10 +250,6 @@ pub fn parse_play_args(args: &[String]) -> Option<PlayConfig> {
             eprintln!("error: invalid --tempo: {s}");
             std::process::exit(1);
         })
-    });
-    let channel = parse_channel(args).unwrap_or_else(|e| {
-        eprintln!("error: {e}");
-        std::process::exit(1);
     });
     let mut params = RamPlayParams {
         vol: 127,
@@ -317,7 +291,6 @@ pub fn parse_play_args(args: &[String]) -> Option<PlayConfig> {
         input: PathBuf::from(input),
         output: PathBuf::from(output),
         output_secs,
-        channel,
         tempo_bpm,
         params,
     })

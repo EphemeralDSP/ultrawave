@@ -3,33 +3,34 @@
 [Buildkite CI](https://buildkite.com/jmlynn/ultrawave)
 
 A MIDI-controlled **audio effect** for real-time 12-bit RAM sampling, inspired by
-the Elektron Machinedrum UW. One instance records and plays its own four mono
-buffers. Built in Rust with [NICE-plug](https://codeberg.org/RustAudio/nice-plug)
+the Elektron Machinedrum UW. **One instance captures and plays one mono sample.**
+Built in Rust with [NICE-plug](https://codeberg.org/RustAudio/nice-plug)
 and egui; available as VST3, CLAP, and a standalone application.
 
 ## Record and play in one instance
 
 1. Insert **Ultrawave** on the audio track, group, send bus, or master you want to sample.
-2. Select R1. Leave MAIN at 127, SIDE at 0, balances centered, RATE at HI, LEN at 1 BAR.
-3. Send MIDI note **48** to record, then note **50** to play after capture finishes.
-   These are MIDI numbers, because DAWs use different octave names. Both are
-   assignable on the Record page. The Capture/Audition buttons and automatable
-   Capture/Playback rising edges provide alternatives to MIDI.
-4. The default **DRY + PLAYBACK** output preserves incoming stereo and adds the
-   mono sample to both channels. Select **PLAYBACK ONLY** on a capture/send bus
+2. Play audio through that track. Leave **Track input** at 127 and **Sidechain** at 0.
+3. Press **Capture**. The adjacent duration dropdown defaults to **1 bar**.
+   When recording finishes, press **Play sample**. Both actions are always visible.
+   MIDI note **48** captures; **50** plays. Change these in the small **MIDI**
+   dropdown panel at the top right. Numbers are definitive because DAWs use
+   different octave names. Automatable Capture/Playback rising edges also work.
+4. The default **Input + sample** output preserves incoming stereo and adds the
+   mono sample to both channels. Select **Sample only** on a capture/send bus
    when the source is already audible elsewhere. Switching output modes ramps
    dry gain over 5 ms; neither mode changes what is recorded.
 
 The effect reads main/sidechain input **before adding playback**, so it does not
 implicitly record itself. There is no automatic access to the DAW master:
-insert on the master or route that mix to the effect. MAIN/BAL control the main
-input; SIDE/BAL control the optional stereo sidechain. These mix to mono before
-Capture LEV, SRR, DIST, RATE and signed 12-bit quantization. Capture controls do
-not color dry-through. Playback has its own level, SRR and distortion controls.
+insert on the master or route that mix to the effect. **Track input** and
+**Sidechain** mix to mono before capture gain and signed 12-bit quantization.
+**Capture sound & balance** contains the source balances, capture rate,
+rate crush (SRR) and drive. These print into the take without coloring dry-through.
+Playback has independent level, rate crush, bit crush (BRR) and drive controls.
 
-One shared selector chooses the buffer for the **next** record/play trigger.
-An existing take or voice keeps its latched buffer, so R2 can be recorded while
-R1 plays. A new take in the same buffer invalidates its old playing voice.
+**A new capture replaces the sample and stops its old playback and repeats.**
+Use separately routed instances to retain one take while capturing another.
 Playback triggered during recording uses the available prefix at that instant.
 
 ### Renoise: use an FX alias, not a second plugin
@@ -39,16 +40,16 @@ Playback triggered during recording uses the available prefix at that instant.
    for that exact track's Ultrawave effect. The slot only sends notes to the
    existing effect; it does not create another sampler or another RAM bank.
 3. Enter **C-4 (48)** to record and **D-4 (50)** to play using that alias
-   instrument. Place the playback note after LEN. Notes may be on a separate
+   instrument. Place the playback note after the capture duration. Notes may be on a separate
    pattern track; the sample audio comes out of the effect's track.
-4. Enable ONE SHOT to keep the first take when the pattern loops. RE-ARM allows
+4. Enable **Record once** to keep the first take when the pattern loops. **Re-arm** allows
    another capture without clearing the current take.
 
 For a mix of tracks, use a send/group receiver with Ultrawave. A normal `#Send`
 feeds its **main input**. Renoise's `#Sidechain` device feeds its **sidechain**;
-choose the receiver track and Ultrawave device, then raise SIDE. Put a sidechain
+choose the receiver track and Ultrawave device, then raise Sidechain. Put a sidechain
 receiver **after the sending tracks**: Renoise refuses sends to previous tracks.
-Multiple sidechain senders sum. Use Playback Only if monitoring the sources
+Multiple sidechain senders sum. Use Sample only if monitoring the sources
 elsewhere; leave dry-through enabled for an ordinary insert or master effect.
 
 ### Ableton Live and other hosts
@@ -56,7 +57,7 @@ elsewhere; leave dry-through enabled for an ordinary insert or master effect.
 Insert the VST3 effect on an audio/group track. On a MIDI track, choose that
 audio track in **MIDI To**, then **Ultrawave** as the destination device. Send
 48/50 notes or use host automation. Select a source in Live's plugin sidechain
-panel when using SIDE. This is standard MIDI-to-effect routing; Live execution
+panel when using Sidechain. This is standard MIDI-to-effect routing; Live execution
 has not yet been verified here. Hosts without MIDI-to-effect routing can use
 Capture and Playback automation instead. Live does not host CLAP natively.
 
@@ -66,30 +67,31 @@ Capture and Playback automation instead. Live does not host CLAP natively.
   hot inputs clip. BRR reduces playback resolution further, down to 2 bits.
 - SRR is sample-and-hold time reduction; it is independent of BRR. Distortion
   uses tanh drive. Pitch is varispeed with linear interpolation.
-- **Cross STRT and END for reverse playback.** Inverted interior markers reverse
+- **Cross Start and End for reverse playback.** Inverted interior markers reverse
   a slice; equal markers are silent. Direction/start latch on a trigger; end
-  remains live within that direction. Pitch is set by PTCH, not the trigger note.
+  remains live within that direction. Pitch is set by Pitch, not the trigger note.
 - Playback velocity controls loudness. NoteOff and zero-velocity notes do not
   choke a one-shot. Other note numbers are ignored. If both note assignments
   are equal, Record takes priority; use different notes for separate commands.
-- RTRG 1–126 adds that many repeats; 127 is **INF**. RTRG 0 or RTIM 0 cancels
+- Repeats 1–126 adds that many repeats; 127 is **INF**. Repeats 0 or Interval 0 cancels
   repeats without cutting the current hit. A new note replaces the old train.
   Host stop/reset stops recording and playback, preserving RAM.
-- RTIM follows host tempo (120 BPM fallback). Values 127/109/96/77/64/44/32 are
+- Interval follows host tempo (120 BPM fallback). Values 127/109/96/77/64/44/32 are
   1/16, 1/16T, 1/32, 1/32T, 1/64, 1/64T, 1/128. Fractional intervals retain their
   remainder; tempo changes preserve interval progress. Reported landmarks come
   from [Tarekith's tips](https://tarekith.com/assets/machinedrum_tipsandtricks.htm#Reference),
   not a measured firmware timing law.
 
-### One Shot and project saving
+### Record once and project saving
 
-ONE SHOT records on the first trigger for LEN (or capacity), then protects that
-take from subsequent triggers. RE-ARM, or a rising Re-arm automation edge,
+Record once records on the first trigger for the chosen duration (or capacity),
+then shows **SAMPLE PROTECTED** and ignores further capture triggers. Re-arm,
+or a rising Re-arm automation edge,
 allows another take. Re-arming waits for the next trigger and is ignored during
-capture. Disabling One Shot restores repeated recording; enabling it during a
-take protects that take. Transport stop/start and buffer selection do not re-arm.
+capture. Disabling Record once restores repeated recording; enabling it during a
+take protects that take. Transport stop/start does not re-arm.
 
-**Projects save controls, not audio or the One Shot runtime latch.** A newly
+**Projects save controls, not audio or the Record once runtime latch.** A newly
 loaded instance starts with empty RAM and an armed recorder. An existing
 instance keeps RAM across transport resets. Restoring or resetting a held-high
 Capture, Playback or Re-arm control does not count as a new trigger: automate
@@ -100,11 +102,13 @@ This replaces the old Record/Play pair; old plugin IDs/presets are not supported
 
 ## Editor
 
-Record and Play are pages of the same 760×460 monochrome editor. Click numeric
-values to type; drag waveform markers for a region or reverse playback.
+One 920×650 pane shows Capture and Play together. The waveform is shared, with
+draggable Start/End handles, dimmed excluded audio and a reverse indicator.
+MIDI assignments are dropdowns in a small panel, not sound knobs. Click numeric
+values to type; drag knobs vertically, Shift-drag for fine changes, double-click
+to restore defaults. **Sample only** maps to the host's **Playback Only** parameter.
 
-![Record page](screenshots/ultrawave_record.png)
-![Play page](screenshots/ultrawave_play.png)
+![Ultrawave single-pane editor](screenshots/ultrawave.png)
 
 ## Build and install
 
@@ -130,12 +134,12 @@ loaded binary, then rescan. The new bundle does not overwrite the old pair.
 ./scripts/dev-loop.sh fast          # Tests, exported CLAP audio/state, VST3 state, WAVs
 ./scripts/dev-loop.sh fast --watch  # Repeat after source changes
 ./scripts/dev-loop.sh full --editor # Clippy, release tests, validators, benchmark, UI lifecycle
-./scripts/screenshot.sh            # Both pages; inspect screenshots/*.png
+./scripts/screenshot.sh            # Empty/loaded sample; inspect screenshots/*.png
 ./scripts/audition.sh              # Six deterministic WAVs + audio metrics, no DAW/device
 ```
 
 The CLAP harness loads the actual cdylib and checks routing, timing, MIDI note
-assignment, One Shot, reverse/retrigger, saved controls, private RAM and instance
+assignment, Record once, replacement, reverse/retrigger, saved controls, private RAM and instance
 recreation at 44.1/48/96 kHz. These are software regressions, not hardware A/Bs.
 Failures stop the pass. Validators belong on PATH or in `target/tools/`.
 
@@ -167,7 +171,7 @@ cargo xtask bundle ultrawave-plugin --release
 Requires Renoise 3.5.4, Xvfb, xdotool, ImageMagick and Python. Uses a disposable
 HOME/display and only the newly built bundle, leaving personal sessions and
 installed plugins untouched. Tests FX-alias notes, main/sidechain routing,
-dry-through/playback-only, One Shot, reverse/retrigger, project save and process
+dry-through/playback-only, Record once, replacement, reverse/retrigger, project save and process
 reopen. Artifacts and logs: `target/renoise-test/`. This exercises VST3; the CLAP
 harness and clap-validator exercise CLAP. `tests/test.RPP` remains unverified
 historical scratch, not a supported setup.
@@ -178,8 +182,10 @@ historical scratch, not a supported setup.
 envelopes, drive and intermediate retrigger curves still need hardware captures.
 No measured DAC equalization or fixed hardware sample-clock model is claimed.
 RAM stores its source rate; 44.1/48/96 kHz playback preserves duration and pitch.
-Each buffer has 441,000 samples: 10 s at 44.1 kHz, 9.19 s at 48 kHz, 4.59 s at
-96 kHz at RATE HI. Reduced RATE also observes the ten-second capture-time cap.
+Each instance has capacity for 441,000 samples: 10 s at 44.1 kHz, 9.19 s at 48 kHz,
+4.59 s at 96 kHz with Capture rate HI. Reduced rate also observes the ten-second
+capture-time cap. Timed capture lengths are 1/2, 1, 2, 4, 8, 16 or 32 quarter-note
+beats; the last four appear as 1/2/4/8 bars. Maximum fills available capacity.
 
 Capture mixing uses SSE2 on x86-64 and NEON on supported AArch64 targets with
 scalar tails/fallback. Stateful SRR/envelopes remain sequential. Allocation

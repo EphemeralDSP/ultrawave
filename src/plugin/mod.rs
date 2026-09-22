@@ -1,7 +1,7 @@
 pub mod editor;
 mod sampler;
 
-use crate::machines::memory::{SampleMemory, CHANNEL_COUNT};
+use crate::machines::memory::SampleMemory;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -18,21 +18,19 @@ pub struct UiState {
     pub playing: AtomicBool,
     pub capture_peak: AtomicU32,
     pub playback_peak: AtomicU32,
-    /// One coherent snapshot: valid bit, channel, absolute sample position.
+    /// One coherent snapshot: valid bit and absolute sample position.
     playback_cursor: AtomicU64,
 }
 
 impl UiState {
-    pub fn publish_playback(&self, channel: usize, position: usize) {
-        self.playback_cursor.store(
-            (1 << 63) | ((channel as u64) << 32) | position as u64,
-            Ordering::Relaxed,
-        );
+    pub fn publish_playback(&self, position: usize) {
+        self.playback_cursor
+            .store((1 << 63) | position as u64, Ordering::Relaxed);
     }
 
-    pub fn playback_position(&self, channel: usize, displayed_len: usize) -> Option<f32> {
+    pub fn playback_position(&self, displayed_len: usize) -> Option<f32> {
         let packed = self.playback_cursor.load(Ordering::Relaxed);
-        (displayed_len != 0 && packed >> 63 != 0 && (packed >> 32) as u8 as usize == channel)
+        (displayed_len != 0 && packed >> 63 != 0)
             .then(|| (packed as u32 as f32 / displayed_len as f32).clamp(0.0, 1.0))
     }
 
@@ -41,17 +39,11 @@ impl UiState {
     }
 }
 
-pub fn maybe_preload_buffer_from_env(registry: &SampleMemory) -> Result<Option<usize>, String> {
+pub fn maybe_preload_buffer_from_env(memory: &SampleMemory) -> Result<Option<usize>, String> {
     let wav_path = match std::env::var("ULTRAWAVE_SCREENSHOT_WAV") {
         Ok(path) if !path.is_empty() => path,
         _ => return Ok(None),
     };
-
-    let channel = std::env::var("ULTRAWAVE_SCREENSHOT_CHANNEL")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|channel| *channel < CHANNEL_COUNT)
-        .unwrap_or(0);
 
     let path = PathBuf::from(wav_path);
     let mut reader = hound::WavReader::open(&path)
@@ -85,6 +77,6 @@ pub fn maybe_preload_buffer_from_env(registry: &SampleMemory) -> Result<Option<u
         .collect();
 
     let len = mono_buffer.len();
-    registry.replace_buffer_at_rate(channel, mono_buffer, spec.sample_rate as f32);
+    memory.replace_buffer_at_rate(mono_buffer, spec.sample_rate as f32);
     Ok(Some(len))
 }

@@ -9,9 +9,9 @@
 # - Terminal may need Screen Recording + Accessibility permissions
 #
 # Usage:
-#   ./scripts/screenshot.sh                    # Both plugins
-#   ./scripts/screenshot.sh record             # Record plugin only
-#   ./scripts/screenshot.sh play               # Play plugin only
+#   ./scripts/screenshot.sh                    # Empty and loaded sample
+#   ./scripts/screenshot.sh empty
+#   ./scripts/screenshot.sh loaded
 #   SCREENSHOT_DIR=/tmp ./scripts/screenshot.sh
 
 set -euo pipefail
@@ -23,17 +23,14 @@ DISPLAY_NUM="${DISPLAY_NUM:-99}"
 SCREEN_RES="${SCREEN_RES:-1280x720x24}"
 STARTUP_DELAY="${STARTUP_DELAY:-3}"
 PRELOAD_WAV="${PRELOAD_WAV:-$PROJECT_ROOT/tests/vinyl909.wav}"
-PRELOAD_CHANNEL="${PRELOAD_CHANNEL:-0}"
 OS_NAME="$(uname -s)"
 
-RECORD_BIN="$PROJECT_ROOT/target/release/ultrawave"
-PLAY_BIN="$RECORD_BIN"
+PLUGIN_BIN="$PROJECT_ROOT/target/release/ultrawave"
 
 cleanup() {
     echo "Cleaning up..."
     # Kill any plugin processes we started
-    [[ -n "${RECORD_PID:-}" ]] && kill "$RECORD_PID" 2>/dev/null || true
-    [[ -n "${PLAY_PID:-}" ]] && kill "$PLAY_PID" 2>/dev/null || true
+    [[ -n "${PLUGIN_PID:-}" ]] && kill "$PLUGIN_PID" 2>/dev/null || true
     # Kill Xvfb if we started it
     [[ -n "${XVFB_PID:-}" ]] && kill "$XVFB_PID" 2>/dev/null || true
 }
@@ -179,13 +176,14 @@ OSA
 screenshot_plugin() {
     local name="$1"
     local bin="$2"
+    local preload="$3"
     local output="$SCREENSHOT_DIR/${name}.png"
     local process_name
     process_name="$(basename "$bin")"
 
     # Plugin window dimensions (must match default_state() in editor)
-    local plugin_width=760
-    local plugin_height=460
+    local plugin_width=920
+    local plugin_height=650
 
     if [[ ! -x "$bin" ]]; then
         echo "Binary not found: $bin"
@@ -194,11 +192,10 @@ screenshot_plugin() {
     fi
 
     echo "Launching $name..."
-    ULTRAWAVE_SCREENSHOT_WAV="$PRELOAD_WAV" \
-    ULTRAWAVE_SCREENSHOT_CHANNEL="$PRELOAD_CHANNEL" \
-    ULTRAWAVE_SCREENSHOT_PAGE="${name#ultrawave_}" \
+    ULTRAWAVE_SCREENSHOT_WAV="$preload" \
     "$bin" &
     local pid=$!
+    PLUGIN_PID=$pid
 
     echo "Waiting ${STARTUP_DELAY}s for GUI to initialize..."
     sleep "$STARTUP_DELAY"
@@ -227,6 +224,7 @@ screenshot_plugin() {
 
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
+    PLUGIN_PID=""
 }
 
 main() {
@@ -242,18 +240,18 @@ main() {
     start_xvfb
     
     case "$target" in
-        record)
-            screenshot_plugin "ultrawave_record" "$RECORD_BIN"
+        empty)
+            screenshot_plugin "ultrawave_empty" "$PLUGIN_BIN" ""
             ;;
-        play)
-            screenshot_plugin "ultrawave_play" "$PLAY_BIN"
+        loaded)
+            screenshot_plugin "ultrawave" "$PLUGIN_BIN" "$PRELOAD_WAV"
             ;;
         both)
-            screenshot_plugin "ultrawave_record" "$RECORD_BIN"
-            screenshot_plugin "ultrawave_play" "$PLAY_BIN"
+            screenshot_plugin "ultrawave_empty" "$PLUGIN_BIN" ""
+            screenshot_plugin "ultrawave" "$PLUGIN_BIN" "$PRELOAD_WAV"
             ;;
         *)
-            echo "Usage: $0 [record|play|both]"
+            echo "Usage: $0 [empty|loaded|both]"
             exit 1
             ;;
     esac

@@ -6,7 +6,6 @@ enum SampleSource {
     Owned(Vec<i16>),
     Buffer {
         memory: Arc<SampleMemory>,
-        channel: usize,
         revision: u64,
         len: usize,
     },
@@ -32,11 +31,10 @@ impl SampleEngine {
         self.position = 0.0;
     }
 
-    pub fn latch_buffer(&mut self, memory: Arc<SampleMemory>, channel: usize) -> Option<f32> {
-        let (len, rate, revision) = memory.snapshot(channel)?;
+    pub fn latch_buffer(&mut self, memory: Arc<SampleMemory>) -> Option<f32> {
+        let (len, rate, revision) = memory.snapshot()?;
         self.source = SampleSource::Buffer {
             memory,
-            channel,
             revision,
             len,
         };
@@ -49,12 +47,9 @@ impl SampleEngine {
         match &self.source {
             SampleSource::Owned(_) => true,
             SampleSource::Buffer {
-                memory,
-                channel,
-                revision,
-                ..
+                memory, revision, ..
             } => memory
-                .snapshot(*channel)
+                .snapshot()
                 .is_some_and(|(_, _, current)| current == *revision),
         }
     }
@@ -85,11 +80,8 @@ impl SampleEngine {
         let pair = match &self.source {
             SampleSource::Owned(buffer) => Some((buffer[idx], buffer[(idx + 1).min(len - 1)])),
             SampleSource::Buffer {
-                memory,
-                channel,
-                revision,
-                ..
-            } => memory.read_sample_pair(*channel, idx, *revision, len),
+                memory, revision, ..
+            } => memory.read_sample_pair(idx, *revision, len),
         };
         let Some((a, b)) = pair else {
             self.position = if reverse { 0.0 } else { len as f64 };

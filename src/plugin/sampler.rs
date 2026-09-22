@@ -19,8 +19,6 @@ pub struct UltrawavePlugin {
     memory: Arc<SampleMemory>,
     recorder: RamRecord,
     player: RamPlay,
-    record_channel: usize,
-    play_channel: usize,
     sample_rate: f32,
     velocity: f32,
     capture_was_high: bool,
@@ -47,8 +45,6 @@ impl Default for UltrawavePlugin {
             recorder: RamRecord::new(sample_rate, memory.clone()),
             player: RamPlay::new(sample_rate, memory.clone()),
             memory,
-            record_channel: 0,
-            play_channel: 0,
             sample_rate,
             velocity: 1.0,
             capture_was_high: false,
@@ -70,21 +66,19 @@ impl UltrawavePlugin {
         if self.params.record.one_shot.value() && self.one_shot_spent {
             return;
         }
-        self.recorder.stop_all_recording();
-        self.record_channel = self.params.buffer.value() as usize;
+        self.recorder.stop_recording();
+        self.player.stop();
         self.decimator = crate::Decimator::new();
-        self.recorder
-            .start_recording(params, true, self.record_channel);
+        self.recorder.start_recording(params);
         if self.params.record.one_shot.value() {
             self.one_shot_spent = true;
         }
     }
 
     fn play(&mut self, params: &RamPlayParams, velocity: f32) {
-        self.player.stop_all();
-        self.play_channel = self.params.buffer.value() as usize;
+        self.player.stop();
         self.velocity = velocity;
-        self.player.trigger(params, self.play_channel);
+        self.player.trigger(params);
     }
 }
 
@@ -144,9 +138,9 @@ impl Plugin for UltrawavePlugin {
     }
 
     fn reset(&mut self) {
-        // Host transport resets stop voices/takes, not RAM or One Shot protection.
-        self.recorder.stop_all_recording();
-        self.player.stop_all();
+        // Host transport resets stop voices/takes, not RAM or Record once protection.
+        self.recorder.stop_recording();
+        self.player.stop();
         // Loading a saved high command or resetting while it is held is not a
         // new rising edge. Automation must go low then high to trigger again.
         self.capture_was_high = self.params.record.capture.value();
@@ -180,18 +174,18 @@ impl Plugin for UltrawavePlugin {
         let tempo = transport.tempo.unwrap_or(120.0);
         self.player.set_tempo(tempo);
         if self.transport_was_playing && !transport.playing {
-            self.player.stop_all();
-            self.recorder.stop_all_recording();
+            self.player.stop();
+            self.recorder.stop_recording();
         }
         self.transport_was_playing = transport.playing;
         if !self.params.record.one_shot.value() {
             self.one_shot_spent = false;
-        } else if self.recorder.is_any_recording() {
+        } else if self.recorder.is_recording() {
             self.one_shot_spent = true;
         }
         let rearm = self.params.rearm.value();
         if (self.ui.rearm.swap(false, Ordering::Relaxed) || (rearm && !self.rearm_was_high))
-            && !self.recorder.is_any_recording()
+            && !self.recorder.is_recording()
         {
             self.one_shot_spent = false;
         }
@@ -220,7 +214,7 @@ impl Plugin for UltrawavePlugin {
             dist: p.dist.value(),
             vol: 127,
         };
-        self.player.update_params(&play, self.play_channel);
+        self.player.update_params(&play);
         let capture_high = self.params.record.capture.value();
         if self.ui.record_trigger.swap(false, Ordering::Relaxed)
             || (capture_high && !self.capture_was_high)
@@ -296,8 +290,8 @@ impl Plugin for UltrawavePlugin {
                 let captured = self
                     .distortion
                     .process(self.decimator.process(input * record_gain, srr));
-                self.recorder.record_mono(captured, self.record_channel);
-                let played = self.player.process(self.play_channel) * self.velocity * play_gain;
+                self.recorder.record_mono(captured);
+                let played = self.player.process() * self.velocity * play_gain;
                 capture_peak = capture_peak.max(captured.abs());
                 playback_peak = playback_peak.max(played.abs());
                 for channel in main.iter_mut() {
@@ -307,10 +301,10 @@ impl Plugin for UltrawavePlugin {
         }
         self.ui
             .recording
-            .store(self.recorder.is_any_recording(), Ordering::Relaxed);
+            .store(self.recorder.is_recording(), Ordering::Relaxed);
         self.ui
             .playing
-            .store(self.player.is_playing(self.play_channel), Ordering::Relaxed);
+            .store(self.player.is_playing(), Ordering::Relaxed);
         self.ui
             .capture_locked
             .store(self.one_shot_spent, Ordering::Relaxed);
@@ -320,8 +314,8 @@ impl Plugin for UltrawavePlugin {
         self.ui
             .playback_peak
             .fetch_max(playback_peak.to_bits(), Ordering::Relaxed);
-        if let Some(position) = self.player.playback_position(self.play_channel) {
-            self.ui.publish_playback(self.play_channel, position);
+        if let Some(position) = self.player.playback_position() {
+            self.ui.publish_playback(position);
         } else {
             self.ui.clear_playback();
         }

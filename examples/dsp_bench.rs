@@ -27,7 +27,7 @@ fn main() {
 
     for (label, len) in [("short", 4_410), ("10s", 441_000)] {
         let memory = Arc::new(SampleMemory::new());
-        memory.replace_buffer(0, vec![512; len]);
+        memory.replace_buffer(vec![512; len]);
         let mut player = RamPlay::new(44_100.0, memory);
         let params = RamPlayParams {
             vol: 127,
@@ -35,7 +35,7 @@ fn main() {
         };
         let start = Instant::now();
         for _ in 0..100_000 {
-            player.trigger(black_box(&params), 0);
+            player.trigger(black_box(&params));
         }
         println!(
             "trigger {label}: {:.1} ns",
@@ -63,14 +63,14 @@ fn main() {
         ),
     ] {
         let memory = Arc::new(SampleMemory::new());
-        memory.replace_buffer(0, vec![512; 441_000]);
+        memory.replace_buffer(vec![512; 441_000]);
         let mut player = RamPlay::new(44_100.0, memory);
-        player.trigger(&params, 0);
+        player.trigger(&params);
         let start = Instant::now();
         for _ in 0..1_000_000 {
-            black_box(player.process(0));
-            if !player.is_playing(0) {
-                player.trigger(&params, 0);
+            black_box(player.process());
+            if !player.is_playing() {
+                player.trigger(&params);
             }
         }
         println!(
@@ -101,8 +101,8 @@ fn capture<const BATCHED: bool>(drive: f32) -> f64 {
     let mut output = [0.0; 64];
     let start = Instant::now();
     for _ in 0..BLOCKS {
-        if !recorder.is_recording(0) {
-            recorder.start_recording(&params, true, 0);
+        if !recorder.is_recording() {
+            recorder.start_recording(&params);
         }
         let inputs = black_box(inputs.each_ref().map(|s| s.as_slice()));
         let gains = black_box([0.17, 0.83, 0.37, 0.63]);
@@ -119,8 +119,8 @@ fn capture<const BATCHED: bool>(drive: f32) -> f64 {
                     + inputs[3][i] * gains[3]
             };
             let wet = distortion.process(decimator.process(dry, drive));
-            recorder.record_mono(wet, 0);
-            output[i] = dry * 0.25 + recorder.monitor_sample(0) * 0.75;
+            recorder.record_mono(wet);
+            output[i] = dry * 0.25 + recorder.monitor_sample() * 0.75;
         }
         black_box(&output);
     }

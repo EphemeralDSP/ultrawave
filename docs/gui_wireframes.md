@@ -1,26 +1,38 @@
 # Ultrawave editor layout
 
-One 760×460 monochrome editor, two pages. Preserve the sharp rectangles, ticked
-encoders, black/white palette and compact typography of
-[the hardware reference](../reference/gui_reference.png).
+One 920×650 pane. One instance owns one take. Capture and Play are actions,
+not modes; both stay visible. This design supersedes the two-page hardware replica.
 
-| Region | Record page | Play page |
-|---|---|---|
-| Header | Title, One Shot, Re-arm, Capture | Title, Audition |
-| Sidebar | Capture LEV, SRR, DIST and input meter | Playback LEV, SRR, DIST and playback meter |
-| Knob row 1 | MAIN, BAL, SIDE, BAL | PTCH, DEC, HOLD, BRR |
-| Knob row 2 | REC NOTE, PLAY NOTE, LEN, RATE | STRT, END, RTRG, RTIM |
-| Waveform | Selected buffer | Selected buffer with draggable start/end and cursor |
-| Status | Empty / Armed / Recording / Locked / Ready, duration, source rate | Empty / Playing / Ready, duration, source rate |
-| Footer | Rn indicator, Record/Play page buttons, output routing, [R1]–[R4] | Same controls |
+| Region | Controls and feedback |
+|---|---|
+| Header | Title, explicit Input + sample / Sample only choices, small MIDI popover |
+| Waveform | Shared sample, draggable S/E handles, dimmed excluded region, playback cursor |
+| Trim row | Editable Start/End values, Forward/Reverse/Empty region, duration and source rate |
+| Capture card | Capture button beside duration dropdown, Record once, Re-arm, recording/protected/ready status |
+| Capture sources | Track input, Sidechain, Gain; input meter |
+| Capture details popover | Track/side balances, capture rate, rate crush and drive |
+| Play card | Play sample button, ready/playing feedback; disabled when empty |
+| Pitch & envelope | Pitch, Hold, Decay |
+| Repeat | Repeats and tempo-synced Interval |
+| Character/output | Rate crush, Bit crush, Drive, Level and playback meter |
+| Footer | New captures replace the take; project saving does not preserve audio |
 
-MAIN and SIDE mean the host's main input and optional sidechain, not an implicit
-master tap. Dry + Playback preserves stereo input; Playback Only mutes dry.
-These replace the former CUE controls. The buffer selector is shared by both
-pages; capture/play triggers use its current selection, while running takes and
-voices retain their latched buffer.
+Use readable typography, restrained warm capture/cool playback accents and clear
+grouping. MIDI assignments are dropdowns showing both number and note name, with
+an octave-naming disclaimer and an equal-note priority warning. Opening a nested
+dropdown or editing capture details must keep the parent popover open. Scrolling
+the note list must work from 0 through 127, without snapping back to the selection.
 
-Run `./scripts/screenshot.sh` and inspect **both** images immediately after GUI
-changes. Also exercise changed interactive states (One Shot, output mode,
-buffer selection, reverse markers) in the rendered editor. Images are in
-`screenshots/`; the Renoise fixture separately exercises actual host audio/state.
+Track input means the host main input, not an implicit master tap. Sidechain is
+optional host-routed audio. Both sources mix to mono before capture. Output
+choices do not affect capture; Sample only mutes stereo dry-through.
+
+An accepted capture replaces the sample and stops its old voice/repeat train.
+Record once protects the first take: show SAMPLE PROTECTED, disable Capture,
+enable Re-arm after capture completes. Re-arm retains the take until the next
+trigger. New instances start empty and unprotected, even after project restore.
+
+Run `./scripts/screenshot.sh` and inspect empty and loaded images immediately
+after GUI changes. Also exercise and inspect open MIDI/note dropdowns, capture
+details, reverse interior markers, sample-only output and protected/re-arm states.
+The isolated Renoise fixture verifies actual audio, FX-alias routing and state.

@@ -117,10 +117,10 @@ run_host() {
 
 run_host capture capture_complete
 sleep 0.5
-import -display "$DISPLAY_NUMBER" -window root "$OUT/one-shot-locked.png"
+import -display "$DISPLAY_NUMBER" -window root "$OUT/sample-protected.png"
 stop_renoise
 # Reopen the saved project in an entirely fresh process. The parameter state and
-# FX alias must return, while instance-private RAM and One Shot latch must not.
+# FX alias must return, while instance-private sample and Record Once latch must not.
 run_host reopen complete "$OUT/ultrawave-host-test.xrns"
 sleep 0.5 # Let the final editor paint before capture.
 import -display "$DISPLAY_NUMBER" -window root "$OUT/isolated-renoise.png"

@@ -1,5 +1,5 @@
 use crate::dsp::sample_engine::param_to_normalized;
-use crate::machines::memory::{SampleMemory, CHANNEL_COUNT, MAX_BUFFER_SAMPLES};
+use crate::machines::memory::{SampleMemory, MAX_BUFFER_SAMPLES};
 use std::sync::Arc;
 
 pub struct RamRecordParams {
@@ -48,14 +48,14 @@ impl RamRecordParams {
 /// Returns `None` for INF mode (record until buffer full).
 pub fn rec_len_to_beats(rec_len: i32) -> Option<f64> {
     match rec_len {
-        0..=15 => Some(0.5),    // 1/8 note
-        16..=31 => Some(1.0),   // 1/4 note
-        32..=47 => Some(2.0),   // 1/2 note
-        48..=63 => Some(4.0),   // 1 BAR
-        64..=79 => Some(8.0),   // 2 BAR
-        80..=95 => Some(16.0),  // 4 BAR
-        96..=111 => Some(32.0), // 8 BAR
-        _ => None,              // INF
+        0..=15 => Some(0.5),
+        16..=31 => Some(1.0),
+        32..=47 => Some(2.0),
+        48..=63 => Some(4.0),
+        64..=79 => Some(8.0),
+        80..=95 => Some(16.0),
+        96..=111 => Some(32.0),
+        _ => None,
     }
 }
 
@@ -63,13 +63,13 @@ pub struct RamRecord {
     memory: Arc<SampleMemory>,
     sample_rate: f32,
     max_length: usize,
-    target_lengths: [usize; CHANNEL_COUNT],
-    samples_recorded: [usize; CHANNEL_COUNT],
-    elapsed_samples: [usize; CHANNEL_COUNT],
-    is_recording: [bool; CHANNEL_COUNT],
-    rec_rate_counters: [f32; CHANNEL_COUNT],
-    rec_rate_divisors: [f32; CHANNEL_COUNT],
-    monitor: [f32; CHANNEL_COUNT],
+    target_length: usize,
+    samples_recorded: usize,
+    elapsed_samples: usize,
+    is_recording: bool,
+    rec_rate_counter: f32,
+    rec_rate_divisor: f32,
+    monitor: f32,
 }
 
 impl RamRecord {
@@ -77,79 +77,55 @@ impl RamRecord {
 
     pub fn new(sample_rate: f32, memory: Arc<SampleMemory>) -> Self {
         let max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
-
         Self {
             memory,
             sample_rate,
             max_length,
-            target_lengths: [MAX_BUFFER_SAMPLES; CHANNEL_COUNT],
-            samples_recorded: [0; CHANNEL_COUNT],
-            elapsed_samples: [0; CHANNEL_COUNT],
-            is_recording: [false; CHANNEL_COUNT],
-            rec_rate_counters: [0.0; CHANNEL_COUNT],
-            rec_rate_divisors: [1.0; CHANNEL_COUNT],
-            monitor: [0.0; CHANNEL_COUNT],
+            target_length: MAX_BUFFER_SAMPLES,
+            samples_recorded: 0,
+            elapsed_samples: 0,
+            is_recording: false,
+            rec_rate_counter: 0.0,
+            rec_rate_divisor: 1.0,
+            monitor: 0.0,
         }
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
-        for length in &mut self.target_lengths {
-            *length = (*length).min(self.max_length);
-        }
+        self.target_length = self.target_length.min(self.max_length);
     }
 
-    fn clamp_channel(channel: usize) -> usize {
-        channel.min(CHANNEL_COUNT - 1)
-    }
-
-    /// Starts capturing audio into the requested buffer channel.
-    /// Retriggering while recording restarts from the beginning.
-    pub fn start_recording(&mut self, params: &RamRecordParams, _clear: bool, channel: usize) {
-        let channel = Self::clamp_channel(channel);
-        self.stop_recording(channel);
-
+    /// Starts a new capture, replacing the previous sample.
+    pub fn start_recording(&mut self, params: &RamRecordParams) {
+        self.stop_recording();
         let target_length = match rec_len_to_beats(params.rec_len) {
             Some(beats) => {
                 let seconds = beats * (60.0 / params.tempo_bpm);
                 (seconds * self.sample_rate as f64) as usize
             }
-            None => self.max_length, // INF mode
+            None => self.max_length,
         };
-        let target_length = target_length.min(self.max_length).max(1);
-
-        self.target_lengths[channel] = target_length;
-        self.samples_recorded[channel] = 0;
-        self.elapsed_samples[channel] = 0;
+        self.target_length = target_length.min(self.max_length).max(1);
+        self.samples_recorded = 0;
+        self.elapsed_samples = 0;
 
         let rate_normalized = param_to_normalized(params.rec_rate);
-        self.rec_rate_divisors[channel] = 1.0 + (1.0 - rate_normalized) * 15.0;
-        self.rec_rate_counters[channel] = 0.0;
-        self.monitor[channel] = 0.0;
+        self.rec_rate_divisor = 1.0 + (1.0 - rate_normalized) * 15.0;
+        self.rec_rate_counter = 0.0;
+        self.monitor = 0.0;
 
-        let stored_rate = self.sample_rate / self.rec_rate_divisors[channel].ceil();
-        self.is_recording[channel] = self.memory.begin_recording(channel, stored_rate);
+        let stored_rate = self.sample_rate / self.rec_rate_divisor.ceil();
+        self.is_recording = self.memory.begin_recording(stored_rate);
     }
 
-    pub fn stop_recording(&mut self, channel: usize) {
-        let channel = Self::clamp_channel(channel);
-        self.is_recording[channel] = false;
+    pub fn stop_recording(&mut self) {
+        self.is_recording = false;
     }
 
-    pub fn stop_all_recording(&mut self) {
-        for channel in 0..CHANNEL_COUNT {
-            self.stop_recording(channel);
-        }
-    }
-
-    pub fn is_recording(&self, channel: usize) -> bool {
-        let channel = Self::clamp_channel(channel);
-        self.is_recording[channel]
-    }
-
-    pub fn is_any_recording(&self) -> bool {
-        self.is_recording.iter().any(|&flag| flag)
+    pub fn is_recording(&self) -> bool {
+        self.is_recording
     }
 
     pub fn record_sample(
@@ -159,122 +135,96 @@ impl RamRecord {
         input_l: f32,
         input_r: f32,
         params: &RamRecordParams,
-        channel: usize,
     ) {
         let gains = params.input_gains();
         let mono = main_l * gains[0] + main_r * gains[1] + input_l * gains[2] + input_r * gains[3];
-        self.record_mono(mono, channel);
+        self.record_mono(mono);
     }
 
     /// Capture an already mixed/processed sample without repeating input mixing.
-    pub fn record_mono(&mut self, mono: f32, channel: usize) {
-        let channel = Self::clamp_channel(channel);
-
-        if !self.is_recording[channel] {
+    pub fn record_mono(&mut self, mono: f32) {
+        if !self.is_recording {
             return;
         }
 
-        self.rec_rate_counters[channel] += 1.0;
-        if self.rec_rate_counters[channel] < self.rec_rate_divisors[channel] {
-            self.elapsed_samples[channel] += 1;
-            if self.elapsed_samples[channel] >= self.target_lengths[channel] {
-                self.is_recording[channel] = false;
+        self.rec_rate_counter += 1.0;
+        if self.rec_rate_counter < self.rec_rate_divisor {
+            self.elapsed_samples += 1;
+            if self.elapsed_samples >= self.target_length {
+                self.is_recording = false;
             }
             return;
         }
-        self.rec_rate_counters[channel] = 0.0;
+        self.rec_rate_counter = 0.0;
 
         let sample_12bit = (mono * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
-
-        if !self.memory.write_sample(channel, sample_12bit) {
-            self.is_recording[channel] = false;
+        if !self.memory.write_sample(sample_12bit) {
+            self.is_recording = false;
             return;
         }
 
-        self.monitor[channel] = sample_12bit as f32 / 2048.0;
-        self.samples_recorded[channel] += 1;
-        self.elapsed_samples[channel] += 1;
-
-        if self.elapsed_samples[channel] >= self.target_lengths[channel] {
-            self.is_recording[channel] = false;
+        self.monitor = sample_12bit as f32 / 2048.0;
+        self.samples_recorded += 1;
+        self.elapsed_samples += 1;
+        if self.elapsed_samples >= self.target_length {
+            self.is_recording = false;
         }
     }
 
-    pub fn monitor_sample(&self, channel: usize) -> f32 {
-        self.monitor[Self::clamp_channel(channel)]
+    pub fn monitor_sample(&self) -> f32 {
+        self.monitor
     }
 
-    pub fn get_buffer(&self, channel: usize) -> Vec<i16> {
-        self.memory.read_buffer(channel).unwrap_or_default()
+    pub fn get_buffer(&self) -> Vec<i16> {
+        self.memory.read_buffer().unwrap_or_default()
     }
 
-    pub fn buffer_len(&self, channel: usize) -> usize {
-        self.memory.buffer_len(channel)
+    pub fn buffer_len(&self) -> usize {
+        self.memory.buffer_len()
     }
 
-    pub fn target_length(&self, channel: usize) -> usize {
-        let channel = Self::clamp_channel(channel);
-        self.target_lengths[channel]
+    pub fn target_length(&self) -> usize {
+        self.target_length
     }
 
-    pub fn recorded_samples(&self, channel: usize) -> usize {
-        let channel = Self::clamp_channel(channel);
-        self.samples_recorded[channel]
+    pub fn recorded_samples(&self) -> usize {
+        self.samples_recorded
     }
 
-    pub fn samples_remaining(&self, channel: usize) -> usize {
-        let channel = Self::clamp_channel(channel);
-        self.target_lengths[channel].saturating_sub(self.elapsed_samples[channel])
+    pub fn samples_remaining(&self) -> usize {
+        self.target_length.saturating_sub(self.elapsed_samples)
     }
 
-    pub fn clear(&mut self, channel: usize) {
-        let channel = Self::clamp_channel(channel);
-        self.memory.clear_buffer(channel);
-        self.samples_recorded[channel] = 0;
-        self.elapsed_samples[channel] = 0;
-        self.is_recording[channel] = false;
-        self.rec_rate_counters[channel] = 0.0;
-        self.rec_rate_divisors[channel] = 1.0;
+    pub fn clear(&mut self) {
+        self.memory.clear_buffer();
+        self.samples_recorded = 0;
+        self.elapsed_samples = 0;
+        self.is_recording = false;
+        self.rec_rate_counter = 0.0;
+        self.rec_rate_divisor = 1.0;
     }
 
-    pub fn clear_all(&mut self) {
-        self.stop_all_recording();
-        self.memory.clear_all();
-        for channel in 0..CHANNEL_COUNT {
-            self.samples_recorded[channel] = 0;
-            self.elapsed_samples[channel] = 0;
-            self.is_recording[channel] = false;
-            self.rec_rate_counters[channel] = 0.0;
-            self.rec_rate_divisors[channel] = 1.0;
-        }
-    }
-
-    pub fn recording_progress(&self, channel: usize) -> f32 {
-        let channel = Self::clamp_channel(channel);
-        let target = self.target_lengths[channel];
-        if target == 0 {
+    pub fn recording_progress(&self) -> f32 {
+        if self.target_length == 0 {
             return 0.0;
         }
-        self.elapsed_samples[channel] as f32 / target as f32
+        self.elapsed_samples as f32 / self.target_length as f32
     }
 }
 
 impl Drop for RamRecord {
     fn drop(&mut self) {
-        self.stop_all_recording();
+        self.stop_recording();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::memory::SampleMemory;
-    use std::sync::Arc;
 
     const SAMPLE_RATE: f32 = 100.0;
 
     fn basic_params() -> RamRecordParams {
-        // rec_len 48 = 1 BAR = 4 beats. At 120 BPM that's 2 seconds = 200 samples @ 100Hz.
         RamRecordParams {
             rec_len: 48,
             rec_rate: 127,
@@ -283,190 +233,102 @@ mod tests {
         }
     }
 
-    fn record_one_sample(rec: &mut RamRecord, params: &RamRecordParams, channel: usize) {
-        rec.record_sample(0.5, 0.5, 0.5, 0.5, params, channel);
+    fn recorder() -> (RamRecord, Arc<SampleMemory>) {
+        let memory = Arc::new(SampleMemory::new());
+        (RamRecord::new(SAMPLE_RATE, memory.clone()), memory)
+    }
+
+    fn record_one_sample(recorder: &mut RamRecord, params: &RamRecordParams) {
+        recorder.record_sample(0.5, 0.5, 0.5, 0.5, params);
     }
 
     #[test]
-    fn note_on_starts_recording_and_writes_to_registry() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
+    fn recording_starts_writes_and_stops_at_beat_synced_length() {
+        let (mut recorder, memory) = recorder();
         let params = basic_params();
-
-        rec.start_recording(&params, true, 0);
-        assert!(rec.is_recording(0));
-
-        record_one_sample(&mut rec, &params, 0);
-        assert!(registry.buffer_len(0) > 0);
-    }
-
-    #[test]
-    fn recording_stops_at_beat_synced_length() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
-        // 1 BAR at 120 BPM = 4 beats * 0.5s/beat = 2s = 200 samples @ 100Hz
-        let params = basic_params();
-
-        rec.start_recording(&params, true, 0);
-        let mut count = 0;
-        while rec.is_recording(0) {
-            record_one_sample(&mut rec, &params, 0);
-            count += 1;
-            assert!(count < 1000, "recording loop did not end");
+        recorder.start_recording(&params);
+        assert!(recorder.is_recording());
+        while recorder.is_recording() {
+            record_one_sample(&mut recorder, &params);
         }
-
-        // At 120 BPM, 1 BAR = 4 beats = 2 seconds = 200 samples @ 100Hz sample rate.
-        // Recording stops after 200 elapsed samples (target_length = 200).
-        assert_eq!(rec.target_length(0), 200);
-        assert_eq!(registry.buffer_len(0), 200);
+        assert_eq!(recorder.target_length(), 200);
+        assert_eq!(memory.buffer_len(), 200);
     }
 
     #[test]
-    fn retrigger_restarts_recording() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
+    fn retrigger_replaces_the_previous_sample() {
+        let (mut recorder, memory) = recorder();
         let params = basic_params();
-
-        rec.start_recording(&params, true, 2);
-        // Record a few samples
+        recorder.start_recording(&params);
         for _ in 0..5 {
-            record_one_sample(&mut rec, &params, 2);
+            record_one_sample(&mut recorder, &params);
         }
-        assert!(rec.is_recording(2));
-        assert_eq!(registry.buffer_len(2), 5);
-
-        // Retrigger should restart recording from scratch
-        rec.start_recording(&params, true, 2);
-        assert!(rec.is_recording(2));
-        // Buffer was cleared by retrigger
-        assert_eq!(registry.buffer_len(2), 0);
-        assert_eq!(rec.samples_remaining(2), rec.target_length(2));
+        assert_eq!(memory.buffer_len(), 5);
+        recorder.start_recording(&params);
+        assert!(recorder.is_recording());
+        assert_eq!(memory.buffer_len(), 0);
+        assert_eq!(recorder.samples_remaining(), recorder.target_length());
     }
 
     #[test]
     fn recording_length_is_locked_at_trigger_time() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
-        let start_params = RamRecordParams {
-            rec_len: 0, // 1/8 note = 0.5 beats
-            tempo_bpm: 120.0,
-            ..Default::default()
-        };
-        let changed_params = RamRecordParams {
-            rec_len: 112, // INF
-            tempo_bpm: 120.0,
-            ..start_params
-        };
-
-        rec.start_recording(&start_params, true, 1);
-        let locked_target = rec.target_length(1);
-        // 0.5 beats at 120 BPM = 0.25s = 25 samples
-        assert_eq!(locked_target, 25);
-
-        let mut count = 0;
-        while rec.is_recording(1) {
-            rec.record_sample(0.5, 0.5, 0.5, 0.5, &changed_params, 1);
-            count += 1;
-            assert!(count < 500, "recording loop did not end");
-        }
-
-        // Should have stopped at the original target, not INF
-        assert_eq!(registry.buffer_len(1), locked_target);
-    }
-
-    #[test]
-    fn recording_writes_only_to_selected_channel() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
-        let params = basic_params();
-
-        rec.start_recording(&params, true, 2);
-        record_one_sample(&mut rec, &params, 2);
-
-        assert_eq!(registry.buffer_len(0), 0);
-        assert_eq!(registry.buffer_len(1), 0);
-        assert!(registry.buffer_len(2) > 0);
-        assert_eq!(registry.buffer_len(3), 0);
-    }
-
-    #[test]
-    fn beat_to_sample_at_various_tempos() {
-        // 1 BAR = 4 beats
-        // At 60 BPM: 4 beats * 1s/beat = 4s = 400 samples @ 100Hz
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry);
-        let params_60 = RamRecordParams {
-            rec_len: 48, // 1 BAR
-            tempo_bpm: 60.0,
-            ..Default::default()
-        };
-        rec.start_recording(&params_60, true, 0);
-        assert_eq!(rec.target_length(0), 400);
-
-        // At 180 BPM: 4 beats * (60/180)s/beat = 4/3s ≈ 133 samples
-        let params_180 = RamRecordParams {
-            rec_len: 48,
-            tempo_bpm: 180.0,
-            ..Default::default()
-        };
-        rec.start_recording(&params_180, true, 1);
-        assert_eq!(rec.target_length(1), 133);
-
-        // 1/8 note at 120 BPM: 0.5 beats * 0.5s/beat = 0.25s = 25 samples
-        let params_eighth = RamRecordParams {
+        let (mut recorder, memory) = recorder();
+        let start = RamRecordParams {
             rec_len: 0,
             tempo_bpm: 120.0,
             ..Default::default()
         };
-        rec.start_recording(&params_eighth, true, 2);
-        assert_eq!(rec.target_length(2), 25);
-
-        // 2 BAR at 120 BPM: 8 beats * 0.5s/beat = 4s = 400 samples
-        let params_2bar = RamRecordParams {
-            rec_len: 64,
-            tempo_bpm: 120.0,
-            ..Default::default()
+        let changed = RamRecordParams {
+            rec_len: 112,
+            ..start
         };
-        rec.start_recording(&params_2bar, true, 3);
-        assert_eq!(rec.target_length(3), 400);
-    }
-
-    #[test]
-    fn inf_mode_records_until_buffer_full() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry.clone());
-        let params = RamRecordParams {
-            rec_len: 127, // INF
-            tempo_bpm: 120.0,
-            ..Default::default()
-        };
-
-        rec.start_recording(&params, true, 0);
-        let max_length = (SAMPLE_RATE * RamRecord::MAX_RECORD_SECONDS) as usize;
-        assert_eq!(rec.target_length(0), max_length);
-    }
-
-    #[test]
-    fn samples_remaining_counts_down_to_zero() {
-        let registry = Arc::new(SampleMemory::new());
-        let mut rec = RamRecord::new(SAMPLE_RATE, registry);
-        let params = RamRecordParams {
-            rec_len: 0, // 1/8 note = 0.5 beats at 120 BPM = 0.25s = 25 samples
-            tempo_bpm: 120.0,
-            ..Default::default()
-        };
-
-        rec.start_recording(&params, true, 0);
-        let initial_remaining = rec.samples_remaining(0);
-        assert_eq!(initial_remaining, rec.target_length(0));
-        assert_eq!(initial_remaining, 25);
-
-        while rec.samples_remaining(0) > 0 {
-            rec.record_sample(0.5, 0.5, 0.5, 0.5, &params, 0);
+        recorder.start_recording(&start);
+        while recorder.is_recording() {
+            recorder.record_sample(0.5, 0.5, 0.5, 0.5, &changed);
         }
+        assert_eq!(recorder.target_length(), 25);
+        assert_eq!(memory.buffer_len(), 25);
+    }
 
-        assert_eq!(rec.samples_remaining(0), 0);
-        assert!(!rec.is_recording(0));
+    #[test]
+    fn beat_to_sample_at_various_tempos() {
+        let (mut recorder, _) = recorder();
+        for (tempo_bpm, rec_len, expected) in [
+            (60.0, 48, 400),
+            (180.0, 48, 133),
+            (120.0, 0, 25),
+            (120.0, 64, 400),
+        ] {
+            recorder.start_recording(&RamRecordParams {
+                rec_len,
+                tempo_bpm,
+                ..Default::default()
+            });
+            assert_eq!(recorder.target_length(), expected);
+        }
+    }
+
+    #[test]
+    fn inf_mode_and_remaining_count_use_capacity_bound() {
+        let (mut recorder, _) = recorder();
+        recorder.start_recording(&RamRecordParams {
+            rec_len: 127,
+            ..Default::default()
+        });
+        assert_eq!(recorder.target_length(), 1000);
+
+        let short = RamRecordParams {
+            rec_len: 0,
+            tempo_bpm: 120.0,
+            ..Default::default()
+        };
+        recorder.start_recording(&short);
+        assert_eq!(recorder.samples_remaining(), 25);
+        while recorder.samples_remaining() > 0 {
+            record_one_sample(&mut recorder, &short);
+        }
+        assert_eq!(recorder.samples_remaining(), 0);
+        assert!(!recorder.is_recording());
     }
 
     #[test]

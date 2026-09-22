@@ -1,8 +1,8 @@
 # Ultrawave audio architecture
 
 Ultrawave is one MIDI-controlled audio effect, exported through NICE-plug as
-VST3/CLAP and as a standalone. Record and Play are editor pages and DSP machines
-inside the same instance, not separate plugins. The sound is UW-inspired;
+VST3/CLAP and as a standalone. Capture and Play are always-visible actions and
+DSP machines inside the same instance. The sound is UW-inspired;
 interpolation, drive and timing curves are not claimed to be hardware-exact.
 
 ## Input is captured before playback is added
@@ -14,7 +14,7 @@ interpolation, drive and timing curves are not claimed to be hardware-exact.
          │                                  └────────────────┘   │
          ▼                                                       ▼
 ┌──────────────────┐    ┌────────────────┐    ┌──────────────┐  ┌─────┐
-│ Main/side levels │───▶│ Capture DSP    │───▶│ Private R1–R4│  │ Sum │──▶ Stereo
+│ Main/side levels │───▶│ Capture DSP    │───▶│ One sample   │  │ Sum │──▶ Stereo
 │ and balances     │    │ 12-bit storage │    │ SampleMemory │  └──▲──┘
 └────────▲─────────┘    └────────────────┘    └──────┬───────┘     │
          │                                         ▼             │
@@ -25,7 +25,7 @@ interpolation, drive and timing curves are not claimed to be hardware-exact.
 ```
 
 `src/plugin/sampler.rs` owns host processing, MIDI commands, control edges,
-One Shot protection and output mixing. Each block is mixed to a mono capture
+Record once protection and output mixing. Each block is mixed to a mono capture
 source in bounded 64-frame SIMD chunks before any playback reaches the output.
 The capture chain is input mix → capture level → SRR → drive → recording RATE
 selection/12-bit quantization. Dry-through bypasses that chain entirely.
@@ -33,13 +33,14 @@ selection/12-bit quantization. Dry-through bypasses that chain entirely.
 `ram_play.rs` and `sample_engine.rs` handle source-rate-aware varispeed,
 linear interpolation, SRR, hold/decay, BRR, drive and retrigger timing. The
 callback applies note velocity and playback level. There is one active playback
-voice/train and one capture at a time, each retaining its independently latched
-buffer. Replacing a buffer invalidates its old voice.
+voice/train and one capture at a time. An accepted capture stops the old voice
+and repeat train, then replaces the sample. A protected trigger changes neither.
+Playback can latch the written prefix while a capture continues to grow.
 
 ## RAM belongs to the effect instance
 
-`src/machines/memory.rs` owns four heap buffers of 441,000 `AtomicI16` samples
-each, storing signed 12-bit codes (-2048…2047). Capacity is fixed, not ten seconds
+`src/machines/memory.rs` owns one heap buffer of 441,000 `AtomicI16` samples,
+storing signed 12-bit codes (-2048…2047). Capacity is fixed, not ten seconds
 at every sample rate. Length, source rate and revision metadata are atomic.
 
 The owning audio/control path serializes mutation. Triggering playback latches
@@ -55,7 +56,8 @@ by offline renders/tests; public visibility does not mean globally shared RAM.
 
 ## Controls persist; audio and runtime latches do not
 
-`src/params.rs` defines the saved host controls. Neither RAM nor One Shot's spent
+`src/params.rs` defines 27 saved host controls, including MIDI assignments but no
+buffer selector. Neither RAM nor Record once's spent
 latch is serialized. Host reset stops voices/captures while preserving those
 runtime data. Recreating the instance produces empty RAM and an armed recorder.
 Reset snapshots current command levels: a held/restored high Capture, Playback

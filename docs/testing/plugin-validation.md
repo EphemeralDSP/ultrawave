@@ -18,9 +18,10 @@ also runs Clippy, release tests, bundles, validators, editor lifecycle stress
 and a DSP benchmark. Every failing command stops that pass.
 
 The exported CLAP harness exercises stereo dry-through, main/sidechain capture,
-MIDI timing/assignment/velocity, automation, One Shot/re-arm, reverse/retrigger,
-private RAM and state recreation at 44.1/48/96 kHz. Validators complement these
-audible-output assertions; neither replaces a real DAW test or hardware A/B.
+MIDI timing/assignment/velocity, automation, Record once/re-arm, reverse/retrigger,
+single-sample replacement, private RAM and state recreation at 44.1/48/96 kHz.
+Validators complement these audible-output assertions; neither replaces a real
+DAW test or hardware A/B.
 
 ## Validators
 
@@ -56,8 +57,9 @@ cargo build --release
 ./scripts/renoise-test.sh
 ```
 
-Inspect both screenshots and any changed interactive state; a screenshot file
-alone is not verification. The Renoise fixture uses a disposable HOME/display
+Inspect empty/loaded screenshots and changed interactive states, including MIDI
+dropdown selection/scrolling, capture details and protected/re-arm feedback.
+A screenshot file alone is not verification. The Renoise fixture uses a disposable HOME/display
 and the unified bundle to test actual FX-alias notes, audio routing and project
 save/reopen. See the [README](../../README.md#actual-renoise-regression) for
 requirements, safety and artifact paths. Do not overwrite plugins loaded by a

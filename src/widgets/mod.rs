@@ -1,9 +1,7 @@
 pub mod rotary_knob;
-pub mod vertical_slider;
 pub mod waveform;
 
 pub use rotary_knob::rotary_knob;
-pub use vertical_slider::vertical_slider;
 pub use waveform::{waveform, WaveformCache};
 
 #[derive(Clone, Default)]
@@ -73,7 +71,7 @@ pub fn parameter_value<P: nice_plug::prelude::Param>(
             .unwrap_or_else(|| param.unmodulated_normalized_value());
         if ui
             .add(
-                egui::Label::new(param.normalized_value_to_string(normalized, false))
+                egui::Label::new(param.normalized_value_to_string(normalized, true))
                     .sense(egui::Sense::click()),
             )
             .on_hover_text("Click to type a value. Enter commits; Esc cancels.")
@@ -257,77 +255,71 @@ mod tests {
     }
 
     #[test]
-    fn fine_integer_drags_accumulate_without_host_echo_for_both_widgets() {
-        for slider in [false, true] {
-            let ctx = egui::Context::default();
-            let host = Arc::new(Host::default());
-            let gui = GuiContext::new(host.clone());
-            let param = IntParam::new("Fine drag", 32, IntRange::Linear { min: 0, max: 127 });
-            let frame = |mut events: Vec<egui::Event>| {
-                events.insert(
-                    0,
-                    egui::Event::ModifiersChanged(egui::Modifiers {
-                        shift: true,
-                        ..Default::default()
-                    }),
-                );
-                let input = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(200.0, 200.0),
-                    )),
-                    events,
+    fn fine_integer_drags_accumulate_without_host_echo() {
+        let ctx = egui::Context::default();
+        let host = Arc::new(Host::default());
+        let gui = GuiContext::new(host.clone());
+        let param = IntParam::new("Fine drag", 32, IntRange::Linear { min: 0, max: 127 });
+        let frame = |mut events: Vec<egui::Event>| {
+            events.insert(
+                0,
+                egui::Event::ModifiersChanged(egui::Modifiers {
+                    shift: true,
                     ..Default::default()
-                };
-                ctx.run_ui(input, |ui| {
-                    if slider {
-                        vertical_slider(ui, &param, &gui);
-                    } else {
-                        rotary_knob(ui, &param, &gui);
-                    }
-                })
-                .drop_without_applying_deltas();
+                }),
+            );
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                events,
+                ..Default::default()
             };
-            frame(vec![]);
-            let at = egui::pos2(20.0, 40.0);
-            frame(vec![
-                egui::Event::PointerMoved(at),
-                egui::Event::PointerButton {
-                    pos: at,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers {
-                        shift: true,
-                        ..Default::default()
-                    },
-                },
-            ]);
-            for step in 1..=32 {
-                frame(vec![egui::Event::PointerMoved(
-                    at - egui::vec2(0.0, step as f32),
-                )]);
-            }
-            frame(vec![egui::Event::PointerButton {
-                pos: at - egui::vec2(0.0, 32.0),
+            ctx.run_ui(input, |ui| {
+                rotary_knob(ui, &param, &gui);
+            })
+            .drop_without_applying_deltas();
+        };
+        frame(vec![]);
+        let at = egui::pos2(20.0, 40.0);
+        frame(vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
                 button: egui::PointerButton::Primary,
-                pressed: false,
+                pressed: true,
                 modifiers: egui::Modifiers {
                     shift: true,
                     ..Default::default()
                 },
-            }]);
-            let events = host.0.lock().unwrap();
-            assert_eq!(
-                events.iter().filter(|v| v.is_none()).count(),
-                2,
-                "one begin/end pair"
-            );
-            assert_eq!(events.first(), Some(&None));
-            assert_eq!(events.last(), Some(&None));
-            // 32px at 0.0005/px ≈ two integer steps, even after drag slop.
-            let last = events.iter().filter_map(|v| *v).next_back().unwrap();
-            assert_eq!(param.preview_plain(last), 34);
-            assert_eq!(param.value(), 32, "no direct DSP mutation");
+            },
+        ]);
+        for step in 1..=32 {
+            frame(vec![egui::Event::PointerMoved(
+                at - egui::vec2(0.0, step as f32),
+            )]);
         }
+        frame(vec![egui::Event::PointerButton {
+            pos: at - egui::vec2(0.0, 32.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        }]);
+        let events = host.0.lock().unwrap();
+        assert_eq!(
+            events.iter().filter(|v| v.is_none()).count(),
+            2,
+            "one begin/end pair"
+        );
+        assert_eq!(events.first(), Some(&None));
+        assert_eq!(events.last(), Some(&None));
+        // 32px at 0.0005/px ≈ two integer steps, even after drag slop.
+        let last = events.iter().filter_map(|v| *v).next_back().unwrap();
+        assert_eq!(param.preview_plain(last), 34);
+        assert_eq!(param.value(), 32, "no direct DSP mutation");
     }
 }

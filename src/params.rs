@@ -35,10 +35,6 @@ fn parse_from_formatter_lookup(
     (min..=max).find(|value| formatter(*value).eq_ignore_ascii_case(trimmed))
 }
 
-fn parse_buffer(string: &str) -> Option<i32> {
-    parse_i32_clamped(string, 0, 3)
-}
-
 fn parse_level_db(string: &str) -> Option<f32> {
     let trimmed = string.trim();
     let stripped = trimmed.trim_end_matches([' ', 'd', 'D', 'b', 'B']);
@@ -229,8 +225,6 @@ fn format_rtim(value: i32) -> String {
 
 #[derive(Params)]
 pub struct UltrawaveParams {
-    #[id = "buffer"]
-    pub buffer: IntParam,
     #[id = "record_note"]
     pub record_note: IntParam,
     #[id = "play_note"]
@@ -242,7 +236,7 @@ pub struct UltrawaveParams {
     pub playback: BoolParam,
     #[id = "rearm"]
     pub rearm: BoolParam,
-    #[nested(group = "Record")]
+    #[nested(group = "Capture")]
     pub record: RamRecordParams,
     #[nested(group = "Play")]
     pub play: RamPlayParams,
@@ -251,9 +245,7 @@ pub struct UltrawaveParams {
 impl Default for UltrawaveParams {
     fn default() -> Self {
         Self {
-            buffer: IntParam::new("Buffer", 0, IntRange::Linear { min: 0, max: 3 })
-                .with_string_to_value(Arc::new(parse_buffer)),
-            record_note: IntParam::new("Record Note", 48, IntRange::Linear { min: 0, max: 127 })
+            record_note: IntParam::new("Capture Note", 48, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             play_note: IntParam::new("Play Note", 50, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
@@ -274,14 +266,14 @@ pub struct RamRecordParams {
     /// Capture once per arming; the runtime latch and RAM are not persisted.
     #[id = "one_shot"]
     pub one_shot: BoolParam,
-    // Sidebar - Output/Effects
+    // Capture sound
     #[id = "lev"]
     pub lev: FloatParam,
     #[id = "srr"]
     pub srr: FloatParam,
     #[id = "dist"]
     pub dist: IntParam,
-    // Main grid
+    // Sources and duration
     #[id = "mlev"]
     pub mlev: IntParam,
     #[id = "mbal"]
@@ -300,7 +292,7 @@ impl Default for RamRecordParams {
     fn default() -> Self {
         Self {
             capture: BoolParam::new("Capture", false),
-            one_shot: BoolParam::new("One Shot", false),
+            one_shot: BoolParam::new("Record Once", false),
             lev: FloatParam::new(
                 "Capture Level",
                 0.0,
@@ -328,11 +320,19 @@ impl Default for RamRecordParams {
                 IntRange::Linear { min: 0, max: 127 },
             )
             .with_string_to_value(Arc::new(parse_0_127)),
-            mlev: IntParam::new("Main Level", 127, IntRange::Linear { min: 0, max: 127 })
-                .with_string_to_value(Arc::new(parse_0_127)),
-            mbal: IntParam::new("Main Balance", 64, IntRange::Linear { min: 0, max: 127 })
-                .with_value_to_string(Arc::new(format_balance))
-                .with_string_to_value(Arc::new(parse_balance)),
+            mlev: IntParam::new(
+                "Track Input Level",
+                127,
+                IntRange::Linear { min: 0, max: 127 },
+            )
+            .with_string_to_value(Arc::new(parse_0_127)),
+            mbal: IntParam::new(
+                "Track Input Balance",
+                64,
+                IntRange::Linear { min: 0, max: 127 },
+            )
+            .with_value_to_string(Arc::new(format_balance))
+            .with_string_to_value(Arc::new(parse_balance)),
             ilev: IntParam::new("Sidechain Level", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             ibal: IntParam::new(
@@ -342,10 +342,10 @@ impl Default for RamRecordParams {
             )
             .with_value_to_string(Arc::new(format_balance))
             .with_string_to_value(Arc::new(parse_balance)),
-            rec_len: IntParam::new("Rec Length", 48, IntRange::Linear { min: 0, max: 127 })
+            rec_len: IntParam::new("Capture Length", 48, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_rec_len))
                 .with_string_to_value(Arc::new(parse_rec_len)),
-            rec_rate: IntParam::new("Rec Rate", 127, IntRange::Linear { min: 0, max: 127 })
+            rec_rate: IntParam::new("Capture Rate", 127, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_rate))
                 .with_string_to_value(Arc::new(parse_rate)),
         }
@@ -354,14 +354,14 @@ impl Default for RamRecordParams {
 
 #[derive(Params)]
 pub struct RamPlayParams {
-    // Sidebar - Output/Effects
+    // Playback sound
     #[id = "play_lev"]
     pub lev: FloatParam,
     #[id = "play_srr"]
     pub srr: FloatParam,
     #[id = "play_dist"]
     pub dist: IntParam,
-    // Main grid
+    // Region, envelope and repeats
     #[id = "brr"]
     pub brr: IntParam,
     #[id = "strt"]
@@ -475,8 +475,6 @@ mod tests {
 
     #[test]
     fn parsers_clamp_numeric_ranges() {
-        assert_eq!(parse_buffer("-1"), Some(0));
-        assert_eq!(parse_buffer("99"), Some(3));
         assert_eq!(parse_0_127("-5"), Some(0));
         assert_eq!(parse_0_127("999"), Some(127));
         assert_eq!(parse_level_db("-999 dB"), Some(-60.0));

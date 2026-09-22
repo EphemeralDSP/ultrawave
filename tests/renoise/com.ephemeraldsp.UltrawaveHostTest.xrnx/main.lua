@@ -80,9 +80,10 @@ local function render_sequence(song, steps, done)
 end
 
 local expected_parameters = {
-  "Buffer", "Record Note", "Play Note", "Playback Only", "Playback", "Re-arm",
-  "Capture", "One Shot", "Capture Level", "Capture SRR", "Capture Distortion",
-  "Main Level", "Main Balance", "Sidechain Level", "Sidechain Balance", "Rec Length", "Rec Rate",
+  "Capture Note", "Play Note", "Playback Only", "Playback", "Re-arm",
+  "Capture", "Record Once", "Capture Level", "Capture SRR", "Capture Distortion",
+  "Track Input Level", "Track Input Balance", "Sidechain Level", "Sidechain Balance",
+  "Capture Length", "Capture Rate",
   "Playback Level", "Playback SRR", "Playback Distortion", "Bit Reduction",
   "Start", "End", "Pitch", "Hold", "Decay", "Retrigger", "Retrig Time"
 }
@@ -103,14 +104,16 @@ local function run()
         "FX alias target not restored")
       assert(alias.plugin_device and alias.plugin_device.device_path == effect.device_path,
         "FX alias no longer resolves to the saved effect")
-      assert(parameter(effect, "One Shot").value == 1, "One Shot not restored")
+      assert(parameter(effect, "Record Once").value == 1, "Record Once not restored")
       assert(parameter(effect, "Capture").value == 0, "Capture not restored low")
       assert(parameter(effect, "Playback").value == 0, "Playback not restored low")
       assert(parameter(effect, "Re-arm").value == 0, "Re-arm not restored low")
-      assert(tonumber(parameter(effect, "Record Note").value_string) == 47, "Record Note not restored")
+      assert(tonumber(parameter(effect, "Capture Note").value_string) == 47, "Capture Note not restored")
       assert(tonumber(parameter(effect, "Play Note").value_string) == 51, "Play Note not restored")
-      assert(tonumber(parameter(effect, "Main Level").value_string) == 91, "Main Level not restored")
-      assert(parameter(effect, "Main Balance").value_string:match("L32"), "Main Balance not restored")
+      assert(tonumber(parameter(effect, "Track Input Level").value_string) == 91,
+        "Track Input Level not restored")
+      assert(parameter(effect, "Track Input Balance").value_string:match("L32"),
+        "Track Input Balance not restored")
       assert(parameter(effect, "Playback Level").value_string:match("%-3%.0"),
         "Playback Level not restored")
       assert(parameter(effect, "Playback Only").value == 0, "Playback Only not restored")
@@ -119,13 +122,13 @@ local function run()
       local source_note = song.patterns[1].tracks[1].lines[1].note_columns[1]
       local trigger_note = song.patterns[1].tracks[2].lines[1].note_columns[1]
       render_sequence(song, {
-        -- The saved alias sends Play Note 51. Instance RAM must be empty after
+        -- The saved alias sends Play Note 51. Instance sample memory must be empty after
         -- actual host teardown even though the project was saved while populated.
         {"play-after-reopen.wav", function() end},
         {"recapture-after-reopen.wav", function()
           clear_note(trigger_note)
           note(source_note, "C-4", 0)
-          note(trigger_note, "B-3", 1) -- MIDI 47: saved Record Note
+          note(trigger_note, "B-3", 1) -- MIDI 47: saved Capture Note
         end},
         {"play-recaptured.wav", function()
           clear_note(source_note)
@@ -182,22 +185,26 @@ local function run()
       report("parameter=" .. exported.name .. ":" .. exported.value_string)
       found[exported.name] = true
     end
+    assert(#effect.parameters == 27, "expected 27 exported parameters")
     for _, name in ipairs(expected_parameters) do
       assert(found[name], "missing exported parameter: " .. name)
     end
-    for _, removed in ipairs({"Bank", "Dry Monitor", "Capture Monitor"}) do
+    for _, removed in ipairs({
+      "Buffer", "Bank", "Dry Monitor", "Capture Monitor", "One Shot", "Record Note",
+      "Main Level", "Main Balance", "Rec Length", "Rec Rate"
+    }) do
       assert(not found[removed], "removed parameter still exported: " .. removed)
     end
-    assert(tonumber(parameter(effect, "Buffer").value_string) == 0, "Buffer default is not 0")
-    assert(tonumber(parameter(effect, "Record Note").value_string) == 48, "Record Note default is not 48")
+    assert(tonumber(parameter(effect, "Capture Note").value_string) == 48,
+      "Capture Note default is not 48")
     assert(tonumber(parameter(effect, "Play Note").value_string) == 50, "Play Note default is not 50")
     assert(parameter(effect, "Playback Only").value == 0, "Playback Only default is not false")
 
-    parameter(effect, "One Shot").value = 1
-    parameter(effect, "Main Level").value_string = "127"
-    parameter(effect, "Main Balance").value_string = "L64"
+    parameter(effect, "Record Once").value = 1
+    parameter(effect, "Track Input Level").value_string = "127"
+    parameter(effect, "Track Input Balance").value_string = "L64"
     parameter(effect, "Sidechain Level").value_string = "0"
-    parameter(effect, "Rec Length").value_string = "48" -- one bar
+    parameter(effect, "Capture Length").value_string = "48" -- one bar
 
     -- Renoise creates FX alias instruments by loading the effect's canonical
     -- target in its instrument-plugin UI. The Lua API exposes aliases only as
@@ -212,7 +219,7 @@ local function run()
         "FX alias did not resolve to the inserted effect")
       report("fx_alias_target=1/2")
       local trigger_note = song.patterns[1].tracks[2].lines[1].note_columns[1]
-      note(trigger_note, "C-4", 1) -- MIDI 48: Record Note
+      note(trigger_note, "C-4", 1) -- MIDI 48: Capture Note
 
     -- Renoise's #Sidechain device is the only send into a VST3 auxiliary bus.
     local sidechain_path
@@ -227,6 +234,8 @@ local function run()
     make_tone(song, 4, "fixture-right-only-1100Hz", 1100, 0, 1100, 0.12)
     local side_note_a = song.patterns[1].tracks[3].lines[1].note_columns[1]
     local side_note_b = song.patterns[1].tracks[4].lines[1].note_columns[1]
+    local replacement_source_note = song.patterns[1].tracks[1].lines[5].note_columns[1]
+    local replacement_trigger_note = song.patterns[1].tracks[2].lines[5].note_columns[1]
     local side_a = song.tracks[3]:insert_device_at(sidechain_path, 2)
     local side_b = song.tracks[4]:insert_device_at(sidechain_path, 2)
 
@@ -234,21 +243,22 @@ local function run()
     local playback = parameter(effect, "Playback")
     local rearm = parameter(effect, "Re-arm")
     local function clear_notes()
-      clear_note(source_note); clear_note(trigger_note); clear_note(side_note_a); clear_note(side_note_b)
+      clear_note(source_note); clear_note(trigger_note)
+      clear_note(replacement_source_note); clear_note(replacement_trigger_note)
+      clear_note(side_note_a); clear_note(side_note_b)
     end
-    local function capture_buffer(index, main_level, main_balance, side_level, side_balance)
-      parameter(effect, "Buffer").value_string = tostring(index)
-      parameter(effect, "Main Level").value_string = tostring(main_level)
-      parameter(effect, "Main Balance").value_string = main_balance
+    local function capture_take(main_level, main_balance, side_level, side_balance)
+      parameter(effect, "Track Input Level").value_string = tostring(main_level)
+      parameter(effect, "Track Input Balance").value_string = main_balance
       parameter(effect, "Sidechain Level").value_string = tostring(side_level)
       parameter(effect, "Sidechain Balance").value_string = side_balance
-      note(trigger_note, "C-4", 1) -- a real Record Note edge through the FX alias
+      note(trigger_note, "C-4", 1) -- a real Capture Note edge through the FX alias
     end
 
       render_sequence(song, {
-      -- Both actions use MIDI sent through the FX alias: C-4 records, D-4 plays.
+      -- Both actions use MIDI sent through the FX alias: C-4 captures, D-4 plays.
       {"capture-pass.wav", function() end},
-      {"play-r1.wav", function()
+      {"play-original.wav", function()
         clear_notes(); note(trigger_note, "D-4", 1)
       end},
       {"dry-plus-playback.wav", function()
@@ -261,7 +271,7 @@ local function run()
         parameter(effect, "Playback Only").value = 0
         clear_notes(); note(source_note, "C-5", 0); note(trigger_note, "C-4", 1)
       end},
-      {"play-one-shot.wav", function()
+      {"play-record-once.wav", function()
         clear_notes(); note(trigger_note, "D-4", 1)
       end},
       {"playback-control.wav", function()
@@ -307,11 +317,22 @@ local function run()
         rearm.value = 0
         clear_notes(); note(trigger_note, "D-4", 1)
       end},
-      {"play-r2.wav", function()
-        parameter(effect, "Buffer").value_string = "1"
+      {"replacement-stops-playback.wav", function()
+        -- Start the old 880 Hz take, then replace it halfway through at line 5.
+        -- Capture must stop that active voice immediately and install the new take.
+        clear_notes(); note(trigger_note, "D-4", 1)
+        note(replacement_source_note, "C-4", 0)
+        note(replacement_trigger_note, "C-4", 1)
+        parameter(effect, "Record Once").value = 0
+        parameter(effect, "Track Input Level").value_string = "127"
+        parameter(effect, "Track Input Balance").value_string = "L64"
+        parameter(effect, "Sidechain Level").value_string = "0"
+      end},
+      {"play-replacement.wav", function()
+        clear_notes(); note(trigger_note, "D-4", 1)
       end},
       {"side-dry-660.wav", function()
-        capture.value = 0; parameter(effect, "One Shot").value = 0
+        capture.value = 0; parameter(effect, "Record Once").value = 0
         -- Sidechains can only target later tracks. Move the receiver after both
         -- senders; Renoise updates the FX alias target when the track moves.
         song:swap_tracks_at(1, 5)
@@ -327,7 +348,7 @@ local function run()
       {"side-wrong-route-capture.wav", function()
         clear_notes(); note(side_note_a, "C-4", 2)
         configure_sidechain(side_a, 4, 0, true)
-        capture_buffer(2, 0, "R63", 127, "R63")
+        capture_take(0, "R63", 127, "R63")
       end},
       {"side-wrong-route-play.wav", function()
         capture.value = 0; clear_notes(); note(trigger_note, "D-4", 1)
@@ -335,14 +356,14 @@ local function run()
       {"side-rejected-balance-capture.wav", function()
         clear_notes(); note(side_note_a, "C-4", 2)
         configure_sidechain(side_a, 4, 1, true)
-        capture_buffer(2, 0, "R63", 127, "L64")
+        capture_take(0, "R63", 127, "L64")
       end},
       {"side-rejected-balance-play.wav", function()
         capture.value = 0; clear_notes(); note(trigger_note, "D-4", 1)
       end},
       {"side-single-capture.wav", function()
         clear_notes(); note(side_note_a, "C-4", 2); note(source_note, "C-4", 0)
-        capture_buffer(2, 0, "L64", 127, "R63")
+        capture_take(0, "L64", 127, "R63")
       end},
       {"side-single-play.wav", function()
         capture.value = 0; clear_notes(); note(trigger_note, "D-4", 1)
@@ -350,33 +371,32 @@ local function run()
       {"main-only-capture.wav", function()
         clear_notes(); note(source_note, "C-4", 0)
         note(side_note_a, "C-4", 2); note(side_note_b, "C-4", 3)
-        capture_buffer(3, 127, "L64", 0, "R63")
+        capture_take(127, "L64", 0, "R63")
       end},
       {"main-only-play.wav", function()
         capture.value = 0; clear_notes(); note(trigger_note, "D-4", 1)
       end},
       {"side-sum-capture.wav", function()
         clear_notes(); note(side_note_a, "C-4", 2); note(side_note_b, "C-4", 3)
-        capture_buffer(3, 0, "L64", 127, "R63")
+        capture_take(0, "L64", 127, "R63")
       end},
       {"side-sum-play.wav", function()
         capture.value = 0; clear_notes(); note(trigger_note, "D-4", 1)
       end},
-      {"save-one-shot-capture.wav", function()
-        -- Finish on a known populated R1 and spend One Shot through the real
-        -- Record Note. The next two renders prove this exact final latch state.
+      {"save-record-once-capture.wav", function()
+        -- Finish on a known populated sample and spend Record Once through the
+        -- real Capture Note. The next two renders prove this final latch state.
         clear_notes(); note(source_note, "C-4", 0); note(trigger_note, "C-4", 1)
-        parameter(effect, "Buffer").value_string = "0"
-        parameter(effect, "Main Level").value_string = "127"
-        parameter(effect, "Main Balance").value_string = "L64"
+        parameter(effect, "Track Input Level").value_string = "127"
+        parameter(effect, "Track Input Balance").value_string = "L64"
         parameter(effect, "Sidechain Level").value_string = "0"
         parameter(effect, "Sidechain Balance").value_string = "R63"
-        parameter(effect, "One Shot").value = 1
+        parameter(effect, "Record Once").value = 1
       end},
-      {"save-one-shot-denied.wav", function()
+      {"save-record-once-denied.wav", function()
         clear_notes(); note(source_note, "C-5", 0); note(trigger_note, "C-4", 1)
       end},
-      {"save-one-shot-play.wav", function()
+      {"save-record-once-play.wav", function()
         clear_notes(); note(trigger_note, "D-4", 1)
       end},
       }, function()
@@ -391,16 +411,15 @@ local function run()
               report("editor_open_close_cycles=5")
               clear_notes(); note(trigger_note, "D#4", 1)
               capture.value = 0; playback.value = 0; rearm.value = 0
-              parameter(effect, "Buffer").value_string = "0"
-              parameter(effect, "Record Note").value_string = "47"
+              parameter(effect, "Capture Note").value_string = "47"
               parameter(effect, "Play Note").value_string = "51"
-              parameter(effect, "Main Level").value_string = "91"
-              parameter(effect, "Main Balance").value_string = "L32"
+              parameter(effect, "Track Input Level").value_string = "91"
+              parameter(effect, "Track Input Balance").value_string = "L32"
               parameter(effect, "Playback Only").value = 0
               parameter(effect, "Playback Level").value_string = "-3.0 dB"
-              -- The preceding Record Note spent One Shot, its denied overwrite
+              -- The preceding Capture Note spent Record Once; its denied overwrite
               -- preserved the populated take, and nothing above re-arms it.
-              -- A new process restores controls/alias, but not RAM or the latch.
+              -- A new process restores controls/alias, but not the sample or latch.
               renoise.app():save_song_as(root .. "/ultrawave-host-test.xrns")
               effect.external_editor_visible = true
               report("capture_complete=true")

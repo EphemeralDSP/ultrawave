@@ -1,11 +1,9 @@
 use std::sync::atomic::{AtomicI16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-pub const CHANNEL_COUNT: usize = 4;
-
 const MAX_RECORD_SECONDS: f32 = 10.0;
 const DEFAULT_SAMPLE_RATE: f32 = 44_100.0;
 
-/// Number of samples allocated per buffer (10 seconds at 44.1 kHz).
+/// Maximum sample length (10 seconds at 44.1 kHz).
 pub const MAX_BUFFER_SAMPLES: usize = (DEFAULT_SAMPLE_RATE * MAX_RECORD_SECONDS) as usize;
 
 #[repr(C, align(64))]
@@ -17,10 +15,16 @@ struct SampleBuffer {
     samples: [AtomicI16; MAX_BUFFER_SAMPLES],
 }
 
-struct HeapBuffer(Box<SampleBuffer>);
+/// Fixed-capacity sample RAM owned by one effect instance.
+///
+/// Audio and UI readers use atomic metadata snapshots and never lock or copy on
+/// trigger. Mutations are serialized by the owning effect's control/audio path.
+pub struct SampleMemory {
+    buffer: Box<SampleBuffer>,
+}
 
-impl HeapBuffer {
-    fn new() -> Self {
+impl SampleMemory {
+    pub fn new() -> Self {
         // SAFETY: All fields are integer atomics, for which the all-zero bit
         // pattern is valid. Allocate directly on the heap so this large value
         // is never materialized on the thread stack.
@@ -28,165 +32,120 @@ impl HeapBuffer {
         buffer
             .sample_rate_bits
             .store(DEFAULT_SAMPLE_RATE.to_bits(), Ordering::Relaxed);
-        Self(buffer)
-    }
-}
-
-/// Fixed-capacity sample RAM owned by one effect instance.
-///
-/// Audio and UI readers use atomic metadata snapshots and never lock or copy on
-/// trigger. Mutations are serialized by the owning effect's control/audio path.
-pub struct SampleMemory {
-    buffers: [HeapBuffer; CHANNEL_COUNT],
-}
-
-impl SampleMemory {
-    pub fn new() -> Self {
-        Self {
-            buffers: std::array::from_fn(|_| HeapBuffer::new()),
-        }
+        Self { buffer }
     }
 
-    fn buffer(&self, channel: usize) -> Option<&SampleBuffer> {
-        self.buffers.get(channel).map(|buffer| &*buffer.0)
+    fn begin_mutation(&self) {
+        self.buffer.revision.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn begin_mutation(buffer: &SampleBuffer) {
-        buffer.revision.fetch_add(1, Ordering::AcqRel);
+    fn end_mutation(&self) {
+        self.buffer.revision.fetch_add(1, Ordering::Release);
     }
 
-    fn end_mutation(buffer: &SampleBuffer) {
-        buffer.revision.fetch_add(1, Ordering::Release);
-    }
-
-    /// Get a consistent copy of a buffer for non-real-time inspection.
-    pub fn read_buffer(&self, channel: usize) -> Option<Vec<i16>> {
-        let (len, _, revision) = self.snapshot(channel)?;
-        let buffer = self.buffer(channel)?;
-        let samples = buffer.samples[..len]
+    /// Get a consistent copy of the sample for non-real-time inspection.
+    pub fn read_buffer(&self) -> Option<Vec<i16>> {
+        let (len, _, revision) = self.snapshot()?;
+        let samples = self.buffer.samples[..len]
             .iter()
             .map(|sample| sample.load(Ordering::Acquire))
             .collect();
-        (buffer.revision.load(Ordering::Acquire) == revision).then_some(samples)
+        (self.buffer.revision.load(Ordering::Acquire) == revision).then_some(samples)
     }
 
-    pub fn replace_buffer(&self, channel: usize, samples: Vec<i16>) -> bool {
-        self.replace_buffer_at_rate(channel, samples, DEFAULT_SAMPLE_RATE)
+    pub fn replace_buffer(&self, samples: Vec<i16>) -> bool {
+        self.replace_buffer_at_rate(samples, DEFAULT_SAMPLE_RATE)
     }
 
-    pub fn replace_buffer_at_rate(
-        &self,
-        channel: usize,
-        samples: Vec<i16>,
-        sample_rate: f32,
-    ) -> bool {
+    pub fn replace_buffer_at_rate(&self, samples: Vec<i16>, sample_rate: f32) -> bool {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return false;
         }
-        let Some(buffer) = self.buffer(channel) else {
-            return false;
-        };
-        Self::begin_mutation(buffer);
+        self.begin_mutation();
         let len = samples.len().min(MAX_BUFFER_SAMPLES);
         for (index, sample) in samples.into_iter().take(len).enumerate() {
-            buffer.samples[index].store(sample, Ordering::Release);
+            self.buffer.samples[index].store(sample, Ordering::Release);
         }
-        buffer.length.store(len, Ordering::Release);
-        buffer.write_position.store(len, Ordering::Release);
-        buffer
+        self.buffer.length.store(len, Ordering::Release);
+        self.buffer.write_position.store(len, Ordering::Release);
+        self.buffer
             .sample_rate_bits
             .store(sample_rate.to_bits(), Ordering::Release);
-        Self::end_mutation(buffer);
+        self.end_mutation();
         true
     }
 
-    pub fn buffer_len(&self, channel: usize) -> usize {
-        self.buffer(channel)
-            .map_or(0, |buffer| buffer.length.load(Ordering::Acquire))
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.length.load(Ordering::Acquire)
     }
 
-    pub fn clear_buffer(&self, channel: usize) -> bool {
-        let Some(buffer) = self.buffer(channel) else {
-            return false;
-        };
-        Self::begin_mutation(buffer);
-        buffer.length.store(0, Ordering::Release);
-        buffer.write_position.store(0, Ordering::Release);
-        Self::end_mutation(buffer);
+    pub fn clear_buffer(&self) -> bool {
+        self.begin_mutation();
+        self.buffer.length.store(0, Ordering::Release);
+        self.buffer.write_position.store(0, Ordering::Release);
+        self.end_mutation();
         true
     }
 
-    pub fn clear_all(&self) {
-        for channel in 0..CHANNEL_COUNT {
-            self.clear_buffer(channel);
-        }
-    }
-
-    pub(crate) fn begin_recording(&self, channel: usize, sample_rate: f32) -> bool {
+    pub(crate) fn begin_recording(&self, sample_rate: f32) -> bool {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return false;
         }
-        let Some(buffer) = self.buffer(channel) else {
-            return false;
-        };
-        Self::begin_mutation(buffer);
-        buffer.write_position.store(0, Ordering::Relaxed);
-        buffer.length.store(0, Ordering::Release);
-        buffer
+        self.begin_mutation();
+        self.buffer.write_position.store(0, Ordering::Relaxed);
+        self.buffer.length.store(0, Ordering::Release);
+        self.buffer
             .sample_rate_bits
             .store(sample_rate.to_bits(), Ordering::Release);
-        Self::end_mutation(buffer);
+        self.end_mutation();
         true
     }
 
-    pub(crate) fn write_sample(&self, channel: usize, sample: i16) -> bool {
-        let Some(buffer) = self.buffer(channel) else {
-            return false;
-        };
-        let position = buffer.write_position.load(Ordering::Relaxed);
+    pub(crate) fn write_sample(&self, sample: i16) -> bool {
+        let position = self.buffer.write_position.load(Ordering::Relaxed);
         if position >= MAX_BUFFER_SAMPLES {
             return false;
         }
-        buffer.samples[position].store(sample, Ordering::Release);
-        buffer.write_position.store(position + 1, Ordering::Relaxed);
-        buffer.length.store(position + 1, Ordering::Release);
+        self.buffer.samples[position].store(sample, Ordering::Release);
+        self.buffer
+            .write_position
+            .store(position + 1, Ordering::Relaxed);
+        self.buffer.length.store(position + 1, Ordering::Release);
         true
     }
 
     /// O(1) consistent metadata snapshot for real-time readers.
-    pub fn snapshot(&self, channel: usize) -> Option<(usize, f32, u64)> {
-        let buffer = self.buffer(channel)?;
-        let revision = buffer.revision.load(Ordering::Acquire);
+    pub fn snapshot(&self) -> Option<(usize, f32, u64)> {
+        let revision = self.buffer.revision.load(Ordering::Acquire);
         if revision & 1 != 0 {
             return None;
         }
-        let len = buffer
+        let len = self
+            .buffer
             .length
             .load(Ordering::Acquire)
             .min(MAX_BUFFER_SAMPLES);
-        let rate = f32::from_bits(buffer.sample_rate_bits.load(Ordering::Acquire));
-        (buffer.revision.load(Ordering::Acquire) == revision).then_some((len, rate, revision))
+        let rate = f32::from_bits(self.buffer.sample_rate_bits.load(Ordering::Acquire));
+        (self.buffer.revision.load(Ordering::Acquire) == revision).then_some((len, rate, revision))
     }
 
     #[inline]
     pub fn read_sample_pair(
         &self,
-        channel: usize,
         index: usize,
         revision: u64,
         latched_len: usize,
     ) -> Option<(i16, i16)> {
-        let buffer = self.buffer(channel)?;
-        if buffer.revision.load(Ordering::Acquire) != revision {
+        if self.buffer.revision.load(Ordering::Acquire) != revision {
             return None;
         }
-        let len = buffer.length.load(Ordering::Acquire).min(latched_len);
+        let len = self.buffer.length.load(Ordering::Acquire).min(latched_len);
         if index >= len {
             return None;
         }
-        let a = buffer.samples[index].load(Ordering::Acquire);
-        let b = buffer.samples[(index + 1).min(len - 1)].load(Ordering::Acquire);
-        (buffer.revision.load(Ordering::Acquire) == revision).then_some((a, b))
+        let a = self.buffer.samples[index].load(Ordering::Acquire);
+        let b = self.buffer.samples[(index + 1).min(len - 1)].load(Ordering::Acquire);
+        (self.buffer.revision.load(Ordering::Acquire) == revision).then_some((a, b))
     }
 }
 
@@ -201,13 +160,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replacement_invalidates_latched_revision() {
+    fn same_length_replacement_invalidates_latched_revision() {
         let memory = SampleMemory::new();
-        assert!(memory.replace_buffer(0, vec![1, 2, 3]));
-        let (len, _, revision) = memory.snapshot(0).unwrap();
-        assert_eq!(memory.read_sample_pair(0, 1, revision, len), Some((2, 3)));
+        assert!(memory.replace_buffer(vec![1, 2, 3]));
+        let (len, _, revision) = memory.snapshot().unwrap();
+        assert_eq!(memory.read_sample_pair(1, revision, len), Some((2, 3)));
 
-        assert!(memory.replace_buffer(0, vec![4, 5, 6]));
-        assert_eq!(memory.read_sample_pair(0, 1, revision, len), None);
+        assert!(memory.replace_buffer(vec![4, 5, 6]));
+        assert_eq!(memory.read_sample_pair(1, revision, len), None);
     }
 }
