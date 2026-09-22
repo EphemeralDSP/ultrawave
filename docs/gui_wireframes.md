@@ -8,10 +8,10 @@ not modes; both stay visible. This design supersedes the two-page hardware repli
 | Header | Title, explicit Input + sample / Sample only choices, small MIDI popover |
 | Waveform | Shared sample, draggable S/E handles, dimmed excluded region, playback cursor |
 | Trim row | Editable Start/End values, Forward/Reverse/Empty region, duration and source rate |
-| Capture card | Capture button beside duration dropdown, Record once, Re-arm, recording/protected/ready status |
+| Record card | Capture button beside duration dropdown, Record once, Re-arm, recording/protected/ready status |
 | Capture sources | Track input, Sidechain, Gain; input meter |
 | Capture details popover | Track/side balances, capture rate, rate crush and drive |
-| Play card | Play sample button, ready/playing feedback; disabled when empty |
+| Playback card | Play sample button, ready/playing feedback; disabled when empty |
 | Pitch & envelope | Pitch, Hold, Decay |
 | Repeat | Repeats and tempo-synced Interval |
 | Character/output | Rate crush, Bit crush, Drive, Level and playback meter |

@@ -173,14 +173,6 @@ impl NiceEguiApp for UltrawaveEditorApp {
                 });
             });
         });
-        ui.scope_builder(
-            UiBuilder::new().max_rect(rect(24.0, 74.0, 872.0, 20.0)),
-            |ui| {
-                ui.label(
-                    RichText::new("Capture audio  →  shape your take  →  play it back").weak(),
-                );
-            },
-        );
         let wave_rect = rect(24.0, 102.0, 872.0, 100.0);
         waveform(
             ui,
@@ -330,12 +322,7 @@ impl UltrawaveEditorApp {
         let recording = self.ui_state.recording.load(Ordering::Relaxed);
         let once = p.one_shot.unmodulated_plain_value();
         let locked = once && self.ui_state.capture_locked.load(Ordering::Relaxed);
-        ui.label(RichText::new("01  CAPTURE").color(CAPTURE).strong());
-        ui.label(
-            RichText::new("Record the audio arriving at this effect.")
-                .small()
-                .weak(),
-        );
+        ui.label(RichText::new("Record").color(CAPTURE).strong());
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if ui.add_enabled(!locked, egui::Button::new(RichText::new("●  Capture").color(BACKGROUND).strong()).fill(CAPTURE).min_size(vec2(133.0, 34.0)))
@@ -368,17 +355,17 @@ impl UltrawaveEditorApp {
             .small()
             .strong(),
         );
-        ui.label(
-            RichText::new(if recording {
-                "The take ends at the selected duration."
-            } else if locked {
-                "Re-arm to allow another take."
-            } else {
-                "The next trigger replaces the sample."
-            })
-            .small()
-            .weak(),
-        );
+        if recording || locked {
+            ui.label(
+                RichText::new(if recording {
+                    "The take ends at the selected duration."
+                } else {
+                    "Re-arm to allow another take."
+                })
+                .small()
+                .weak(),
+            );
+        }
 
         let origin = ui.max_rect().min;
         for (index, (label, param, hint)) in [
@@ -448,7 +435,7 @@ impl UltrawaveEditorApp {
         let p = &self.params.play;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(RichText::new("02  PLAY SAMPLE").color(PLAY).strong());
+                ui.label(RichText::new("Playback").color(PLAY).strong());
                 ui.label(RichText::new(if self.ui_state.playing.load(Ordering::Relaxed) { "● PLAYING" } else if len == 0 { "Capture a take to begin." } else { "Your take is ready to play." }).small().weak());
             });
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
