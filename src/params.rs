@@ -229,9 +229,6 @@ pub struct UltrawaveParams {
     pub record_note: IntParam,
     #[id = "play_note"]
     pub play_note: IntParam,
-    /// False preserves the stereo main input and adds playback.
-    #[id = "playback_only"]
-    pub playback_only: BoolParam,
     #[id = "playback"]
     pub playback: BoolParam,
     #[id = "rearm"]
@@ -249,7 +246,6 @@ impl Default for UltrawaveParams {
                 .with_string_to_value(Arc::new(parse_0_127)),
             play_note: IntParam::new("Play Note", 50, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
-            playback_only: BoolParam::new("Playback Only", false),
             playback: BoolParam::new("Playback", false),
             rearm: BoolParam::new("Re-arm", false),
             record: RamRecordParams::default(),

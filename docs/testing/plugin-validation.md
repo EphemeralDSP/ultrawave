@@ -17,7 +17,7 @@ VST3 wrapper state regressions and six deterministic WAV renders. The full loop
 also runs Clippy, release tests, bundles, validators, editor lifecycle stress
 and a DSP benchmark. Every failing command stops that pass.
 
-The exported CLAP harness exercises stereo dry-through, main/sidechain capture,
+The exported CLAP harness exercises sample-only output, main/sidechain capture,
 MIDI timing/assignment/velocity, automation, Record once/re-arm, reverse/retrigger,
 single-sample replacement, private RAM and state recreation at 44.1/48/96 kHz.
 Validators complement these audible-output assertions; neither replaces a real

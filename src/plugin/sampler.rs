@@ -29,8 +29,8 @@ pub struct UltrawavePlugin {
     decimator: crate::Decimator,
     distortion: Distortion,
     mix_gains: SmoothedGains<4>,
-    // Capture level, playback level, stereo dry-through.
-    gains: SmoothedGains<3>,
+    // Capture level and playback level.
+    gains: SmoothedGains<2>,
     preload_attempted: bool,
 }
 
@@ -234,11 +234,6 @@ impl Plugin for UltrawavePlugin {
             [
                 util::db_to_gain(self.params.record.lev.value()),
                 util::db_to_gain(self.params.play.lev.value()),
-                if self.params.playback_only.value() {
-                    0.0
-                } else {
-                    1.0
-                },
             ],
             self.sample_rate,
         );
@@ -286,7 +281,7 @@ impl Plugin for UltrawavePlugin {
                     }
                     event = context.next_event();
                 }
-                let [record_gain, play_gain, dry_gain] = self.gains.next_frame();
+                let [record_gain, play_gain] = self.gains.next_frame();
                 let captured = self
                     .distortion
                     .process(self.decimator.process(input * record_gain, srr));
@@ -295,7 +290,7 @@ impl Plugin for UltrawavePlugin {
                 capture_peak = capture_peak.max(captured.abs());
                 playback_peak = playback_peak.max(played.abs());
                 for channel in main.iter_mut() {
-                    channel[frame] = channel[frame] * dry_gain + played;
+                    channel[frame] = played;
                 }
             }
         }

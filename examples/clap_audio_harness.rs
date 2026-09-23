@@ -15,7 +15,7 @@ use clap_sys::{
     events::*,
     ext::{
         audio_ports::{clap_audio_port_info, clap_plugin_audio_ports, CLAP_EXT_AUDIO_PORTS},
-        params::{clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE},
+        params::{clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS},
         state::{clap_plugin_state, CLAP_EXT_STATE},
     },
     factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID},
@@ -460,7 +460,6 @@ fn quantize(sample: f32) -> f32 {
 
 unsafe fn configure(plugin: &Plugin) {
     plugin.flush(&[
-        ("Playback Only", "On"),
         ("Track Input Level", "127"),
         ("Track Input Balance", "L64"),
         ("Sidechain Level", "127"),
@@ -479,7 +478,7 @@ unsafe fn configure(plugin: &Plugin) {
     ]);
 }
 
-unsafe fn contract_and_default_insert(module: &Module) {
+unsafe fn contract_and_sample_only_output(module: &Module) {
     let factory = ((*module.entry).get_factory.unwrap()(CLAP_PLUGIN_FACTORY_ID.as_ptr()))
         as *const clap_plugin_factory;
     let descriptor = (*factory).get_plugin_descriptor.unwrap()(factory, 0);
@@ -508,10 +507,7 @@ unsafe fn contract_and_default_insert(module: &Module) {
         [2]
     );
     let names = plugin.param_names();
-    // The previous 28 parameters included Buffer. Removing it without adding a
-    // replacement leaves 27 exported host parameters.
-    assert_eq!(names.len(), 27, "single-sample plugin parameter count");
-    assert!(!names.iter().any(|name| name == "Buffer"));
+    assert_eq!(names.len(), 26, "single-sample plugin parameter count");
     for name in [
         "Record Once",
         "Capture Note",
@@ -524,6 +520,7 @@ unsafe fn contract_and_default_insert(module: &Module) {
     }
     for removed in [
         "Buffer",
+        "Playback Only",
         "One Shot",
         "Record Note",
         "Main Level",
@@ -546,11 +543,8 @@ unsafe fn contract_and_default_insert(module: &Module) {
         assert_eq!(plugin.value(name).round(), expected, "default {name}");
     }
     assert_eq!(plugin.value("Record Once"), 0.0);
-    assert_ne!(
-        plugin.param("Playback Only").flags & CLAP_PARAM_IS_AUTOMATABLE,
-        0
-    );
     assert_eq!(plugin.value("Play Note").round(), 50.0);
+    configure(&plugin);
     plugin.activate(48000.0, 512);
 
     let left: Vec<_> = (0..17).map(|i| (i as f32 - 8.0) * 0.073).collect();
@@ -559,8 +553,8 @@ unsafe fn contract_and_default_insert(module: &Module) {
     let tr = transport(true, 120.0, 0, false);
     assert_eq!(
         plugin.process([&left, &right, &side, &side], 17, &[], &tr),
-        [left.clone(), right.clone()],
-        "default insert must preserve stereo and ignore side input at the output"
+        [vec![0.0; 17], vec![0.0; 17]],
+        "active exported effect must never pass dry main or side input"
     );
 
     // The runner deliberately supplies a valid screenshot WAV environment
@@ -572,31 +566,62 @@ unsafe fn contract_and_default_insert(module: &Module) {
         "an exported effect must not load screenshot audio"
     );
 
-    // An event beyond the plugin's internal 64-frame mixing chunk proves that
-    // host automation subdivision remains sample accurate. Dry suppression is
-    // deliberately smoothed over 5 ms (240 frames at 48 kHz).
-    let ones = vec![1.0; 400];
-    let event = Event::param(
-        73,
-        plugin.param("Playback Only"),
-        plugin.text_value("Playback Only", "On"),
+    // Capture while every input bus is nonzero and asymmetric. Output remains
+    // silent, while the configured hard pans preserve main L + side R in RAM.
+    let capture_main_l = vec![0.125; 400];
+    let capture_main_r = vec![-0.75; 400];
+    let capture_side_l = vec![0.625; 400];
+    let capture_side_r = vec![0.375; 400];
+    let captured = plugin.process(
+        [
+            &capture_main_l,
+            &capture_main_r,
+            &capture_side_l,
+            &capture_side_r,
+        ],
+        400,
+        &[Event::note(0, 48, 1.0)],
+        &tr,
     );
-    let output = plugin.process([&ones, &ones, &ones, &ones], 400, &[event], &tr);
+    assert_eq!(captured, [vec![0.0; 400], vec![0.0; 400]]);
+    plugin.reset();
+
+    // An event beyond the plugin's internal 64-frame mixing chunk proves that
+    // Playback Level's 5 ms smoothing remains sample accurate. Independent,
+    // nonzero host input must never contribute to the played output.
+    let level_event = Event::param(
+        73,
+        plugin.param("Playback Level"),
+        plugin.text_value("Playback Level", "-6 dB"),
+    );
+    let host_l = vec![0.9; 400];
+    let host_r = vec![-0.8; 400];
+    let host_side_l = vec![0.7; 400];
+    let host_side_r = vec![-0.6; 400];
+    let output = plugin.process(
+        [&host_l, &host_r, &host_side_l, &host_side_r],
+        400,
+        &[Event::note(0, 50, 1.0), level_event],
+        &tr,
+    );
+    let sample = quantize(0.125 + 0.375);
+    let target_gain = 10.0f32.powf(-6.0 / 20.0);
     for (i, (&left, &right)) in output[0].iter().zip(&output[1]).enumerate() {
-        let expected = if i < 73 {
+        let gain = if i < 73 {
             1.0
         } else {
-            1.0 - ((i - 73 + 1) as f32 / 240.0).min(1.0)
+            1.0 - (1.0 - target_gain) * ((i - 73 + 1) as f32 / 240.0).min(1.0)
         };
+        let expected = sample * gain;
         approx(
             left,
             expected,
-            &format!("Playback Only automation frame {i}"),
+            &format!("Playback Level automation frame {i}"),
         );
         approx(
             right,
             expected,
-            &format!("Playback Only automation R frame {i}"),
+            &format!("Playback Level automation R frame {i}"),
         );
     }
 }
@@ -621,12 +646,16 @@ unsafe fn capture_playback_at_rate(module: &Module, rate: f64, block: usize) {
     plugin.reset();
 
     let play_at = 5;
+    let playback_main_l = vec![0.9375; block];
+    let playback_main_r = vec![-0.8125; block];
+    let playback_side_l = vec![0.6875; block];
+    let playback_side_r = vec![-0.5625; block];
     let played = plugin.process(
         [
-            &vec![0.0; block],
-            &vec![0.0; block],
-            &vec![0.0; block],
-            &vec![0.0; block],
+            &playback_main_l,
+            &playback_main_r,
+            &playback_side_l,
+            &playback_side_r,
         ],
         block,
         &[Event::note(play_at as u32, 50, 0.5)],
@@ -758,12 +787,14 @@ unsafe fn record_priority_and_no_feedback(module: &Module) {
             .collect::<Vec<_>>()
     );
 
-    // Replace the single sample with silence while its old voice is still
-    // active. Replacement must invalidate that voice immediately, and capture
-    // must read host input rather than feeding the outgoing voice back to RAM.
+    // Replace the single sample with silence at an exact nonzero MIDI offset
+    // while its old voice is still active. Capture must read host input before
+    // output and invalidate the outgoing voice exactly at the trigger frame.
     plugin.flush(&[("Capture Note", "61")]);
-    let replacement = plugin.process([&zero; 4], 32, &[Event::note(0, 61, 1.0)], &tr);
-    assert_eq!(replacement, [vec![0.0; 32], vec![0.0; 32]]);
+    let replacement = plugin.process([&zero; 4], 32, &[Event::note(9, 61, 1.0)], &tr);
+    let mut expected = vec![0.0; 32];
+    expected[..9].fill(quantize(0.25));
+    assert_eq!(replacement, [expected.clone(), expected]);
     plugin.reset();
     let replaced = plugin.process([&zero; 4], 32, &[Event::note(0, 62, 1.0)], &tr);
     assert_eq!(
@@ -903,7 +934,6 @@ unsafe fn state_and_instance_isolation(module: &Module) {
     isolated.load_state(&state);
     assert_eq!(isolated.value("Capture Note").round(), 44.0);
     assert_eq!(isolated.value("Play Note").round(), 45.0);
-    assert_eq!(isolated.value("Playback Only"), 1.0);
     assert_eq!(isolated.value("Record Once"), 1.0);
     isolated.activate(48000.0, 16);
     let empty = isolated.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
@@ -1011,7 +1041,7 @@ fn main() {
     unsafe {
         let started = Instant::now();
         let module = Module::load(&library("ultrawave_plugin"));
-        contract_and_default_insert(&module);
+        contract_and_sample_only_output(&module);
         for (rate, block) in [(44100.0, 65), (48000.0, 257), (96000.0, 1025)] {
             capture_playback_at_rate(&module, rate, block);
         }
@@ -1024,7 +1054,7 @@ fn main() {
         restored_and_reset_commands_need_new_edges(&module);
         assert!(started.elapsed() < Duration::from_secs(20));
         println!(
-            "CLAP audio harness ok: one sample per instance; 27 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM ({:.2?})",
+            "CLAP audio harness ok: sample-only output; one sample per instance; 26 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM ({:.2?})",
             started.elapsed()
         );
     }

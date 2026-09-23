@@ -80,7 +80,7 @@ local function render_sequence(song, steps, done)
 end
 
 local expected_parameters = {
-  "Capture Note", "Play Note", "Playback Only", "Playback", "Re-arm",
+  "Capture Note", "Play Note", "Playback", "Re-arm",
   "Capture", "Record Once", "Capture Level", "Capture SRR", "Capture Distortion",
   "Track Input Level", "Track Input Balance", "Sidechain Level", "Sidechain Balance",
   "Capture Length", "Capture Rate",
@@ -116,7 +116,6 @@ local function run()
         "Track Input Balance not restored")
       assert(parameter(effect, "Playback Level").value_string:match("%-3%.0"),
         "Playback Level not restored")
-      assert(parameter(effect, "Playback Only").value == 0, "Playback Only not restored")
       report("project_controls_and_fx_alias_restored=true")
 
       local source_note = song.patterns[1].tracks[1].lines[1].note_columns[1]
@@ -173,8 +172,8 @@ local function run()
     assert(effect_matches == 1, "expected exactly one discovered Ultrawave effect")
     assert(instrument_matches == 0, "Ultrawave was incorrectly discovered as an instrument")
 
-    -- Left-only source makes both exact stereo dry-through and mono capture
-    -- independently visible in the rendered output.
+    -- Left-only source makes the bypass reference and mono capture independently
+    -- visible when playback is rendered later.
     make_tone(song, 1, "fixture-left-only-440Hz", 440, 0.4, 440, 0)
     local source_note = song.patterns[1].tracks[1].lines[1].note_columns[1]
     note(source_note, "C-4", 0)
@@ -185,12 +184,12 @@ local function run()
       report("parameter=" .. exported.name .. ":" .. exported.value_string)
       found[exported.name] = true
     end
-    assert(#effect.parameters == 27, "expected 27 exported parameters")
+    assert(#effect.parameters == 26, "expected 26 exported parameters")
     for _, name in ipairs(expected_parameters) do
       assert(found[name], "missing exported parameter: " .. name)
     end
     for _, removed in ipairs({
-      "Buffer", "Bank", "Dry Monitor", "Capture Monitor", "One Shot", "Record Note",
+      "Buffer", "Bank", "Dry Monitor", "Capture Monitor", "Playback Only", "One Shot", "Record Note",
       "Main Level", "Main Balance", "Rec Length", "Rec Rate"
     }) do
       assert(not found[removed], "removed parameter still exported: " .. removed)
@@ -198,8 +197,6 @@ local function run()
     assert(tonumber(parameter(effect, "Capture Note").value_string) == 48,
       "Capture Note default is not 48")
     assert(tonumber(parameter(effect, "Play Note").value_string) == 50, "Play Note default is not 50")
-    assert(parameter(effect, "Playback Only").value == 0, "Playback Only default is not false")
-
     parameter(effect, "Record Once").value = 1
     parameter(effect, "Track Input Level").value_string = "127"
     parameter(effect, "Track Input Balance").value_string = "L64"
@@ -257,18 +254,22 @@ local function run()
 
       render_sequence(song, {
       -- Both actions use MIDI sent through the FX alias: C-4 captures, D-4 plays.
-      {"capture-pass.wav", function() end},
+      -- Bypassed renders independently prove that each source was present; the
+      -- active effect must overwrite host output with silence while capturing.
+      {"capture-source-reference.wav", function() effect.is_active = false end},
+      {"capture-pass.wav", function() effect.is_active = true end},
       {"play-original.wav", function()
         clear_notes(); note(trigger_note, "D-4", 1)
       end},
-      {"dry-plus-playback.wav", function()
+      {"playback-with-host-input.wav", function()
         note(source_note, "C-5", 0)
       end},
-      {"playback-only.wav", function()
-        parameter(effect, "Playback Only").value = 1
+      {"second-capture-source-reference.wav", function()
+        clear_notes(); note(source_note, "C-5", 0); note(trigger_note, "C-4", 1)
+        effect.is_active = false
       end},
       {"second-capture.wav", function()
-        parameter(effect, "Playback Only").value = 0
+        effect.is_active = true
         clear_notes(); note(source_note, "C-5", 0); note(trigger_note, "C-4", 1)
       end},
       {"play-record-once.wav", function()
@@ -331,7 +332,7 @@ local function run()
       {"play-replacement.wav", function()
         clear_notes(); note(trigger_note, "D-4", 1)
       end},
-      {"side-dry-660.wav", function()
+      {"side-source-reference-660.wav", function()
         capture.value = 0; parameter(effect, "Record Once").value = 0
         -- Sidechains can only target later tracks. Move the receiver after both
         -- senders; Renoise updates the FX alias target when the track moves.
@@ -342,10 +343,12 @@ local function run()
         configure_sidechain(side_b, 4, 1, true)
         assert(alias.alias_fx_track_index == 5 and alias.alias_fx_device_index == 2,
           "FX alias did not follow the moved effect")
+        effect.is_active = false
         report("sidechain_receiver=" .. parameter(side_a, "Dest. Track").value_string .. "/" ..
           parameter(side_a, "Dest. Effect").value_string)
       end},
       {"side-wrong-route-capture.wav", function()
+        effect.is_active = true
         clear_notes(); note(side_note_a, "C-4", 2)
         configure_sidechain(side_a, 4, 0, true)
         capture_take(0, "R63", 127, "R63")
@@ -393,7 +396,12 @@ local function run()
         parameter(effect, "Sidechain Balance").value_string = "R63"
         parameter(effect, "Record Once").value = 1
       end},
+      {"save-denied-source-reference.wav", function()
+        clear_notes(); note(source_note, "C-5", 0); note(trigger_note, "C-4", 1)
+        effect.is_active = false
+      end},
       {"save-record-once-denied.wav", function()
+        effect.is_active = true
         clear_notes(); note(source_note, "C-5", 0); note(trigger_note, "C-4", 1)
       end},
       {"save-record-once-play.wav", function()
@@ -415,7 +423,6 @@ local function run()
               parameter(effect, "Play Note").value_string = "51"
               parameter(effect, "Track Input Level").value_string = "91"
               parameter(effect, "Track Input Balance").value_string = "L32"
-              parameter(effect, "Playback Only").value = 0
               parameter(effect, "Playback Level").value_string = "-3.0 dB"
               -- The preceding Capture Note spent Record Once; its denied overwrite
               -- preserved the populated take, and nothing above re-arms it.

@@ -12,8 +12,8 @@ migrations are unnecessary unless Jeff requests them.
 
 **Ultrawave** is one MIDI-controlled VST3/CLAP audio effect for real-time RAM
 sampling, inspired by the Elektron Machinedrum UW. Each instance owns private,
-volatile RAM for one mono sample. Stereo main/sidechain feed capture before playback is
-added; dry stereo passes through by default. Playback Only suppresses dry.
+volatile RAM for one mono sample. Stereo main/sidechain feed capture before the
+sample-only output is written. Output is silent unless a sample is playing.
 Renoise controls the existing effect through an FX alias instrument, not a
 second sampler. See README.md for routing, state and trigger semantics.
 

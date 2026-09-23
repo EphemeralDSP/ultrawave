@@ -5,30 +5,29 @@ VST3/CLAP and as a standalone. Capture and Play are always-visible actions and
 DSP machines inside the same instance. The sound is UW-inspired;
 interpolation, drive and timing curves are not claimed to be hardware-exact.
 
-## Input is captured before playback is added
+## Input is captured before sample-only output is written
 
 ```diagram
-┌──────────────────┐                         ┌────────────────┐
-│ Stereo main input│────────────────────────▶│ Dry gain       │───┐
-└────────┬─────────┘                         │ 5 ms mode ramp │   │
-         │                                  └────────────────┘   │
-         ▼                                                       ▼
-┌──────────────────┐    ┌────────────────┐    ┌──────────────┐  ┌─────┐
-│ Main/side levels │───▶│ Capture DSP    │───▶│ One sample   │  │ Sum │──▶ Stereo
-│ and balances     │    │ 12-bit storage │    │ SampleMemory │  └──▲──┘
-└────────▲─────────┘    └────────────────┘    └──────┬───────┘     │
-         │                                         ▼             │
-┌────────┴─────────┐                         ┌────────────────┐   │
-│ Stereo sidechain │                         │ Playback DSP   │───┘
-└──────────────────┘                         │ Mono to L + R  │
+┌───────────────────┐
+│ Stereo main input │
+└────────┬──────────┘
+         ▼
+┌───────────────────┐    ┌────────────────┐    ┌──────────────┐
+│ Main/side levels  │───▶│ Capture DSP    │───▶│ One sample   │
+│ and balances      │    │ 12-bit storage │    │ SampleMemory │
+└────────▲──────────┘    └────────────────┘    └──────┬───────┘
+         │                                          ▼
+┌────────┴──────────┐                         ┌────────────────┐
+│ Stereo sidechain  │                         │ Playback DSP   │──▶ Stereo output
+└───────────────────┘                         │ Mono to L + R  │
                                              └────────────────┘
 ```
 
 `src/plugin/sampler.rs` owns host processing, MIDI commands, control edges,
-Record once protection and output mixing. Each block is mixed to a mono capture
+Record once protection and sample-only output. Each block is mixed to a mono capture
 source in bounded 64-frame SIMD chunks before any playback reaches the output.
 The capture chain is input mix → capture level → SRR → drive → recording RATE
-selection/12-bit quantization. Dry-through bypasses that chain entirely.
+selection/12-bit quantization. Incoming audio never passes through to the output.
 
 `ram_play.rs` and `sample_engine.rs` handle source-rate-aware varispeed,
 linear interpolation, SRR, hold/decay, BRR, drive and retrigger timing. The
@@ -56,8 +55,8 @@ by offline renders/tests; public visibility does not mean globally shared RAM.
 
 ## Controls persist; audio and runtime latches do not
 
-`src/params.rs` defines 27 saved host controls, including MIDI assignments but no
-buffer selector. Neither RAM nor Record once's spent
+`src/params.rs` defines 26 saved host controls, including MIDI assignments but no
+buffer selector or output mode. Neither RAM nor Record once's spent
 latch is serialized. Host reset stops voices/captures while preserving those
 runtime data. Recreating the instance produces empty RAM and an armed recorder.
 Reset snapshots current command levels: a held/restored high Capture, Playback

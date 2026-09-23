@@ -150,29 +150,26 @@ impl NiceEguiApp for UltrawaveEditorApp {
         let origin = ui.max_rect().min;
         let rect = |x, y, w, h| egui::Rect::from_min_size(origin + vec2(x, y), vec2(w, h));
         ui.painter().rect_filled(ui.max_rect(), 0.0, BACKGROUND);
-        ui.scope_builder(UiBuilder::new().max_rect(rect(24.0, 18.0, 872.0, 48.0)), |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("ULTRAWAVE").font(FontId::monospace(24.0)).strong());
-                    ui.label(RichText::new("12-bit capture sampler").weak());
-                });
-                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.selectable_label(self.midi_open, "MIDI ▾").clicked() {
-                        self.midi_open = !self.midi_open;
-                    }
-                    ui.add_space(18.0);
-                    let only = self.params.playback_only.unmodulated_plain_value();
-                    for (value, label) in [(true, "Sample only"), (false, "Input + sample")] {
-                        if ui.selectable_label(only == value, label).on_hover_text(
-                            "Output only. Capture always reads the input before sample playback is added."
-                        ).clicked() {
-                            set_bool(&gui, &self.params.playback_only, value);
+        ui.scope_builder(
+            UiBuilder::new().max_rect(rect(24.0, 18.0, 872.0, 48.0)),
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("ULTRAWAVE")
+                                .font(FontId::monospace(24.0))
+                                .strong(),
+                        );
+                        ui.label(RichText::new("12-bit capture sampler").weak());
+                    });
+                    ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.selectable_label(self.midi_open, "MIDI ▾").clicked() {
+                            self.midi_open = !self.midi_open;
                         }
-                    }
-                    ui.label(RichText::new("OUTPUT").small().weak());
+                    });
                 });
-            });
-        });
+            },
+        );
         let wave_rect = rect(24.0, 102.0, 872.0, 100.0);
         waveform(
             ui,
@@ -257,9 +254,6 @@ impl NiceEguiApp for UltrawaveEditorApp {
                 color,
             );
         }
-        ui.scope_builder(UiBuilder::new().max_rect(rect(24.0, 621.0, 872.0, 20.0)), |ui| {
-            ui.label(RichText::new("One instance · one take. New captures replace it. Audio is not saved with the project.").small().weak());
-        });
         // A settings window, rather than a menu: ComboBox popups use egui's
         // popup stack and otherwise dismiss their parent menu when opening.
         let mut open = self.midi_open;
@@ -393,7 +387,15 @@ impl UltrawaveEditorApp {
                 hint,
             );
         }
-        knob(ui, origin + vec2(172.0, 181.0), 84.0, "Gain", &p.lev, gui, "Level into the 12-bit recorder. Hot signals clip; quiet signals lose detail. Dry audio stays unchanged.");
+        knob(
+            ui,
+            origin + vec2(172.0, 181.0),
+            84.0,
+            "Gain",
+            &p.lev,
+            gui,
+            "Level into the 12-bit recorder. Hot signals clip; quiet signals lose detail.",
+        );
         ui.scope_builder(
             UiBuilder::new().max_rect(egui::Rect::from_min_size(
                 origin + vec2(0.0, 283.0),
@@ -409,9 +411,11 @@ impl UltrawaveEditorApp {
                         ui.set_width(376.0);
                         ui.label(RichText::new("PRINT INTO THE TAKE").strong());
                         ui.label(
-                            RichText::new("These controls affect recording, never dry-through.")
-                                .small()
-                                .weak(),
+                            RichText::new(
+                                "These controls affect new recordings, not the current sample.",
+                            )
+                            .small()
+                            .weak(),
                         );
                         ui.horizontal(|ui| {
                             for (label, param) in [
@@ -436,7 +440,11 @@ impl UltrawaveEditorApp {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(RichText::new("Playback").color(PLAY).strong());
-                ui.label(RichText::new(if self.ui_state.playing.load(Ordering::Relaxed) { "● PLAYING" } else if len == 0 { "Capture a take to begin." } else { "Your take is ready to play." }).small().weak());
+                if self.ui_state.playing.load(Ordering::Relaxed) {
+                    ui.label(RichText::new("● PLAYING").small().weak());
+                } else if len == 0 {
+                    ui.label(RichText::new("Capture a take to begin.").small().weak());
+                }
             });
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.add_enabled(len > 0, egui::Button::new(RichText::new("▶  Play sample").color(BACKGROUND).strong()).fill(PLAY).min_size(vec2(142.0, 34.0)))
@@ -503,7 +511,7 @@ impl UltrawaveEditorApp {
             "Level",
             &p.lev,
             gui,
-            "Sample output level. Does not change dry-through.",
+            "Sample output level.",
         );
     }
 }

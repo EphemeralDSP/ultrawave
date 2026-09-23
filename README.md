@@ -16,17 +16,16 @@ and egui; available as VST3, CLAP, and a standalone application.
    MIDI note **48** captures; **50** plays. Change these in the small **MIDI**
    dropdown panel at the top right. Numbers are definitive because DAWs use
    different octave names. Automatable Capture/Playback rising edges also work.
-4. The default **Input + sample** output preserves incoming stereo and adds the
-   mono sample to both channels. Select **Sample only** on a capture/send bus
-   when the source is already audible elsewhere. Switching output modes ramps
-   dry gain over 5 ms; neither mode changes what is recorded.
+4. Output is always **sample-only**: the mono sample plays on both channels,
+   with silence until playback is triggered, including during capture. To hear
+   the original source too, keep it on a separate track and send audio to Ultrawave.
 
-The effect reads main/sidechain input **before adding playback**, so it does not
+The effect reads main/sidechain input **before writing playback output**, so it does not
 implicitly record itself. There is no automatic access to the DAW master:
 insert on the master or route that mix to the effect. **Track input** and
 **Sidechain** mix to mono before capture gain and signed 12-bit quantization.
 **Capture sound & balance** contains the source balances, capture rate,
-rate crush (SRR) and drive. These print into the take without coloring dry-through.
+rate crush (SRR) and drive. These print into the take during recording.
 Playback has independent level, rate crush, bit crush (BRR) and drive controls.
 
 **A new capture replaces the sample and stops its old playback and repeats.**
@@ -49,8 +48,8 @@ For a mix of tracks, use a send/group receiver with Ultrawave. A normal `#Send`
 feeds its **main input**. Renoise's `#Sidechain` device feeds its **sidechain**;
 choose the receiver track and Ultrawave device, then raise Sidechain. Put a sidechain
 receiver **after the sending tracks**: Renoise refuses sends to previous tracks.
-Multiple sidechain senders sum. Use Sample only if monitoring the sources
-elsewhere; leave dry-through enabled for an ordinary insert or master effect.
+Multiple sidechain senders sum. Monitor the original sources on their own tracks;
+Ultrawave's track outputs only sample playback, never the incoming audio.
 
 ### Ableton Live and other hosts
 
@@ -106,7 +105,7 @@ One 920×650 pane shows Capture and Play together. The waveform is shared, with
 draggable Start/End handles, dimmed excluded audio and a reverse indicator.
 MIDI assignments are dropdowns in a small panel, not sound knobs. Click numeric
 values to type; drag knobs vertically, Shift-drag for fine changes, double-click
-to restore defaults. **Sample only** maps to the host's **Playback Only** parameter.
+to restore defaults.
 
 ![Ultrawave single-pane editor](screenshots/ultrawave.png)
 
@@ -171,7 +170,7 @@ cargo xtask bundle ultrawave-plugin --release
 Requires Renoise 3.5.4, Xvfb, xdotool, ImageMagick and Python. Uses a disposable
 HOME/display and only the newly built bundle, leaving personal sessions and
 installed plugins untouched. Tests FX-alias notes, main/sidechain routing,
-dry-through/playback-only, Record once, replacement, reverse/retrigger, project save and process
+sample-only output, Record once, replacement, reverse/retrigger, project save and process
 reopen. Artifacts and logs: `target/renoise-test/`. This exercises VST3; the CLAP
 harness and clap-validator exercise CLAP. `tests/test.RPP` remains unverified
 historical scratch, not a supported setup.
