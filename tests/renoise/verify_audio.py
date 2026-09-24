@@ -94,8 +94,55 @@ out = pathlib.Path(sys.argv[1])
 capture = metrics(out / "capture-pass.wav")
 original = metrics(out / "play-original.wav")
 
+# The master fixture is a real TRACK_TYPE_MASTER insert. With Master Mode On,
+# capture does not replace the bus: its nonconstant stereo dry input passes at
+# 32-bit precision. The capture balance selects the left post-mix signal, while
+# playback is mono and added equally to both dry channels.
+master_old_left, master_old_right = channels(out / "master-old-capture-dry.wav")
+for samples, frequency, gain in ((master_old_left, 440, 0.22), (master_old_right, 550, 0.13)):
+    for frame, actual in enumerate(samples):
+        expected = (gain - gain * 0.5 * frame / 96000) * math.sin(2 * math.pi * frequency * frame / 48000) if frame < 96000 else 0.0
+        assert abs(actual - expected) <= 1 / 2048, (frequency, frame, actual, expected)
+
+master_live_left, master_live_right = channels(out / "master-live-reference.wav")
+for samples, frequency, gain in ((master_live_left, 880, 0.17), (master_live_right, 990, 0.11)):
+    for frame, actual in enumerate(samples):
+        expected = (gain - gain * 0.5 * frame / 96000) * math.sin(2 * math.pi * frequency * frame / 48000) if frame < 96000 else 0.0
+        assert abs(actual - expected) <= 1 / 2048, (frequency, frame, actual, expected)
+
+master_mix_left, master_mix_right = channels(out / "master-play-and-recapture.wav")
+old_from_left = [actual - dry for actual, dry in zip(master_mix_left, master_live_left)]
+old_from_right = [actual - dry for actual, dry in zip(master_mix_right, master_live_right)]
+assert max(abs(a - b) for a, b in zip(old_from_left, old_from_right)) <= 2e-6
+assert max(abs(a - source) for a, source in zip(old_from_left[:48000], master_old_left[:48000])) <= 1 / 4096 + 2e-6
+assert max(map(abs, old_from_left[48000:])) < 1e-7
+# The channels must retain their distinct dry signals; this is not merely a
+# nonzero-output check, and the raw bypass is intentionally not 12-bit exact.
+assert max(abs(a - b) for a, b in zip(master_mix_left, master_mix_right)) > 0.1
+assert tuple(master_mix_left[:96000]) != tuple(master_live_left[:96000])
+
+master_post_left, master_post_right = channels(out / "master-play-post-mix.wav")
+assert master_post_left == master_post_right
+post_mix_error = max(abs(actual - source) for actual, source in zip(master_post_left[:48000], master_mix_left[:48000]))
+assert post_mix_error <= 1 / 4096 + 2e-6, post_mix_error
+assert max(map(abs, master_post_left[48000:])) < 1e-7
+assert tuple(master_post_left[:96000]) != tuple(master_mix_left[:96000])
+
+# A later capture has no external input. The old post-mix take remains playable
+# for the whole recording, publication stops it at the timed end, and does not
+# implicitly trigger the replacement. Playing once more yields the same waveform
+# after one additional signed-12-bit capture rounding.
+master_generation_left, master_generation_right = channels(out / "master-silent-recapture.wav")
+assert master_generation_left == master_generation_right
+assert master_generation_left[:48000] == master_post_left[:48000]
+assert max(map(abs, master_generation_left[48000:])) < 1e-7
+master_retained_left, master_retained_right = channels(out / "master-play-retained-generation.wav")
+assert master_retained_left == master_retained_right
+retained_error = max(abs(actual - source) for actual, source in zip(master_retained_left, master_generation_left))
+assert retained_error <= 1 / 4096 + 2e-6, retained_error
+
 # A bypassed reference proves the source reaches the device. The active effect
-# is permanently sample-only and remains exactly silent during capture.
+# explicitly selects Sample only and remains exactly silent during capture.
 capture_reference_left, capture_reference_right = channels(out / "capture-source-reference.wav")
 assert_source_tone(capture_reference_left, 440)
 assert max(map(abs, capture_reference_right)) < 1e-7
@@ -218,6 +265,8 @@ assert "ultrawave_instrument_matches_before_alias=0" in host_result, host_result
 assert "fx_alias_target=1/2" in host_result, host_result
 assert "sidechain_receiver=5/1" in host_result, host_result
 assert "project_controls_and_fx_alias_restored=true" in host_result, host_result
+assert "master_mode_default_on=true" in host_result, host_result
+assert "master_fixture_removed=true" in host_result, host_result
 
 # Actual process destruction clears the sample and spent latch. The saved FX alias
 # then captures and plays with its restored custom MIDI note assignments.
@@ -230,6 +279,16 @@ assert recaptured["peak"] > 1e-4 and recaptured["stereo_delta_peak"] < 1e-7, rec
 assert 435 < recaptured["estimated_frequency_hz"] < 445, recaptured
 
 summary = {
+    "master_mode": {
+        "old_capture_dry_passthrough": metrics(out / "master-old-capture-dry.wav"),
+        "live_stereo_reference": metrics(out / "master-live-reference.wav"),
+        "simultaneous_play_and_capture": metrics(out / "master-play-and-recapture.wav"),
+        "captured_post_mix": metrics(out / "master-play-post-mix.wav"),
+        "silent_input_recapture": metrics(out / "master-silent-recapture.wav"),
+        "retained_generation": metrics(out / "master-play-retained-generation.wav"),
+        "post_mix_max_error_after_capture": post_mix_error,
+        "retained_max_error_after_recapture": retained_error,
+    },
     "capture_source_reference": metrics(out / "capture-source-reference.wav"),
     "capture_active_effect_silence": capture,
     "fx_alias_playback": original,
@@ -258,8 +317,11 @@ summary = {
     },
     "assertions": {
         "single_effect_classification_and_parameter_surface": True,
+        "master_mode_defaults_on_and_saved_off_restores": True,
+        "real_master_stereo_dry_plus_mono_playback": True,
+        "master_capture_records_post_mix_and_retains_sampler_generations": True,
         "record_and_play_notes_use_actual_fx_alias": True,
-        "active_effect_output_is_permanently_sample_only": True,
+        "sample_only_mode_excludes_dry_output": True,
         "capture_and_denied_capture_are_silent_with_independent_source_evidence": True,
         "playback_parameter_rising_edge": True,
         "record_once_survives_host_reset": True,

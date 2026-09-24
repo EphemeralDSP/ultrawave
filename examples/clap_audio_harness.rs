@@ -460,6 +460,7 @@ fn quantize(sample: f32) -> f32 {
 
 unsafe fn configure(plugin: &Plugin) {
     plugin.flush(&[
+        ("Master Mode", "Off"),
         ("Track Input Level", "127"),
         ("Track Input Balance", "L64"),
         ("Sidechain Level", "127"),
@@ -507,8 +508,9 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
         [2]
     );
     let names = plugin.param_names();
-    assert_eq!(names.len(), 26, "single-sample plugin parameter count");
+    assert_eq!(names.len(), 27, "single-sample plugin parameter count");
     for name in [
+        "Master Mode",
         "Record Once",
         "Capture Note",
         "Track Input Level",
@@ -544,6 +546,22 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
     }
     assert_eq!(plugin.value("Record Once"), 0.0);
     assert_eq!(plugin.value("Play Note").round(), 50.0);
+    assert_eq!(plugin.value("Master Mode"), 1.0);
+    plugin.activate(48000.0, 512);
+    let master_l = [0.125, -0.75, 0.0, 0.25, -0.125];
+    let master_r = [-0.25, 0.5, 0.75, 0.0, -0.5];
+    let side = [0.875; 5];
+    assert_eq!(
+        plugin.process(
+            [&master_l, &master_r, &side, &side],
+            5,
+            &[],
+            &transport(true, 120.0, 0, false),
+        ),
+        [master_l.to_vec(), master_r.to_vec()],
+        "default Master mode must pass stereo input unchanged, without sidechain monitoring"
+    );
+    plugin.stop();
     configure(&plugin);
     plugin.activate(48000.0, 512);
 
@@ -624,6 +642,213 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
             &format!("Playback Level automation R frame {i}"),
         );
     }
+}
+
+unsafe fn master_mode_automation_during_capture(module: &Module) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.activate(48000.0, 1025);
+    let tr = transport(true, 120.0, 0, false);
+    let silent = vec![0.0; 1025];
+    let seed = vec![0.25; 1025];
+    plugin.process(
+        [&seed, &silent, &silent, &silent],
+        1025,
+        &[Event::note(0, 48, 1.0)],
+        &tr,
+    );
+    plugin.flush(&[("Master Mode", "On")]);
+    plugin.reset();
+    let frames = 800;
+    let left = vec![0.125; frames];
+    let right = vec![-0.5; frames];
+    let silence = &silent[..frames];
+    let output = plugin.process(
+        [&left, &right, silence, silence],
+        frames,
+        &[
+            Event::note(0, 50, 1.0),
+            Event::note(0, 48, 1.0),
+            Event::param(73, plugin.param("Master Mode"), 0.0),
+            Event::param(337, plugin.param("Master Mode"), 1.0),
+        ],
+        &tr,
+    );
+    // Both edges fall beyond a 64-frame mix chunk. Switching mode ramps live
+    // routing over 240 frames, but keeps the capture's latched staging strategy.
+    let gain = |i: usize| {
+        if i < 73 {
+            1.0
+        } else if i < 337 {
+            1.0 - ((i - 73 + 1) as f32 / 240.0).min(1.0)
+        } else {
+            ((i - 337 + 1) as f32 / 240.0).min(1.0)
+        }
+    };
+    for (i, (&left, &right)) in output[0].iter().zip(&output[1]).enumerate() {
+        approx(left, 0.125 * gain(i) + 0.25, "Master mode dry L ramp");
+        approx(right, -0.5 * gain(i) + 0.25, "Master mode dry R ramp");
+    }
+    plugin.reset(); // Publish the nonempty interrupted staged take.
+    let recorded = plugin.process([silence; 4], frames, &[Event::note(0, 50, 1.0)], &tr);
+    for (i, (&left, &right)) in recorded[0].iter().zip(&recorded[1]).enumerate() {
+        approx(
+            left,
+            quantize(0.125 + 0.25 * gain(i)),
+            "Master mode feedback ramp",
+        );
+        assert_eq!(left, right);
+    }
+}
+
+unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
+    let tr = transport(true, 120.0, 0, false);
+    let render = |plugin: &Plugin, input: &[Vec<f32>; 4], notes: &[(usize, i16, f64)]| {
+        let mut output = [Vec::new(), Vec::new()];
+        for start in (0..input[0].len()).step_by(block) {
+            let end = (start + block).min(input[0].len());
+            let events: Vec<_> = notes
+                .iter()
+                .filter(|(at, _, _)| (start..end).contains(at))
+                .map(|&(at, key, velocity)| Event::note((at - start) as u32, key, velocity))
+                .collect();
+            let chunk = plugin.process(
+                input.each_ref().map(|channel| &channel[start..end]),
+                end - start,
+                &events,
+                &tr,
+            );
+            for (out, samples) in output.iter_mut().zip(chunk) {
+                out.extend(samples);
+            }
+        }
+        output
+    };
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.flush(&[("Master Mode", "On"), ("Sidechain Level", "0")]);
+    plugin.activate(rate, block as u32);
+    let duration = (rate / 4.0) as usize; // Half a beat at 120 BPM.
+    let seed: [Vec<f32>; 4] = std::array::from_fn(|channel| {
+        (0..duration * 4)
+            .map(|i| {
+                if channel == 0 {
+                    ((i * 37 % 1700) as f32 - 850.0) / 2048.0
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    });
+    assert_eq!(render(&plugin, &seed, &[(0, 48, 1.0)])[0], seed[0]);
+    plugin.reset(); // Finish the first, deliberately longer take.
+    plugin.flush(&[
+        ("Capture Length", "0"),
+        ("Track Input Balance", "L-R"),
+        ("Sidechain Level", "127"),
+        ("Pitch", "+12 st"),
+        ("Playback Level", "-6 dB"),
+        ("Playback Distortion", "32"),
+        ("Bit Reduction", "24"),
+    ]);
+    plugin.reset();
+    let capture_at = 73;
+    let end = capture_at + duration;
+    let frames = end + 91;
+    let silent = std::array::from_fn(|_| vec![0.0; frames]);
+    // Separate playback establishes the post-pitch/FX/velocity/level signal.
+    // Capturing must neither erase it early nor tap a pre-processing version.
+    let reference = render(&plugin, &silent, &[(5, 50, 0.625)]);
+    assert!(reference[0][capture_at..end].iter().any(|s| s.abs() > 0.01));
+    plugin.reset();
+    let input = [
+        vec![0.25; frames],
+        vec![-0.125; frames],
+        vec![-0.75; frames],
+        vec![0.0625; frames],
+    ];
+    let captured = render(&plugin, &input, &[(5, 50, 0.625), (capture_at, 48, 1.0)]);
+    for i in 0..frames {
+        let played = if i < end { reference[0][i] } else { 0.0 };
+        approx(
+            captured[0][i],
+            0.25 + played,
+            "master capture keeps old playback until publication",
+        );
+        approx(
+            captured[1][i],
+            -0.125 + played,
+            "master preserves dry stereo during resampling",
+        );
+    }
+    plugin.flush(&[
+        ("Pitch", "+0 st"),
+        ("Playback Level", "0 dB"),
+        ("Playback Distortion", "0"),
+        ("Bit Reduction", "0"),
+    ]);
+    plugin.reset();
+    let replacement = render(&plugin, &silent, &[(0, 50, 1.0)]);
+    for i in 0..frames {
+        let expected = if i < duration {
+            // Centered main input = 0.0625; hard-right side = 0.0625.
+            quantize(0.125 + reference[0][capture_at + i])
+        } else {
+            0.0
+        };
+        approx(
+            replacement[0][i],
+            expected,
+            "new take contains master sum, post playback processing",
+        );
+        assert_eq!(replacement[0][i], replacement[1][i]);
+    }
+    plugin.reset();
+    // Record the sample again with silent host input. The next generation must
+    // retain it, with no within-take read/write feedback or automatic restart.
+    let generation = render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]);
+    assert_eq!(generation, replacement);
+    plugin.reset();
+    assert_eq!(render(&plugin, &silent, &[(0, 50, 1.0)]), replacement);
+
+    plugin.flush(&[("Record Once", "On")]);
+    plugin.reset();
+    assert_eq!(
+        render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]),
+        replacement
+    );
+    plugin.reset();
+    let denied = render(&plugin, &input, &[(0, 48, 1.0)]);
+    assert_eq!(denied, [input[0].clone(), input[1].clone()]);
+    plugin.reset();
+    assert_eq!(render(&plugin, &silent, &[(0, 50, 1.0)]), replacement);
+    let state = plugin.save();
+    let mut restored = module.create();
+    restored.load_state(&state);
+    assert_eq!(restored.value("Master Mode"), 1.0);
+    assert_eq!(restored.value("Record Once"), 1.0);
+    restored.activate(rate, block as u32);
+    assert_eq!(render(&restored, &silent, &[(0, 50, 1.0)]), silent[..2]);
+    render(&restored, &input, &[(0, 48, 1.0)]);
+    restored.reset();
+    let fresh = render(&restored, &silent, &[(0, 50, 1.0)]);
+    assert!(fresh[0][..duration].iter().all(|&s| s == 0.125));
+    assert!(fresh[0][duration..].iter().all(|&s| s == 0.0));
+
+    // Main level scales the whole master capture source, including the sample,
+    // but does not attenuate the audible master bus or the sample's output.
+    plugin.flush(&[
+        ("Record Once", "Off"),
+        ("Track Input Level", "0"),
+        ("Sidechain Level", "0"),
+    ]);
+    plugin.reset();
+    assert_eq!(
+        render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]),
+        replacement
+    );
+    plugin.reset();
+    assert_eq!(render(&plugin, &silent, &[(0, 50, 1.0)]), silent[..2]);
 }
 
 unsafe fn capture_playback_at_rate(module: &Module, rate: f64, block: usize) {
@@ -1042,7 +1267,9 @@ fn main() {
         let started = Instant::now();
         let module = Module::load(&library("ultrawave_plugin"));
         contract_and_sample_only_output(&module);
+        master_mode_automation_during_capture(&module);
         for (rate, block) in [(44100.0, 65), (48000.0, 257), (96000.0, 1025)] {
+            master_resamples_playback(&module, rate, block);
             capture_playback_at_rate(&module, rate, block);
         }
         reverse_pitch_notes_and_triggers(&module);
@@ -1054,7 +1281,7 @@ fn main() {
         restored_and_reset_commands_need_new_edges(&module);
         assert!(started.elapsed() < Duration::from_secs(20));
         println!(
-            "CLAP audio harness ok: sample-only output; one sample per instance; 26 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM ({:.2?})",
+            "CLAP audio harness ok: master self-resampling + sample-only; one sample; 27 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM ({:.2?})",
             started.elapsed()
         );
     }

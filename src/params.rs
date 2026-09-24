@@ -229,6 +229,8 @@ pub struct UltrawaveParams {
     pub record_note: IntParam,
     #[id = "play_note"]
     pub play_note: IntParam,
+    #[id = "master_mode"]
+    pub master_mode: BoolParam,
     #[id = "playback"]
     pub playback: BoolParam,
     #[id = "rearm"]
@@ -246,6 +248,7 @@ impl Default for UltrawaveParams {
                 .with_string_to_value(Arc::new(parse_0_127)),
             play_note: IntParam::new("Play Note", 50, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
+            master_mode: BoolParam::new("Master Mode", true),
             playback: BoolParam::new("Playback", false),
             rearm: BoolParam::new("Re-arm", false),
             record: RamRecordParams::default(),

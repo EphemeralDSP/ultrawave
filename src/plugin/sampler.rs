@@ -25,12 +25,13 @@ pub struct UltrawavePlugin {
     playback_was_high: bool,
     rearm_was_high: bool,
     one_shot_spent: bool,
+    resampling: bool,
     transport_was_playing: bool,
     decimator: crate::Decimator,
     distortion: Distortion,
     mix_gains: SmoothedGains<4>,
-    // Capture level and playback level.
-    gains: SmoothedGains<2>,
+    // Capture level, playback level, master dry-through and self-resampling.
+    gains: SmoothedGains<4>,
     preload_attempted: bool,
 }
 
@@ -51,6 +52,7 @@ impl Default for UltrawavePlugin {
             playback_was_high: false,
             rearm_was_high: false,
             one_shot_spent: false,
+            resampling: false,
             transport_was_playing: false,
             decimator: crate::Decimator::new(),
             distortion: Distortion::new(),
@@ -67,9 +69,14 @@ impl UltrawavePlugin {
             return;
         }
         self.recorder.stop_recording();
-        self.player.stop();
         self.decimator = crate::Decimator::new();
-        self.recorder.start_recording(params);
+        self.resampling = self.params.master_mode.value();
+        if self.resampling {
+            self.recorder.start_resampling(params);
+        } else {
+            self.player.stop();
+            self.recorder.start_recording(params);
+        }
         if self.params.record.one_shot.value() {
             self.one_shot_spent = true;
         }
@@ -234,6 +241,16 @@ impl Plugin for UltrawavePlugin {
             [
                 util::db_to_gain(self.params.record.lev.value()),
                 util::db_to_gain(self.params.play.lev.value()),
+                if self.params.master_mode.value() {
+                    1.0
+                } else {
+                    0.0
+                },
+                if self.params.master_mode.value() {
+                    record.mlev as f32 / 127.0
+                } else {
+                    0.0
+                },
             ],
             self.sample_rate,
         );
@@ -281,16 +298,27 @@ impl Plugin for UltrawavePlugin {
                     }
                     event = context.next_event();
                 }
-                let [record_gain, play_gain] = self.gains.next_frame();
-                let captured = self
-                    .distortion
-                    .process(self.decimator.process(input * record_gain, srr));
-                self.recorder.record_mono(captured);
+                let [record_gain, play_gain, dry_gain, resample_gain] = self.gains.next_frame();
+                // Read the old take before writing the new one. The feedback tap
+                // includes pitch, envelope, character, velocity and output level.
                 let played = self.player.process() * self.velocity * play_gain;
+                let captured = self.distortion.process(
+                    self.decimator
+                        .process((input + played * resample_gain) * record_gain, srr),
+                );
+                let was_recording = self.recorder.is_recording();
+                self.recorder.record_mono(captured);
+                if self.resampling
+                    && was_recording
+                    && !self.recorder.is_recording()
+                    && self.recorder.recorded_samples() > 0
+                {
+                    self.player.stop();
+                }
                 capture_peak = capture_peak.max(captured.abs());
                 playback_peak = playback_peak.max(played.abs());
                 for channel in main.iter_mut() {
-                    channel[frame] = played;
+                    channel[frame] = channel[frame] * dry_gain + played;
                 }
             }
         }

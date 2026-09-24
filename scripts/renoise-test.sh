@@ -32,6 +32,9 @@ if [[ -f "$HOME/.config/Renoise/V3.5.4/Config.xml" ]]; then
     "$CONFIG_DIR/Renoise/V3.5.4/Config.xml"
   sed -i 's#<ShowWelcomeDialog>true</ShowWelcomeDialog>#<ShowWelcomeDialog>false</ShowWelcomeDialog>#' \
     "$CONFIG_DIR/Renoise/V3.5.4/Config.xml"
+  # The isolated FX-alias chooser coordinates below assume 100% UI scale.
+  sed -i 's#<UIScaleFactor>[^<]*</UIScaleFactor>#<UIScaleFactor>100.0%</UIScaleFactor>#' \
+    "$CONFIG_DIR/Renoise/V3.5.4/Config.xml"
 fi
 
 stop_renoise() {
@@ -98,6 +101,7 @@ run_host() {
       alias_created=true
     fi
     if grep -q '^fatal=' "$OUT/host-result.txt" 2>/dev/null; then
+      import -display "$DISPLAY_NUMBER" -window root "$OUT/isolated-renoise-blocked.png" 2>/dev/null || true
       cat "$OUT/host-result.txt" >&2
       exit 1
     fi

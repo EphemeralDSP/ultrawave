@@ -80,6 +80,7 @@ local function render_sequence(song, steps, done)
 end
 
 local expected_parameters = {
+  "Master Mode",
   "Capture Note", "Play Note", "Playback", "Re-arm",
   "Capture", "Record Once", "Capture Level", "Capture SRR", "Capture Distortion",
   "Track Input Level", "Track Input Balance", "Sidechain Level", "Sidechain Balance",
@@ -116,6 +117,7 @@ local function run()
         "Track Input Balance not restored")
       assert(parameter(effect, "Playback Level").value_string:match("%-3%.0"),
         "Playback Level not restored")
+      assert(parameter(effect, "Master Mode").value == 0, "Master Mode Off not restored")
       report("project_controls_and_fx_alias_restored=true")
 
       local source_note = song.patterns[1].tracks[1].lines[1].note_columns[1]
@@ -184,7 +186,7 @@ local function run()
       report("parameter=" .. exported.name .. ":" .. exported.value_string)
       found[exported.name] = true
     end
-    assert(#effect.parameters == 26, "expected 26 exported parameters")
+    assert(#effect.parameters == 27, "expected 27 exported parameters")
     for _, name in ipairs(expected_parameters) do
       assert(found[name], "missing exported parameter: " .. name)
     end
@@ -197,6 +199,12 @@ local function run()
     assert(tonumber(parameter(effect, "Capture Note").value_string) == 48,
       "Capture Note default is not 48")
     assert(tonumber(parameter(effect, "Play Note").value_string) == 50, "Play Note default is not 50")
+    assert(parameter(effect, "Master Mode").value == 1, "Master Mode default is not On")
+    report("master_mode_default_on=true")
+    -- Everything below which exercises the original overwrite/silence contract
+    -- is explicitly sample-only. The separate master-track fixture later tests
+    -- the new default mode without weakening those assertions.
+    parameter(effect, "Master Mode").value = 0
     parameter(effect, "Record Once").value = 1
     parameter(effect, "Track Input Level").value_string = "127"
     parameter(effect, "Track Input Balance").value_string = "L64"
@@ -236,6 +244,45 @@ local function run()
     local side_a = song.tracks[3]:insert_device_at(sidechain_path, 2)
     local side_b = song.tracks[4]:insert_device_at(sidechain_path, 2)
 
+    -- Exercise Master Mode on Renoise's real master track. This deliberately
+    -- uses parameter automation rather than another FX alias: Renoise exposes
+    -- alias target creation only through its GUI, and the existing regular-track
+    -- alias below remains the independent MIDI/alias coverage.
+    song:insert_track_at(5); song:insert_track_at(6)
+    song:insert_instrument_at(5); song:insert_instrument_at(6)
+    make_tone(song, 5, "master-old-stereo-440-550", 440, 0.22, 550, 0.13)
+    make_tone(song, 6, "master-live-stereo-880-990", 880, 0.17, 990, 0.11)
+    -- Send tracks follow the master, so the last song track need not be master.
+    local master_index
+    for index, track in ipairs(song.tracks) do
+      if track.type == renoise.Track.TRACK_TYPE_MASTER then master_index = index end
+    end
+    assert(master_index, "fixture has no master track")
+    local master = song.tracks[master_index]
+    local master_effect = master:insert_device_at(effect_path, 2)
+    assert(parameter(master_effect, "Master Mode").value == 1, "fresh master instance did not default On")
+    parameter(master_effect, "Record Once").value = 0
+    parameter(master_effect, "Capture Length").value_string = "48"
+    parameter(master_effect, "Track Input Level").value_string = "127"
+    parameter(master_effect, "Track Input Balance").value_string = "L64"
+    parameter(master_effect, "Sidechain Level").value_string = "0"
+    local master_capture = parameter(master_effect, "Capture")
+    local master_playback = parameter(master_effect, "Playback")
+    local master_pattern = song.patterns[1].tracks[master_index]
+    local master_old_note = song.patterns[1].tracks[5].lines[1].note_columns[1]
+    local master_live_note = song.patterns[1].tracks[6].lines[1].note_columns[1]
+    local function automate_edge(target)
+      local automation = master_pattern:create_automation(target)
+      automation:add_point_at(1, 1); automation:add_point_at(2, 0)
+    end
+    local function clear_master_edges()
+      if master_pattern:find_automation(master_capture) then master_pattern:delete_automation(master_capture) end
+      if master_pattern:find_automation(master_playback) then master_pattern:delete_automation(master_playback) end
+      master_capture.value = 0; master_playback.value = 0
+    end
+    for index = 1, 4 do song.tracks[index].mute_state = renoise.Track.MUTE_STATE_MUTED end
+    note(master_old_note, "C-4", 4)
+
     local capture = parameter(effect, "Capture")
     local playback = parameter(effect, "Playback")
     local rearm = parameter(effect, "Re-arm")
@@ -253,10 +300,44 @@ local function run()
     end
 
       render_sequence(song, {
+      {"master-old-capture-dry.wav", function()
+        clear_master_edges(); automate_edge(master_capture)
+      end},
+      {"master-live-reference.wav", function()
+        clear_master_edges(); clear_note(master_old_note); note(master_live_note, "C-4", 5)
+        master_effect.is_active = false
+      end},
+      {"master-play-and-recapture.wav", function()
+        master_effect.is_active = true
+        -- The old take is one bar; replace it after two beats so the render can
+        -- distinguish publication stopping the old voice from its natural end.
+        parameter(master_effect, "Capture Length").value_string = "32"
+        clear_master_edges(); automate_edge(master_playback); automate_edge(master_capture)
+      end},
+      {"master-play-post-mix.wav", function()
+        clear_master_edges(); clear_note(master_live_note); automate_edge(master_playback)
+      end},
+      {"master-silent-recapture.wav", function()
+        -- With no dry source, simultaneous play/capture must retain the sampler's
+        -- own post-FX output in the next generation. Publication at the timed end
+        -- stops the old voice and must not implicitly start the replacement.
+        clear_master_edges(); automate_edge(master_playback); automate_edge(master_capture)
+      end},
+      {"master-play-retained-generation.wav", function()
+        clear_master_edges(); automate_edge(master_playback)
+      end},
       -- Both actions use MIDI sent through the FX alias: C-4 captures, D-4 plays.
       -- Bypassed renders independently prove that each source was present; the
       -- active effect must overwrite host output with silence while capturing.
-      {"capture-source-reference.wav", function() effect.is_active = false end},
+      {"capture-source-reference.wav", function()
+        clear_master_edges()
+        master:delete_device_at(2)
+        song:delete_track_at(6); song:delete_track_at(5)
+        song:delete_instrument_at(6); song:delete_instrument_at(5)
+        for index = 1, 4 do song.tracks[index].mute_state = renoise.Track.MUTE_STATE_ACTIVE end
+        effect.is_active = false
+        report("master_fixture_removed=true")
+      end},
       {"capture-pass.wav", function() effect.is_active = true end},
       {"play-original.wav", function()
         clear_notes(); note(trigger_note, "D-4", 1)
@@ -424,6 +505,7 @@ local function run()
               parameter(effect, "Track Input Level").value_string = "91"
               parameter(effect, "Track Input Balance").value_string = "L32"
               parameter(effect, "Playback Level").value_string = "-3.0 dB"
+              parameter(effect, "Master Mode").value = 0
               -- The preceding Capture Note spent Record Once; its denied overwrite
               -- preserved the populated take, and nothing above re-arms it.
               -- A new process restores controls/alias, but not the sample or latch.

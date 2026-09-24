@@ -16,21 +16,30 @@ and egui; available as VST3, CLAP, and a standalone application.
    MIDI note **48** captures; **50** plays. Change these in the small **MIDI**
    dropdown panel at the top right. Numbers are definitive because DAWs use
    different octave names. Automatable Capture/Playback rising edges also work.
-4. Output is always **sample-only**: the mono sample plays on both channels,
-   with silence until playback is triggered, including during capture. To hear
-   the original source too, keep it on a separate track and send audio to Ultrawave.
+4. **Master** mode (default) passes stereo input through and adds sample playback.
+   Capture records this sum, including the sample's playback processing and level.
+   Use **Sample only** for the previous input-only capture and sample-only output,
+   for example on a dedicated send receiver.
 
-The effect reads main/sidechain input **before writing playback output**, so it does not
-implicitly record itself. There is no automatic access to the DAW master:
-insert on the master or route that mix to the effect. **Track input** and
-**Sidechain** mix to mono before capture gain and signed 12-bit quantization.
+There is no automatic access to the DAW master: insert on the master or route
+that mix to the effect. **Track input** and **Sidechain** mix to mono before
+capture gain and signed 12-bit quantization. In Master mode, Track input level
+also scales the sampler's contribution to capture; it does not change audible
+dry-through or playback. Sidechain feeds capture only, not dry output.
 **Capture sound & balance** contains the source balances, capture rate,
 rate crush (SRR) and drive. These print into the take during recording.
 Playback has independent level, rate crush, bit crush (BRR) and drive controls.
 
-**A new capture replaces the sample and stops its old playback and repeats.**
-Use separately routed instances to retain one take while capturing another.
-Playback triggered during recording uses the available prefix at that instant.
+**Master capture keeps the old take playable until recording finishes.** The
+new take then replaces it and stops old playback/repeats; press Play sample or
+send another Play Note to hear the replacement. Repeat this to resample previous
+generations. Interrupted recordings keep their nonempty prefix; an empty attempt
+retains the old take. Record once prevents replacement until re-armed.
+
+**Sample only** replaces the old take and stops playback at capture start.
+Playback triggered during that capture uses the written prefix at that instant.
+The storage strategy is selected when capture starts; changing mode during a
+take changes routing with a short ramp, but does not change that take's strategy.
 
 ### Renoise: use an FX alias, not a second plugin
 
@@ -48,8 +57,10 @@ For a mix of tracks, use a send/group receiver with Ultrawave. A normal `#Send`
 feeds its **main input**. Renoise's `#Sidechain` device feeds its **sidechain**;
 choose the receiver track and Ultrawave device, then raise Sidechain. Put a sidechain
 receiver **after the sending tracks**: Renoise refuses sends to previous tracks.
-Multiple sidechain senders sum. Monitor the original sources on their own tracks;
-Ultrawave's track outputs only sample playback, never the incoming audio.
+Multiple sidechain senders sum. Select **Sample only** on a dedicated receiver
+to avoid doubling the original source. For master resampling, put Ultrawave on
+the **Master** track and leave **Master** mode selected; Capture/Playback automation
+also works without an FX alias.
 
 ### Ableton Live and other hosts
 
@@ -101,8 +112,9 @@ This replaces the old Record/Play pair; old plugin IDs/presets are not supported
 
 ## Editor
 
-One 920×650 pane shows Capture and Play together. The waveform is shared, with
-draggable Start/End handles, dimmed excluded audio and a reverse indicator.
+One 920×650 pane shows Record and Playback together. The waveform has draggable
+Start/End handles and adjacent Start/End knobs linked to the same controls,
+dimmed excluded audio and a reverse indicator. Master/Sample only sits in the header.
 MIDI assignments are dropdowns in a small panel, not sound knobs. Click numeric
 values to type; drag knobs vertically, Shift-drag for fine changes, double-click
 to restore defaults.
@@ -170,7 +182,8 @@ cargo xtask bundle ultrawave-plugin --release
 Requires Renoise 3.5.4, Xvfb, xdotool, ImageMagick and Python. Uses a disposable
 HOME/display and only the newly built bundle, leaving personal sessions and
 installed plugins untouched. Tests FX-alias notes, main/sidechain routing,
-sample-only output, Record once, replacement, reverse/retrigger, project save and process
+actual Master-track resampling, sample-only output, Record once, replacement,
+reverse/retrigger, project save and process
 reopen. Artifacts and logs: `target/renoise-test/`. This exercises VST3; the CLAP
 harness and clap-validator exercise CLAP. `tests/test.RPP` remains unverified
 historical scratch, not a supported setup.

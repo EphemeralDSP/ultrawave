@@ -166,11 +166,33 @@ impl NiceEguiApp for UltrawaveEditorApp {
                         if ui.selectable_label(self.midi_open, "MIDI ▾").clicked() {
                             self.midi_open = !self.midi_open;
                         }
+                        ui.add_space(8.0);
+                        let master_mode = self.params.master_mode.unmodulated_plain_value();
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(!master_mode, "Sample only")
+                                .on_hover_text(
+                                    "Sample only: capture track input and output only the sample.",
+                                )
+                                .clicked()
+                            {
+                                set_bool(&gui, &self.params.master_mode, false);
+                            }
+                            if ui
+                                .selectable_label(master_mode, "Master")
+                                .on_hover_text(
+                                    "Master: pass track input plus sample, and capture that sum.",
+                                )
+                                .clicked()
+                            {
+                                set_bool(&gui, &self.params.master_mode, true);
+                            }
+                        });
                     });
                 });
             },
         );
-        let wave_rect = rect(24.0, 102.0, 872.0, 100.0);
+        let wave_rect = rect(24.0, 102.0, 684.0, 100.0);
         waveform(
             ui,
             wave_rect,
@@ -194,18 +216,35 @@ impl NiceEguiApp for UltrawaveEditorApp {
             ui.painter().text(
                 wave_rect.center() + vec2(0.0, 15.0),
                 egui::Align2::CENTER_CENTER,
-                "Play audio through this track, then press Capture.",
+                if self.params.master_mode.unmodulated_plain_value() {
+                    "Send track audio, then capture the master sum."
+                } else {
+                    "Play audio through this track, then press Capture."
+                },
                 FontId::proportional(13.0),
                 PLAY,
             );
         }
+        knob(
+            ui,
+            origin + vec2(724.0, 102.0),
+            86.0,
+            "Start",
+            &self.params.play.strt,
+            &gui,
+            "Sample start. Drag this knob or the waveform marker; drag past End to reverse.",
+        );
+        knob(
+            ui,
+            origin + vec2(810.0, 102.0),
+            86.0,
+            "End",
+            &self.params.play.end,
+            &gui,
+            "Sample end. Drag this knob or the waveform marker; drag before Start to reverse.",
+        );
         ui.scope_builder(UiBuilder::new().max_rect(rect(24.0, 211.0, 872.0, 24.0)), |ui| {
             ui.horizontal(|ui| {
-                for (label, p) in [("Start", &self.params.play.strt), ("End", &self.params.play.end)] {
-                    ui.label(RichText::new(label).weak());
-                    parameter_value(ui, ui.id().with(label), p, &gui);
-                    ui.add_space(12.0);
-                }
                 let start = self.params.play.strt.unmodulated_plain_value();
                 let end = self.params.play.end.unmodulated_plain_value();
                 ui.label(RichText::new(if start > end { "← REVERSE" } else if start == end { "EMPTY REGION" } else { "FORWARD →" }).color(PLAY))
@@ -313,6 +352,7 @@ impl UltrawaveEditorApp {
 
     fn capture_panel(&self, ui: &mut egui::Ui, gui: &GuiContext) {
         let p = &self.params.record;
+        let master_mode = self.params.master_mode.unmodulated_plain_value();
         let recording = self.ui_state.recording.load(Ordering::Relaxed);
         let once = p.one_shot.unmodulated_plain_value();
         let locked = once && self.ui_state.capture_locked.load(Ordering::Relaxed);
@@ -320,7 +360,11 @@ impl UltrawaveEditorApp {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if ui.add_enabled(!locked, egui::Button::new(RichText::new("●  Capture").color(BACKGROUND).strong()).fill(CAPTURE).min_size(vec2(133.0, 34.0)))
-                .on_hover_text("Start a timed capture. This replaces the previous take and stops its playback.").clicked() {
+                .on_hover_text(if master_mode {
+                    "Capture the passed track input plus played sample. The old take keeps playing while the new take is staged, then is replaced and stopped when recording ends; an empty take leaves it intact."
+                } else {
+                    "Start a timed input capture. This replaces the previous take and stops its playback."
+                }).clicked() {
                 self.ui_state.record_trigger.store(true, Ordering::Relaxed);
             }
             int_choice(ui, &p.rec_len, gui, 96.0, [(0, "1/2 beat"), (16, "1 beat"), (32, "2 beats"), (48, "1 bar"), (64, "2 bars"), (80, "4 bars"), (96, "8 bars"), (112, "Maximum")].into_iter().map(|(v, s)| (v, s.into())));
@@ -366,7 +410,11 @@ impl UltrawaveEditorApp {
             (
                 "Track input",
                 &p.mlev,
-                "Audio from this track or bus, before sample playback is added.",
+                if master_mode {
+                    "Level of the passed stereo track input in the captured master sum. Played sample audio is included after its playback effects, velocity and level."
+                } else {
+                    "Audio from this track or bus, before sample playback is added."
+                },
             ),
             (
                 "Sidechain",

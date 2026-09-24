@@ -99,6 +99,16 @@ impl RamRecord {
 
     /// Starts a new capture, replacing the previous sample.
     pub fn start_recording(&mut self, params: &RamRecordParams) {
+        self.start(params, false);
+    }
+
+    /// Retain the published take for playback until this capture ends. The new
+    /// take (or a nonempty interrupted prefix) then replaces it atomically.
+    pub fn start_resampling(&mut self, params: &RamRecordParams) {
+        self.start(params, true);
+    }
+
+    fn start(&mut self, params: &RamRecordParams, staging: bool) {
         self.stop_recording();
         let target_length = match rec_len_to_beats(params.rec_len) {
             Some(beats) => {
@@ -117,10 +127,13 @@ impl RamRecord {
         self.monitor = 0.0;
 
         let stored_rate = self.sample_rate / self.rec_rate_divisor.ceil();
-        self.is_recording = self.memory.begin_recording(stored_rate);
+        self.is_recording = self.memory.begin_recording(stored_rate, staging);
     }
 
     pub fn stop_recording(&mut self) {
+        if self.is_recording {
+            self.memory.finish_recording();
+        }
         self.is_recording = false;
     }
 
@@ -151,7 +164,7 @@ impl RamRecord {
         if self.rec_rate_counter < self.rec_rate_divisor {
             self.elapsed_samples += 1;
             if self.elapsed_samples >= self.target_length {
-                self.is_recording = false;
+                self.stop_recording();
             }
             return;
         }
@@ -159,15 +172,16 @@ impl RamRecord {
 
         let sample_12bit = (mono * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
         if !self.memory.write_sample(sample_12bit) {
-            self.is_recording = false;
+            self.stop_recording();
             return;
         }
 
         self.monitor = sample_12bit as f32 / 2048.0;
         self.samples_recorded += 1;
         self.elapsed_samples += 1;
-        if self.elapsed_samples >= self.target_length {
-            self.is_recording = false;
+        if self.elapsed_samples >= self.target_length || self.samples_recorded == MAX_BUFFER_SAMPLES
+        {
+            self.stop_recording();
         }
     }
 
