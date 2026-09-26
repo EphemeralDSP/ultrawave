@@ -94,23 +94,31 @@ out = pathlib.Path(sys.argv[1])
 capture = metrics(out / "capture-pass.wav")
 original = metrics(out / "play-original.wav")
 
+def master_channels(name):
+    left, right = channels(out / name)
+    # One command-low line at 120 BPM/4 LPB precedes the real rising edge.
+    # Assert silence rather than silently ignoring a premature/ghost trigger.
+    assert max(map(abs, left[:6000])) < 1e-7, name
+    assert max(map(abs, right[:6000])) < 1e-7, name
+    return left[6000:], right[6000:]
+
 # The master fixture is a real TRACK_TYPE_MASTER insert. With Master Mode On,
 # capture does not replace the bus: its nonconstant stereo dry input passes at
 # 32-bit precision. The capture balance selects the left post-mix signal, while
 # playback is mono and added equally to both dry channels.
-master_old_left, master_old_right = channels(out / "master-old-capture-dry.wav")
+master_old_left, master_old_right = master_channels("master-old-capture-dry.wav")
 for samples, frequency, gain in ((master_old_left, 440, 0.22), (master_old_right, 550, 0.13)):
     for frame, actual in enumerate(samples):
         expected = (gain - gain * 0.5 * frame / 96000) * math.sin(2 * math.pi * frequency * frame / 48000) if frame < 96000 else 0.0
         assert abs(actual - expected) <= 1 / 2048, (frequency, frame, actual, expected)
 
-master_live_left, master_live_right = channels(out / "master-live-reference.wav")
+master_live_left, master_live_right = master_channels("master-live-reference.wav")
 for samples, frequency, gain in ((master_live_left, 880, 0.17), (master_live_right, 990, 0.11)):
     for frame, actual in enumerate(samples):
         expected = (gain - gain * 0.5 * frame / 96000) * math.sin(2 * math.pi * frequency * frame / 48000) if frame < 96000 else 0.0
         assert abs(actual - expected) <= 1 / 2048, (frequency, frame, actual, expected)
 
-master_mix_left, master_mix_right = channels(out / "master-play-and-recapture.wav")
+master_mix_left, master_mix_right = master_channels("master-play-and-recapture.wav")
 old_from_left = [actual - dry for actual, dry in zip(master_mix_left, master_live_left)]
 old_from_right = [actual - dry for actual, dry in zip(master_mix_right, master_live_right)]
 assert max(abs(a - b) for a, b in zip(old_from_left, old_from_right)) <= 2e-6
@@ -121,7 +129,7 @@ assert max(map(abs, old_from_left[48000:])) < 1e-7
 assert max(abs(a - b) for a, b in zip(master_mix_left, master_mix_right)) > 0.1
 assert tuple(master_mix_left[:96000]) != tuple(master_live_left[:96000])
 
-master_post_left, master_post_right = channels(out / "master-play-post-mix.wav")
+master_post_left, master_post_right = master_channels("master-play-post-mix.wav")
 assert master_post_left == master_post_right
 post_mix_error = max(abs(actual - source) for actual, source in zip(master_post_left[:48000], master_mix_left[:48000]))
 assert post_mix_error <= 1 / 4096 + 2e-6, post_mix_error
@@ -132,11 +140,11 @@ assert tuple(master_post_left[:96000]) != tuple(master_mix_left[:96000])
 # for the whole recording, publication stops it at the timed end, and does not
 # implicitly trigger the replacement. Playing once more yields the same waveform
 # after one additional signed-12-bit capture rounding.
-master_generation_left, master_generation_right = channels(out / "master-silent-recapture.wav")
+master_generation_left, master_generation_right = master_channels("master-silent-recapture.wav")
 assert master_generation_left == master_generation_right
 assert master_generation_left[:48000] == master_post_left[:48000]
 assert max(map(abs, master_generation_left[48000:])) < 1e-7
-master_retained_left, master_retained_right = channels(out / "master-play-retained-generation.wav")
+master_retained_left, master_retained_right = master_channels("master-play-retained-generation.wav")
 assert master_retained_left == master_retained_right
 retained_error = max(abs(actual - source) for actual, source in zip(master_retained_left, master_generation_left))
 assert retained_error <= 1 / 4096 + 2e-6, retained_error
@@ -192,16 +200,17 @@ assert all(sample == 0.0 for sample in reverse_samples[96000 * 2 :]), reverse
 for name, interval, count in [
     ("play-retrig-120.wav", 6000, 2),
     ("play-retrig-60.wav", 12000, 2),
-    ("play-retrig-infinite.wav", 750, None),
+    # Independent firmware timer operand at 120 BPM, converted to 48 kHz.
+    ("play-retrig-infinite.wav", 2756 * 48000 / 176400, None),
 ]:
     channel_count, rate, values, _ = read_wav(out / name)
     assert channel_count == 2 and rate == 48000, name
     assert len(values) // 2 == (384000 if interval == 12000 else 192000), name
+    hit = 0
     for frame in range(len(values) // 2):
-        hit = frame // interval
-        if count is not None:
-            hit = min(hit, count)
-        source_frame = frame - hit * interval
+        if (count is None or hit + 1 < count) and frame >= round((hit + 1) * interval):
+            hit += 1
+        source_frame = frame - round(hit * interval)
         for channel in range(2):
             expected = forward_samples[source_frame * 2 + channel] if source_frame < 96000 else 0.0
             assert values[frame * 2 + channel] == expected, (name, frame, channel)

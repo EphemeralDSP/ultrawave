@@ -74,7 +74,7 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         assert_eq!(&rendered[..5], expected);
         assert!(rendered[5..].iter().all(|s| *s == 0.0));
     }
-    for (tempo, starts) in [("60", [0, 11025, 22050]), ("120", [0, 5513, 11025])] {
+    for (tempo, starts) in [("60", [0, 11025]), ("120", [0, 5513])] {
         let result = Command::new(env!("CARGO_BIN_EXE_ultrawave"))
             .arg("play")
             .arg("--input")
@@ -107,7 +107,10 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         for start in starts {
             expected[start..start + 5].copy_from_slice(&[0.125, 0.375, -0.125, -0.375, 0.1875]);
         }
-        assert_eq!(rendered, expected, "tempo={tempo}");
+        assert_eq!(rendered.len(), expected.len());
+        for (frame, (actual, expected)) in rendered.iter().zip(expected).enumerate() {
+            assert_eq!(*actual, expected, "tempo={tempo}, frame={frame}");
+        }
     }
     for options in [
         vec!["--brr", "128"],

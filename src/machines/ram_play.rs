@@ -3,39 +3,34 @@ use crate::dsp::sample_engine::{param_to_normalized, pitch_to_ratio, SampleEngin
 use crate::machines::memory::SampleMemory;
 use std::sync::Arc;
 
-/// Quarter-note beats between retriggers. Zero disables retriggering.
-/// Landmarks are Legofriendly's reported MD timings in Tarekith's tips, not
-/// firmware-derived measurements: https://tarekith.com/assets/machinedrum_tipsandtricks.htm#Reference
-/// Interpolate logarithmically between landmarks; below 32, extrapolate the
-/// doubling-per-32 trend. Those intermediate values still need hardware checks.
-pub fn retrig_interval_beats(value: i32) -> f64 {
-    if value == 0 {
-        return 0.0;
+/// Total hits in a fresh MD RAM-P trigger; None is the continuous endpoint.
+/// X.08/1.63 MAIN 0x204abc..0x204af8, confirmed by hardware captures.
+pub fn retrig_total_hits(value: i32) -> Option<usize> {
+    match value {
+        127 => None,
+        0 | 1 => Some(1),
+        2..=63 => Some(value as usize),
+        _ => Some((value * value / 128 + 32) as usize),
     }
-    const RATES: [(i32, f64); 14] = [
-        (0, 64.0),
-        (32, 32.0),
-        (44, 24.0),
-        (52, 20.0),
-        (64, 16.0),
-        (77, 12.0),
-        (81, 11.0),
-        (85, 10.0),
-        (90, 9.0),
-        (96, 8.0),
-        (101, 7.0),
-        (109, 6.0),
-        (117, 5.0),
-        (127, 4.0),
-    ];
-    for pair in RATES.windows(2) {
-        let [(lo, lo_rate), (hi, hi_rate)] = [pair[0], pair[1]];
-        if value <= hi {
-            let fraction = (value - lo) as f64 / (hi - lo) as f64;
-            return (lo_rate / hi_rate).powf(fraction) / lo_rate;
-        }
-    }
-    0.25
+}
+
+/// Canonical MD interval, from MAIN 0x204af8..0x204b96 at direct Q7 inputs.
+/// The analytic logarithm reproduces all 128 original table entries exactly.
+/// The DSP allows one restart per 32-frame render (four timer units per frame).
+/// Match that measured steady rate; do not emulate its startup/block jitter or
+/// history-dependent CPU smoothing. See docs/testing/machinedrum-measurement.md.
+pub fn retrig_interval_seconds(value: i32, tempo_bpm: f64) -> f64 {
+    let tempo = tempo_bpm * 24.0;
+    let units = if value < 64 {
+        let scale = ((270_950_400.0 / tempo).floor() * 60.0 / 4096.0).floor();
+        (scale * f64::from(value * 128) / 2048.0).floor()
+    } else {
+        let step = (value * 512 / 127) as u32;
+        let table = (2048.0 * 2.0_f64.powf(f64::from(step & 127) / 127.5)).round() as u32;
+        let scaled = table >> (5 - (step >> 7));
+        ((f64::from(scaled) * 1_058_400.0 / tempo).floor() * 60.0 / 1024.0).floor()
+    };
+    units.max(128.0) / 176_400.0
 }
 
 #[derive(Clone, Copy)]
@@ -126,9 +121,13 @@ impl RamPlay {
             120.0
         };
         if tempo_bpm != self.tempo_bpm {
-            let scale = self.tempo_bpm / tempo_bpm;
-            self.retrig_counter *= scale;
-            self.retrig_interval *= scale;
+            let interval = (retrig_interval_seconds(self.current_params.rtim, tempo_bpm)
+                * self.sample_rate as f64)
+                .max(1.0);
+            if self.retrig_interval > 0.0 {
+                self.retrig_counter *= interval / self.retrig_interval;
+            }
+            self.retrig_interval = interval;
             self.tempo_bpm = tempo_bpm;
         }
     }
@@ -151,24 +150,19 @@ impl RamPlay {
 
         self.trigger_internal();
 
-        if params.rtrg > 0 && params.rtim > 0 {
-            self.retrigs_remaining = params.rtrg as usize;
-            self.retrig_interval =
-                (retrig_interval_beats(params.rtim) * self.sample_rate as f64 * 60.0
-                    / self.tempo_bpm)
-                    .max(1.0);
-            self.retrig_counter = 0.0;
-        } else {
-            self.retrigs_remaining = 0;
-        }
+        self.retrigs_remaining = retrig_total_hits(params.rtrg).map_or(usize::MAX, |n| n - 1);
+        self.retrig_interval = (retrig_interval_seconds(params.rtim, self.tempo_bpm)
+            * self.sample_rate as f64)
+            .max(1.0);
+        self.retrig_counter = 0.0;
     }
 
     /// Live playback controls. Start, direction, envelope and retrigger timing
     /// are latched on trigger; End remains live within the selected direction.
     pub fn update_params(&mut self, params: &RamPlayParams) {
-        // Turning either retrigger control off cancels pending repeats, even
-        // an infinite run. Other count/time changes latch on the next note.
-        if params.rtrg == 0 || params.rtim == 0 {
+        // Both single-hit settings cancel pending repeats, even an infinite run.
+        // Other count/time changes latch on the next note; RTIM=0 is not OFF.
+        if params.rtrg <= 1 {
             self.retrigs_remaining = 0;
         }
         let current = &mut self.current_params;
@@ -224,7 +218,7 @@ impl RamPlay {
             // overshoot so non-integral intervals never accumulate rounding drift.
             if self.retrig_counter + 0.5 > self.retrig_interval {
                 self.retrig_counter -= self.retrig_interval;
-                if self.retrigs_remaining != 127 {
+                if self.retrigs_remaining != usize::MAX {
                     self.retrigs_remaining -= 1;
                 }
                 self.trigger_internal();
@@ -337,35 +331,62 @@ mod tests {
     #[test]
     fn retrigger_timeline_has_exact_count_off_and_infinite_boundaries() {
         // At 120 BPM, sixteenth notes are 125 ms = 128 frames at 1024 Hz.
-        // A one-frame impulse also checks restarting after playback has ended.
+        // Fresh RAM-P1 hardware captures establish TOTAL hits, not extra repeats.
+        // A finite count above 127 must not accidentally become the INF sentinel.
         let registry = Arc::new(SampleMemory::new());
         registry.replace_buffer_at_rate(vec![1024], 1024.0);
-        for count in [0, 1, 2, 126, 127] {
-            for time in [0, 127] {
-                let mut player = RamPlay::new(1024.0, registry.clone());
-                player.trigger(&RamPlayParams {
-                    rtrg: count,
-                    rtim: time,
-                    vol: 127,
-                    ..Default::default()
-                });
-                for frame in 0..(140 * 128) {
-                    let hit = frame == 0
-                        || (time != 0
-                            && frame % 128 == 0
-                            && (count == 127 || frame / 128 <= count as usize));
-                    assert_eq!(
-                        player.process(),
-                        if hit { 0.5 } else { 0.0 },
-                        "count={count} time={time} frame={frame}"
-                    );
-                }
-                assert_eq!(player.is_playing(), count == 127 && time != 0);
-                player.stop();
-                assert_eq!(player.process(), 0.0);
-                assert!(!player.is_playing());
+        for (raw, total) in [(0, 1), (1, 1), (2, 2), (96, 104), (126, 156), (127, 160)] {
+            let mut player = RamPlay::new(1024.0, registry.clone());
+            player.trigger(&RamPlayParams {
+                rtrg: raw,
+                rtim: 127,
+                vol: 127,
+                ..Default::default()
+            });
+            for frame in 0..(160 * 128) {
+                let hit = frame % 128 == 0 && frame / 128 < total;
+                assert_eq!(
+                    player.process(),
+                    if hit { 0.5 } else { 0.0 },
+                    "RTRG={raw} frame={frame}"
+                );
             }
+            assert_eq!(player.is_playing(), raw == 127);
+            player.stop();
+            assert_eq!(player.process(), 0.0);
+            assert!(!player.is_playing());
         }
+    }
+
+    #[test]
+    fn minimum_interval_repeats_and_stays_at_the_hardware_rate_limit() {
+        // The hardware's steady fastest train is 44100/32 Hz, not OFF.
+        // Tempo changes cannot accelerate that floor. Changing RTRG to 1 stops it.
+        let memory = Arc::new(SampleMemory::new());
+        memory.replace_buffer_at_rate(vec![1024], 44100.0);
+        let mut player = RamPlay::new(44100.0, memory);
+        let params = RamPlayParams {
+            rtrg: 127,
+            rtim: 0,
+            vol: 127,
+            ..Default::default()
+        };
+        player.trigger(&params);
+        for frame in 0..160 {
+            if frame == 48 {
+                player.set_tempo(240.0);
+            }
+            assert_eq!(
+                player.process(),
+                if frame % 32 == 0 { 0.5 } else { 0.0 },
+                "frame {frame}"
+            );
+        }
+        player.update_params(&RamPlayParams { rtrg: 1, ..params });
+        for _ in 0..128 {
+            assert_eq!(player.process(), 0.0);
+        }
+        assert!(!player.is_playing());
     }
 
     #[test]
@@ -401,11 +422,12 @@ mod tests {
 
     #[test]
     fn retrigger_fractional_intervals_do_not_drift_at_different_tempos_and_rates() {
-        // Independently calculated sixteenth/triplet durations in output frames.
+        // Original formatter operands at these tempos, in four-per-44.1k-frame
+        // timer units: 22050, 14929, 14857. No expectation uses the Rust mapping.
         for (rate, tempo, time, interval) in [
             (44_100.0, 120.0, 127, 5512.5),
-            (48_000.0, 90.0, 96, 4000.0),
-            (96_000.0, 120.0, 109, 8000.0),
+            (48_000.0, 90.0, 96, 14929.0 * 48000.0 / 176400.0),
+            (96_000.0, 120.0, 109, 14857.0 * 96000.0 / 176400.0),
         ] {
             let registry = Arc::new(SampleMemory::new());
             registry.replace_buffer_at_rate(vec![1024], rate);
@@ -451,7 +473,7 @@ mod tests {
         assert_eq!(player.process(), 0.5);
         for off in [
             RamPlayParams { rtrg: 0, ..params },
-            RamPlayParams { rtim: 0, ..params },
+            RamPlayParams { rtrg: 1, ..params },
         ] {
             player.trigger(&params);
             assert_eq!(player.process(), 0.5);
@@ -474,27 +496,28 @@ mod tests {
     }
 
     #[test]
-    fn retrigger_mapping_preserves_reported_landmarks_and_monotonicity() {
-        for (value, per_beat) in [
-            (32, 32),
-            (44, 24),
-            (52, 20),
-            (64, 16),
-            (77, 12),
-            (81, 11),
-            (85, 10),
-            (90, 9),
-            (96, 8),
-            (101, 7),
-            (109, 6),
-            (117, 5),
-            (127, 4),
+    fn retrigger_mapping_matches_firmware_operands_and_measured_rate_floor() {
+        for (tempo, value, ticks) in [
+            (120.0, 0, 128),
+            (120.0, 1, 128),
+            (120.0, 2, 172),
+            (120.0, 32, 2756),
+            (120.0, 63, 5425),
+            (120.0, 64, 5555),
+            (150.0, 64, 4444),
+            (120.0, 127, 22050),
         ] {
-            assert!((retrig_interval_beats(value) - 1.0 / per_beat as f64).abs() < 1e-12);
+            assert!(
+                (retrig_interval_seconds(value, tempo) - ticks as f64 / 176400.0).abs() < 1e-12
+            );
         }
-        assert_eq!(retrig_interval_beats(0), 0.0);
-        for value in 1..=127 {
-            assert!(retrig_interval_beats(value) > retrig_interval_beats(value - 1));
+        for tempo in [60.0, 120.0, 150.0, 300.0] {
+            for value in 1..=127 {
+                assert!(
+                    retrig_interval_seconds(value, tempo)
+                        >= retrig_interval_seconds(value - 1, tempo)
+                );
+            }
         }
     }
 
@@ -585,14 +608,14 @@ mod tests {
     #[test]
     fn reverse_retriggers_restart_at_start_and_replacement_stops_held_audio() {
         let registry = Arc::new(SampleMemory::new());
-        // A 1/128 note at 120 BPM is four frames at 256 Hz.
+        // RTIM=32 rounds to four frames at this deliberately low output rate.
         assert!(registry.replace_buffer_at_rate(vec![256, 512, 768, 1024], 256.0));
         let mut player = RamPlay::new(256.0, registry.clone());
         let params = RamPlayParams {
             strt: 127,
             end: 0,
             vol: 127,
-            rtrg: 1,
+            rtrg: 2,
             rtim: 32,
             ..Default::default()
         };

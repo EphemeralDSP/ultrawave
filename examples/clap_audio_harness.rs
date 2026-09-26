@@ -474,7 +474,7 @@ unsafe fn configure(plugin: &Plugin) {
         ("Hold", "OFF"),
         ("Decay", "OFF"),
         ("Retrigger", "OFF"),
-        ("Retrig Time", "OFF"),
+        ("Retrig Time", "MIN"),
         ("Playback Level", "0 dB"),
     ]);
 }
@@ -1105,11 +1105,7 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
     for (i, &sample) in output[0].iter().enumerate() {
         assert_eq!(
             sample,
-            if matches!(i, 0 | 6000 | 12000) {
-                0.25
-            } else {
-                0.0
-            },
+            if matches!(i, 0 | 6000) { 0.25 } else { 0.0 },
             "120 BPM frame {i}"
         );
     }
@@ -1129,9 +1125,38 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
     );
     assert_eq!(at_240[0][0], 0.25);
     assert_eq!(at_240[0][3000], 0.25);
-    assert_eq!(at_240[0][6000], 0.25);
-    let stopped = plugin.process([&[0.0; 8]; 4], 8, &[], &transport(false, 240.0, 0, false));
-    assert_eq!(stopped, [vec![0.0; 8], vec![0.0; 8]]);
+    assert_eq!(at_240[0][6000], 0.0);
+    // At 48 kHz the measured 44100/32 Hz floor gives 5120/147 frames/hit.
+    // Finite raw 126 means 156 total hits; 127 must continue past that boundary.
+    for (setting, hits) in [("126", 156), ("INF", 161)] {
+        plugin.reset();
+        plugin.flush(&[("Retrigger", setting), ("Retrig Time", "MIN")]);
+        let fast = plugin.process(
+            [&vec![0.0; 5600]; 4],
+            5600,
+            &[Event::note(0, 50, 1.0)],
+            &playing,
+        );
+        let positions: Vec<_> = (0..hits).map(|n| (n * 5120 + 73) / 147).collect();
+        for (frame, &sample) in fast[0].iter().enumerate() {
+            assert_eq!(
+                sample,
+                if positions.contains(&frame) {
+                    0.25
+                } else {
+                    0.0
+                },
+                "{setting}, frame={frame}"
+            );
+        }
+    }
+    let stopped = plugin.process(
+        [&[0.0; 128]; 4],
+        128,
+        &[],
+        &transport(false, 120.0, 0, false),
+    );
+    assert_eq!(stopped, [vec![0.0; 128], vec![0.0; 128]]);
 }
 
 unsafe fn state_and_instance_isolation(module: &Module) {

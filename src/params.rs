@@ -125,14 +125,7 @@ fn parse_percent(string: &str) -> Option<i32> {
 }
 
 fn parse_rtrg(string: &str) -> Option<i32> {
-    let trimmed = string.trim();
-    if trimmed.eq_ignore_ascii_case("OFF") {
-        Some(0)
-    } else if trimmed.eq_ignore_ascii_case("INF") {
-        Some(127)
-    } else {
-        parse_0_127(trimmed)
-    }
+    parse_from_formatter_lookup(string, 0, 127, format_rtrg).or_else(|| parse_0_127(string))
 }
 
 fn parse_rtim(string: &str) -> Option<i32> {
@@ -196,29 +189,28 @@ fn format_percent(value: i32) -> String {
     format!("{}%", value * 100 / 127)
 }
 
-/// Format additional repeats; the maximum is an infinite train.
+/// Total hits including the first, not additional repeats or the raw MD value.
 fn format_rtrg(value: i32) -> String {
     match value {
         0 => "OFF".to_string(),
+        1 => "1 hit".to_string(),
         127 => "INF".to_string(),
-        _ => value.to_string(),
+        _ => format!(
+            "{} hits",
+            crate::machines::ram_play::retrig_total_hits(value).unwrap()
+        ),
     }
 }
 
-/// Musical note lengths at known landmarks, quarter-note beats in between.
+/// Nominal quarter-note beats at 120 BPM. Only the maximum is an exact note
+/// division; the original integer timer and minimum rate limit depend on tempo.
 fn format_rtim(value: i32) -> String {
     match value {
-        0 => "OFF".to_string(),
-        32 => "1/128".to_string(),
-        44 => "1/64T".to_string(),
-        64 => "1/64".to_string(),
-        77 => "1/32T".to_string(),
-        96 => "1/32".to_string(),
-        109 => "1/16T".to_string(),
+        0 => "MIN".to_string(),
         127 => "1/16".to_string(),
         _ => format!(
             "{:.4} bt",
-            crate::machines::ram_play::retrig_interval_beats(value)
+            crate::machines::ram_play::retrig_interval_seconds(value, 120.0) * 2.0
         ),
     }
 }
@@ -488,8 +480,14 @@ mod tests {
         assert_eq!(parse_decay("2000 ms"), Some(64));
         assert_eq!(format_hold(127), "2000 ms");
         assert_eq!(format_rtim(127), "1/16");
-        assert_eq!(format_rtim(109), "1/16T");
-        assert_eq!(format_rtim(0), "OFF");
+        assert_eq!(format_rtim(109), "0.1684 bt");
+        assert_eq!(format_rtim(0), "MIN");
+        assert_eq!(format_rtrg(1), "1 hit");
+        assert_eq!(format_rtrg(2), "2 hits");
+        assert_eq!(format_rtrg(96), "104 hits");
+        assert_eq!(format_rtrg(126), "156 hits");
+        assert_eq!(parse_rtrg("156 hits"), Some(126));
+        assert_eq!(parse_rtrg("126"), Some(126));
         assert_eq!(format_rtrg(127), "INF");
         assert_eq!(parse_rtrg("INF"), Some(127));
         for value in 0..=127 {

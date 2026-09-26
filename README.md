@@ -83,14 +83,18 @@ Capture and Playback automation instead. Live does not host CLAP natively.
 - Playback velocity controls loudness. NoteOff and zero-velocity notes do not
   choke a one-shot. Other note numbers are ignored. If both note assignments
   are equal, Record takes priority; use different notes for separate commands.
-- Repeats 1–126 adds that many repeats; 127 is **INF**. Repeats 0 or Interval 0 cancels
-  repeats without cutting the current hit. A new note replaces the old train.
+- **Hits** shows total hits, including the first. Raw MD values 0/1 play once,
+  2–63 give that many hits, and 64–126 use the hardware's nonlinear range
+  (96 → 104 hits; 126 → 156 hits). Raw 127 is **INF**. OFF or 1 hit cancels
+  pending hits without cutting the current hit. A new note replaces the train.
   Host stop/reset stops recording and playback, preserving RAM.
-- Interval follows host tempo (120 BPM fallback). Values 127/109/96/77/64/44/32 are
-  1/16, 1/16T, 1/32, 1/32T, 1/64, 1/64T, 1/128. Fractional intervals retain their
-  remainder; tempo changes preserve interval progress. Reported landmarks come
-  from [Tarekith's tips](https://tarekith.com/assets/machinedrum_tipsandtricks.htm#Reference),
-  not a measured firmware timing law.
+- Interval follows host tempo (120 BPM fallback) using the original firmware's
+  linear/logarithmic mapping. **MIN is not off**: it reaches the measured steady
+  limit of about 1378 hits/second. The maximum is a sixteenth note; other beat
+  readouts are nominal at 120 BPM, not exact note divisions. Fractional intervals
+  retain their remainder and tempo changes preserve interval progress. Raw
+  numeric entry retains the MD's 0–127 scale. See the [hardware measurements](docs/testing/machinedrum-measurement.md)
+  for evidence and the deliberate omission of hardware block jitter/smoothing.
 
 ### Record once and project saving
 

@@ -13,7 +13,7 @@ not modes; both stay visible. This design supersedes the two-page hardware repli
 | Capture details popover | Track/side balances, capture rate, rate crush and drive |
 | Playback card | Play sample button, playing/empty feedback; disabled when empty |
 | Pitch & envelope | Pitch, Hold, Decay |
-| Repeat | Repeats and tempo-synced Interval |
+| Repeat | Hits (total, not additional repeats) and tempo-synced Interval; MIN is the fastest interval, not off |
 | Character/output | Rate crush, Bit crush, Drive, Level and playback meter |
 
 Use readable typography, restrained warm capture/cool playback accents and clear

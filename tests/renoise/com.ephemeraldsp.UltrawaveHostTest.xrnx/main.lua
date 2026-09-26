@@ -269,11 +269,15 @@ local function run()
     local master_capture = parameter(master_effect, "Capture")
     local master_playback = parameter(master_effect, "Playback")
     local master_pattern = song.patterns[1].tracks[master_index]
-    local master_old_note = song.patterns[1].tracks[5].lines[1].note_columns[1]
-    local master_live_note = song.patterns[1].tracks[6].lines[1].note_columns[1]
+    -- Give the host a silent, command-low line after its render reset. A high
+    -- first automation point may be installed before reset(), where it is
+    -- deliberately treated as restored state rather than a fresh trigger.
+    local master_old_note = song.patterns[1].tracks[5].lines[2].note_columns[1]
+    local master_live_note = song.patterns[1].tracks[6].lines[2].note_columns[1]
     local function automate_edge(target)
       local automation = master_pattern:create_automation(target)
-      automation:add_point_at(1, 1); automation:add_point_at(2, 0)
+      automation.playmode = renoise.PatternTrackAutomation.PLAYMODE_POINTS
+      automation:add_point_at(1, 0); automation:add_point_at(2, 1); automation:add_point_at(3, 0)
     end
     local function clear_master_edges()
       if master_pattern:find_automation(master_capture) then master_pattern:delete_automation(master_capture) end
@@ -385,7 +389,7 @@ local function run()
         parameter(effect, "Retrig Time").value_string = "32"
       end},
       {"play-retrig-off.wav", function()
-        parameter(effect, "Retrig Time").value_string = "0"
+        parameter(effect, "Retrigger").value_string = "0"
       end},
       {"rearm-capture.wav", function()
         parameter(effect, "Retrigger").value_string = "0"

@@ -520,8 +520,8 @@ impl UltrawaveEditorApp {
             (0.0, "Pitch", &p.pitch, "Varispeed in semitones. Independent of MIDI note number."),
             (106.0, "Hold", &p.hold, "Time at full level before decay. Hold and Decay both zero bypass the envelope."),
             (212.0, "Decay", &p.dec, "Fade-out after Hold."),
-            (338.0, "Repeats", &p.rtrg, "Extra repeats after the first hit. INF repeats until stopped. Interval must also be nonzero."),
-            (444.0, "Interval", &p.rtim, "Tempo-synced time between hits. OFF disables repeats."),
+            (338.0, "Hits", &p.rtrg, "Total hits, including the first. OFF and 1 hit play once; INF continues until stopped. Uses the Machinedrum's nonlinear count range."),
+            (444.0, "Interval", &p.rtim, "Machinedrum timing, following host tempo. Beat display is nominal at 120 BPM. MIN is the fastest rate (about 1378 hits/s), not off."),
         ] {
             knob(ui, origin + vec2(x, 84.0), 90.0, label, param, gui, hint);
         }
