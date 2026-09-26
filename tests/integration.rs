@@ -1,3 +1,6 @@
+#[path = "support/wet_reference.rs"]
+mod wet_reference;
+
 #[test]
 fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
     use std::process::Command;
@@ -71,8 +74,18 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
             .into_samples::<f32>()
             .map(Result::unwrap)
             .collect();
-        assert_eq!(&rendered[..5], expected);
-        assert!(rendered[5..].iter().all(|s| *s == 0.0));
+        let expected = wet_reference::wet_reference(
+            expected
+                .into_iter()
+                .chain(std::iter::repeat(0.0))
+                .take(rendered.len()),
+        );
+        for (frame, (actual, expected)) in rendered.iter().zip(expected).enumerate() {
+            assert!(
+                (actual - expected).abs() < 2e-6,
+                "character frame {frame}: {actual} != {expected}"
+            );
+        }
     }
     for (tempo, starts) in [("60", [0, 11025]), ("120", [0, 5513])] {
         let result = Command::new(env!("CARGO_BIN_EXE_ultrawave"))
@@ -107,9 +120,13 @@ fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
         for start in starts {
             expected[start..start + 5].copy_from_slice(&[0.125, 0.375, -0.125, -0.375, 0.1875]);
         }
+        let expected = wet_reference::wet_reference(expected);
         assert_eq!(rendered.len(), expected.len());
         for (frame, (actual, expected)) in rendered.iter().zip(expected).enumerate() {
-            assert_eq!(*actual, expected, "tempo={tempo}, frame={frame}");
+            assert!(
+                (actual - expected).abs() < 2e-6,
+                "tempo={tempo}, frame={frame}: {actual} != {expected}"
+            );
         }
     }
     for options in [

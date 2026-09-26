@@ -29,7 +29,7 @@ if [[ -z "$VALIDATOR" ]]; then
 fi
 [[ -x "$VALIDATOR" ]] || { echo "clap-validator not executable: $VALIDATOR" >&2; exit 2; }
 if (( LIST )); then exec "$VALIDATOR" list tests; fi
-[[ -f "$PLUGIN" ]] || { echo "CLAP plugin not found: $PLUGIN" >&2; exit 2; }
+[[ -e "$PLUGIN" ]] || { echo "CLAP plugin not found: $PLUGIN" >&2; exit 2; }
 args=()
 if (( VERBOSE )); then args+=(--verbosity trace); fi
 args+=(validate)

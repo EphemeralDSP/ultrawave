@@ -78,20 +78,35 @@ for name in names:
     if not samples or not math.isfinite(peak + rms) or rms < 1e-6:
         errors.append(f"{name}: empty/silent/non-finite")
     clipped = sum(abs(x) >= 0.999999 for x in samples)
-    result[name]["clipped_samples"] = clipped
-    if clipped > max(4, len(samples) // 1000):
+    # Float playback has headroom: removing DC can legitimately overshoot unity.
+    # Only the integer captured WAV has a hard full-scale rail. The normalized
+    # high-pass's impulse-response absolute sum is below two, so a unit-bounded
+    # raw voice must still stay inside +/-2 without any output clipping stage.
+    result[name]["over_unity_samples"] = sum(abs(x) > 1.0 for x in samples)
+    if name == "recorded-12bit" and clipped > max(4, len(samples) // 1000):
         errors.append(f"{name}: clipping ({clipped} samples)")
+    if peak > 2.0:
+        errors.append(f"{name}: exceeded wet filter headroom bound ({peak})")
 if len(data) == len(names):
     base_meta, base = data["recorded-12bit"]
     neutral_meta, neutral = data["play-12bit"]
     if base_meta[:2] != neutral_meta[:2] or len(neutral) < len(base):
         errors.append("neutral capture/play format mismatch or truncated output")
     else:
+        # Independent double-precision weighted-mean reference for the fixed
+        # 17Hz wet low cut, including its idle tail. Do not compare filtered
+        # playback directly to the unfiltered RAM or hide a placement error.
+        pole = math.exp(-2 * math.pi * 17 / base_meta[1])
+        mean, expected = 0.0, []
+        for i in range(len(neutral)):
+            sample = base[i] if i < len(base) else 0.0
+            expected.append((1 + pole) * 0.5 * (sample - mean))
+            mean = (1 - pole) * sample + pole * mean
         delta = math.sqrt(
-            sum((a - b) ** 2 for a, b in zip(base, neutral[: len(base)])) / len(base)
+            sum((a - b) ** 2 for a, b in zip(expected, neutral)) / len(neutral)
         )
         result["neutral_delta_rms"] = round(delta, 8)
-        if delta > 1e-4:
+        if delta > 2e-6:
             errors.append(f"neutral capture/play mismatch ({delta:.8f})")
     for name in names[2:]:
         variant = data[name][1]

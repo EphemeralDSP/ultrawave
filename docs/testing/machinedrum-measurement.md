@@ -5,7 +5,9 @@ approved disposable RAM1. All 128 RTRG and RTIM settings were captured at 150 BP
 Ultrawave now uses the firmware count/timing law and measured steady rate limit.
 Both analog sends and the C return are verified. Six analog sampling sweeps and
 five tone levels establish a repeatable combined-path magnitude response, **not
-an isolated DAC transfer function**. No coloration filter has been added.
+an isolated DAC transfer function**. Internal generations and read-only RAM1
+exports now separate capture from playback. A conservative 17 Hz wet-path low
+cut is implemented; treble/interpolation matching remains unfinished.
 
 ## The bench is on the ThinkPad
 
@@ -25,9 +27,14 @@ an isolated DAC transfer function**. No coloration filter has been added.
 - `macmini.local` is reachable over SSH: Apple Silicon, Python and Rust, Renoise
   and REAPER installed. It currently exposes only built-in audio. Keep hardware
   acquisition on the ThinkPad. Native ARM64 workspace and exported CLAP audio
-  tests pass on the Mac with Rust 1.95, including optimized CLAP. Native VST3 and
-  CLAP bundles were built in an isolated test checkout, not globally installed.
-  Mac DAW GUI/routing tests are still separate from this native ABI validation.
+  tests pass with Rust 1.95 in debug/release, along with 17 VST3 state tests,
+  auditions and the capture benchmark. The combined validator command passes
+  pluginval strictness 5 and CLAP's 18 tests (3 unsupported skips). Isolated
+  REAPER verifies real MIDI capture/play, saved controls, silent RAM after fresh
+  process reopen, and editor open/close. macOS screenshot capture was unavailable;
+  editor lifecycle was checked through REAPER and pluginval, not visual inspection.
+  Final VST3/CLAP bundles are installed in the user's `~/Library/Audio/Plug-Ins/`
+  directories; legacy split plugins were preserved.
 
 ### Break the accidental feedback loop before sending anything
 
@@ -261,38 +268,93 @@ is a useful calibration check, not the leading explanation or a prerequisite
 for all further algorithmic investigation. Keep any eventual model small and
 physically interpretable; do not fit a many-band EQ to the normal-pitch capture.
 
-**Remaining before a coloration change:**
+### Internal generations and a read-ahead control
 
-1. **Sends are confirmed:** keep the measured L/R isolation and exact mixer
-   routing when taking the calibration and control recordings below.
-2. **Calibrate the interface:** a direct Scarlett output3→input3 loopback, and
-   output4→input3 if needed, at unchanged gain/rate. This requires a temporary
-   physical cable repatch. **Select and verify PCM3/4 before connecting that
-   loopback**: the restored Mix C/D routes include input3 and could feed back.
-   Retain both calibrated and raw results; do not call the uncalibrated combined
-   response “the Machinedrum DAC.”
-3. **Analog sampling round trip:** record each low-level sweep into the approved
-   RAM slot, then play at unity pitch through C with neutral track processing.
-   Record several repeats, silence and level sweeps. Estimate delay, frequency
-   response, noise, harmonics, clipping threshold and level-dependent residual.
-   A 12-bit quantizer/clipping chain is nonlinear; one impulse response cannot
-   describe its whole sound. Align delay/drift and gain before comparing spectra.
-4. **Separate playback from capture:** if a disposable digital sample slot or
-   supported sample-transfer path is approved, load the exact reference PCM
-   digitally and compare it with analog-captured PCM playback. Combine that
-   with interface calibration to separate input-side and playback-side effects.
-   Do not overwrite a ROM slot merely to obtain this control measurement.
-5. **Pitch and resampling:** unity, octave down/up, representative intermediate
-   pitches, and several internal resampling generations versus analogue-loop
-   generations. The original sampler DSP has interpolation/filter stages; the
-   crunchy difference need not be DAC EQ. Keep capture/playback gain fixed.
-6. **Output topology:** output C isolates the voice, but it cannot establish the
-   main-output path's response. Repeat selected tests on main L/R before claiming
-   a master-bus/DAC match. Output C and the master may have different processing.
-7. **Fit only what repeats:** add the smallest justified filter/nonlinearity,
-   then hold out some levels, pitches and musical loops for blind, level-matched
-   A/B. Validate the exported plugin offline, in Renoise, and on the Mac before
-   calling the measured match finished. No guessed “vintage” tilt by default.
+`generations-01` temporarily assigns RAM-P1 to track 2/main stereo and RAM-R1
+to track 1, capturing MLEV. Track 2 starts 50 ms before recording; the initial
+250 ms source silence accommodates three passes in the same disposable RAM1.
+Each generation is then played through track 1/C. Master EQ is neutral,
+compressor MIX is zero, pan centered and delay/reverb sends zero.
+
+The first additional generation loses 1.04/3.25/6.71/12.84/21.01 dB at
+4/8/12/16/19 kHz relative to 1 kHz. Generations 2 and 3 repeat the low/mid loss,
+but their upper bands reach the noise floor and are not useful filter targets.
+The roughly 9.64 dB level loss per pass includes the chosen levels; it is not
+baked into Ultrawave.
+
+`read-ahead-01` verifies that in-place capture is not causing the spectral loss:
+track 2 plays through C while track 1 records silence 50 ms behind it. Its
+response differs from ordinary playback by at most 0.0015 dB at the eight
+checked frequencies from 30 Hz to 19 kHz. Subsequent playback has RMS
+0.00000928, the recorded-silence floor. Original Kit/Global, both touched tracks,
+master settings, active slots and Scarlett routes were restored exactly.
+
+### RAM1 MIDI export disproves the steep external-capture hypothesis
+
+`sds-01` captures a new sweep, exports the actual RAM1 PCM, plays it at unity and
+the two measured pitch ratios, then makes and exports one internal generation.
+MCL's `SampleBrowserPage.cpp` establishes a read-only slot-count query
+(`70 34`); this unit reports 48 ROM positions, so RAM1 is SDS sample number 48.
+The request is `F0 7E 00 03 30 00 F7`. No sample header/upload, ROM write or
+other-RAM write is sent. Every packet's sequence and XOR checksum is verified
+before ACK. Both exports contain 139,936 words, 16-bit format, period 22,672 ns
+(header rate rounded to 44,107 Hz for analysis, not proof of the exact clock).
+
+Compare spectra to the **exported PCM**, not just the originally sent sweep.
+These are magnitude-only 1/12-octave bands, normalized at 1 kHz:
+
+| Frequency | External input → stored PCM | Stored PCM → playback/C | Added internal generation |
+|---:|---:|---:|---:|
+| 30 Hz | −0.103 dB | −1.134 dB | −1.139 dB |
+| 100 Hz | −0.035 dB | −0.151 dB | −0.167 dB |
+| 4 kHz | +0.029 dB | −0.643 dB | −1.044 dB |
+| 8 kHz | +0.102 dB | −1.699 dB | −3.251 dB |
+| 12 kHz | +0.134 dB | −2.923 dB | −6.708 dB |
+| 16 kHz | +0.031 dB | −5.136 dB | −12.864 dB |
+| 19 kHz | −0.293 dB | −7.983 dB | −21.224 dB |
+
+Playback/C measured against generation 1's own PCM agrees with generation 0
+within 0.016 dB through 16 kHz (19 kHz is less reliable at the lower level).
+Most treble loss is therefore **not stored during external capture**. Its
+pitch dependence remains after referencing stored PCM: at output 14 kHz,
+pitch 52/64/76 gives −5.66/−3.83/−3.46 dB. Down-pitched 19 kHz lies beyond
+the input sweep's support and must be discarded, not interpreted as a boost.
+The former “steep capture filter plus gentle playback filter” fit is rejected.
+
+SDS words occupy all sixteen low-nibble codes. This is not a dump of plain
+left-shifted 12-bit integers, and does not prove how the playback precision or
+sample encoding works. The plugin's existing linear 12-bit quantizer remains
+an approximation, not something this experiment has verified.
+
+Evidence, journals, exact-state restoration receipts and script snapshots remain
+in the private `ram1-measurement/{generations-01,read-ahead-01,sds-01}` folders.
+`analyze_sds.py` there reproduces the exported-PCM comparisons; no private audio
+or firmware is needed by the plugin. All completed acquisitions restored state.
+
+### Production choice and the remaining sound-matching work
+
+The repeated ~1.1–1.2 dB loss at 30 Hz supports a broad low-cut approximation.
+Ultrawave now applies a normalized first-order 17 Hz DC blocker after wet
+playback level/velocity and before the output/self-resampling split. Dry-through
+and external-input capture/quantization are unchanged; master resampling captures
+the filtered wet contribution. The filter runs across notes and idle tails;
+host reset clears its state, not RAM. Offline playback uses the same stage.
+This is an engineering model, not a recovered circuit. Host-rate coefficients
+preserve its low-frequency corner at 44.1/48/96 kHz.
+
+Treble EQ is deliberately unshipped. Separate pitch-dependent interpolation,
+always-running track processing and the internal main tap before selecting a
+small causal model. The internal-minus-C loss resembles a two-point averaging
+response, but its placement and fixed-clock behavior are not established.
+Do not turn that resemblance into a host-rate FIR whose cutoff moves with the
+DAW rate, or multiply the entire measured analog response into every generation.
+
+The prepared held-out 17/60/200/1000 Hz and drum run (`validation-01`) stopped
+at the exclusive-device check because PipeWire had opened Scarlett playback.
+No hardware changes were made by that attempt. New tone/drum hardware A/B,
+main L/R analog comparison and a full treble/interpolation model remain open.
+An unchanged-gain Scarlett loopback is useful but optional; select PCM3/4
+**before** any physical loopback repatch to avoid the restored mixer feedback.
 
 ## Sources and limits
 

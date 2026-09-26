@@ -13,11 +13,14 @@ an unidentified paper or a similarly named synthesizer filter.
    record: <http://studentarbeten.chalmers.se/publication/5768-physical-modeling-of-percussion-instruments>.
    The PDF identifies Gärder as author, Chalmers University of Technology, and
    2005. SHA-256 of the fetched PDF: `1e06b5cc2e8168263c8f3311190decd5d35187f28cec6f150442a59f546db8cc`.
-2. Elektron, *Machinedrum User's Manual*, OS 1.63, the manufacturer's primary
-   product documentation. Official product/download page:
+2. Elektron, *Machinedrum User's Manual*, the manufacturer's primary product
+   documentation. Official product/download page:
    <https://www.elektron.se/support-downloads/machinedrum-uw>. The currently
    accessible copy read for page-accurate quotations was
    <https://www.strumentimusicali.net/manuali/ELEKTRON_SPS1UWMKII_ENG.pdf>.
+   Its introduction identifies **OS 1.53, revision J**, not OS 1.63; the earlier
+   edition label in this note was incorrect. Firmware evidence in the timing
+   investigation separately compares actual X.08 and 1.63 images.
 
 The Gärder thesis is physical-modeling research connected to an Elektron
 drum-machine project, not a specification of the shipping instrument. The
@@ -116,7 +119,7 @@ generic TPT filter instead: the recovered open endpoint gave roughly +11 dB at
 `docs/research/md-filter-recovery.md` and the adapter's source comment. Do not
 copy this into Ultrawave as a verified fixed output filter.
 
-## Compare small models before changing the plugin
+## Initial fits were hypotheses, not a causal model
 
 Treat the Scarlett as provisionally flat for model exploration; a direct
 loopback remains a check, not the presumed explanation for several dB of loss.
@@ -128,7 +131,8 @@ Exploratory comparison uses the −24 dBFS first sweep. Fit a high-pass corner t
 free gain. Evaluate 4/12/19 kHz on the other five recordings without refitting.
 Measured repeats at different levels are repeatability evidence, not independent
 proof of filter topology. Comparing candidate families after seeing the spectra
-is **not** a blind validation; pitched/internal-generation tests are still needed.
+is **not** a blind validation. The later RAM exports below supersede the proposed
+capture-side placement.
 
 | Candidate | Fitted low-pass settings | Omitted-frequency RMS / worst error |
 |---|---|---|
@@ -167,9 +171,47 @@ last fraction of a dB out of one normal-pitch magnitude curve.
 
 Use a few physically interpretable corner frequencies and a justified order,
 not independent EQ gains, high-order fitted FIR coefficients, or an impulse
-response recorded from this one setup. Establish placement with pitch and
-internal-resampling tests, then check new tones and musical material before
-shipping. No coloration filter has been added. Local numeric evidence is
+response recorded from this one setup. Local numeric evidence for these initial
+fits is
 `.amp/in/artifacts/response-model-comparison.json`, `pitch-analysis.json`, and
 `response-placement-comparison.json` in the same directory; primary hardware
 evidence and the signal path are documented in [the measurement note](machinedrum-measurement.md).
+
+## RAM export rules out the proposed steep capture filter
+
+Read-only, checksum-verified SDS exports of RAM1 show external capture nearly
+flat: +0.10 dB at 8 kHz, +0.03 dB at 16 kHz, −0.29 dB at 19 kHz relative to
+1 kHz. Playback referenced to that stored PCM loses 1.70/5.14/7.98 dB at those
+frequencies and still changes with pitch. The split-filter candidate's good
+numerical fit did **not** identify its mechanism. Do not put that Butterworth
+section into the recorder.
+
+An internal generation adds 3.25/12.86/21.22 dB of loss at 8/16/19 kHz. This
+cannot all be analog DAC coloration: the stored-PCM comparison contains no
+analog output. A silence-overwrite control verifies that reading ahead within
+RAM1 does not create the loss. Master EQ and compression were neutral/bypassed.
+Interpolation, always-running track processing and the internal main tap still
+need separation. There is no production treble EQ, fitted FIR or convolution.
+
+The repeated low-frequency loss is narrower evidence: direct playback and
+internal generation both lose about 1.13 dB at 30 Hz. Production now uses a
+conventional normalized first-order **17 Hz high-pass on wet playback**:
+
+```text
+a = exp(-2*pi*17/sample_rate)
+y[n] = ((1+a)/2) * (x[n]-x[n-1]) + a*y[n-1]
+```
+
+It runs after pitch, character, envelope, velocity and output gain, before the
+wet-output/internal-feedback split. Dry master audio and external-input capture
+are unchanged; internal resampling captures the filtered wet contribution.
+The same stage runs in the offline player. State survives voice
+boundaries and retriggers, clears on host reset, and has a reported 250 ms tail;
+active voices/captures keep the host awake longer when necessary. Float output
+can briefly exceed unity after DC removal; this is not integer clipping.
+
+This is a conservative algorithmic approximation, not a whitepaper attribution,
+circuit identification or completed sound match. No high-order fitting is
+needed for this low corner. The new held-out tone/drum acquisition was blocked
+by the Scarlett being in use; remaining treble/interpolation and hardware A/B
+work stays explicitly open.

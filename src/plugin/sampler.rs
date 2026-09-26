@@ -2,7 +2,10 @@ use nice_plug::prelude::*;
 use std::sync::{atomic::Ordering, Arc};
 
 use super::{editor, UiState};
-use crate::dsp::{effects::Distortion, mix::SmoothedGains};
+use crate::dsp::{
+    effects::{DcBlocker, Distortion},
+    mix::SmoothedGains,
+};
 use crate::machines::{
     memory::SampleMemory,
     ram_play::{RamPlay, RamPlayParams},
@@ -29,6 +32,7 @@ pub struct UltrawavePlugin {
     transport_was_playing: bool,
     decimator: crate::Decimator,
     distortion: Distortion,
+    wet_filter: DcBlocker,
     mix_gains: SmoothedGains<4>,
     // Capture level, playback level, master dry-through and self-resampling.
     gains: SmoothedGains<4>,
@@ -56,6 +60,7 @@ impl Default for UltrawavePlugin {
             transport_was_playing: false,
             decimator: crate::Decimator::new(),
             distortion: Distortion::new(),
+            wet_filter: DcBlocker::new(sample_rate),
             mix_gains: SmoothedGains::default(),
             gains: SmoothedGains::default(),
             preload_attempted: false,
@@ -155,6 +160,7 @@ impl Plugin for UltrawavePlugin {
         self.rearm_was_high = self.params.rearm.value();
         self.transport_was_playing = false;
         self.decimator = crate::Decimator::new();
+        self.wet_filter = DcBlocker::new(self.sample_rate);
         self.mix_gains.reset();
         self.gains.reset();
         for flag in [
@@ -301,7 +307,11 @@ impl Plugin for UltrawavePlugin {
                 let [record_gain, play_gain, dry_gain, resample_gain] = self.gains.next_frame();
                 // Read the old take before writing the new one. The feedback tap
                 // includes pitch, envelope, character, velocity and output level.
-                let played = self.player.process() * self.velocity * play_gain;
+                // Filter once before the output/feedback split, including idle
+                // zero input so the short tail survives voice boundaries.
+                let played = self
+                    .wet_filter
+                    .process(self.player.process() * self.velocity * play_gain);
                 let captured = self.distortion.process(
                     self.decimator
                         .process((input + played * resample_gain) * record_gain, srr),
@@ -342,7 +352,13 @@ impl Plugin for UltrawavePlugin {
         } else {
             self.ui.clear_playback();
         }
-        ProcessStatus::Normal
+        if self.player.is_playing() || self.recorder.is_recording() {
+            // A voice, a retrigger wait, or a capture can outlast the filter tail.
+            ProcessStatus::KeepAlive
+        } else {
+            // The 17 Hz pole settles below -200 dB within this tail at any rate.
+            ProcessStatus::Tail((self.sample_rate * 0.25).ceil() as u32)
+        }
     }
 }
 

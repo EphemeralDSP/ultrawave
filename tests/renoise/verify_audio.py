@@ -90,6 +90,44 @@ def assert_source_tone(samples, frequency, source_step=1):
         assert abs(actual - expected) <= 1 / 2048, (frame, actual, expected)
 
 
+def captured_codes(source):
+    # An independent capture reference: signed 12-bit PCM, not filtered output.
+    return [
+        max(-2048, min(2047, math.copysign(math.floor(abs(x) * 2048 + 0.5), x))) / 2048
+        for x in source
+    ]
+
+
+def filtered_voice(source, frames, *, retriggers=(), reverse=False, stop=None, gain=1.0):
+    # One continuous wet filter for the whole render. Retriggers reposition the
+    # raw 12-bit read head; they must NOT reset or reverse the filter history.
+    a = math.exp(-2 * math.pi * 17 / 48000)
+    b = (1 + a) / 2
+    previous_input = previous_output = 0.0
+    position = 0
+    retriggers = set(retriggers)
+    result = []
+    for frame in range(frames):
+        if frame in retriggers:
+            position = 0
+        raw = (
+            source[len(source) - 1 - position] if reverse else source[position]
+        ) if position < len(source) and (stop is None or frame < stop) else 0.0
+        position += 1
+        x = raw * gain
+        y = b * (x - previous_input) + a * previous_output
+        previous_input, previous_output = x, y
+        result.append(y)
+    return result
+
+
+def assert_filtered(actual, expected, name, tolerance=1 / 2048 + 3e-6):
+    assert len(actual) == len(expected), name
+    maximum = max(abs(a - b) for a, b in zip(actual, expected))
+    assert maximum <= tolerance, (name, maximum, tolerance)
+    return maximum
+
+
 out = pathlib.Path(sys.argv[1])
 capture = metrics(out / "capture-pass.wav")
 original = metrics(out / "play-original.wav")
@@ -106,7 +144,18 @@ def master_channels(name):
 # capture does not replace the bus: its nonconstant stereo dry input passes at
 # 32-bit precision. The capture balance selects the left post-mix signal, while
 # playback is mono and added equally to both dry channels.
+dry_bypass_left, dry_bypass_right = master_channels("master-old-bypass-reference.wav")
 master_old_left, master_old_right = master_channels("master-old-capture-dry.wav")
+dry_error = max(
+    abs(actual - reference)
+    for actual, reference in zip(
+        master_old_left + master_old_right, dry_bypass_left + dry_bypass_right
+    )
+)
+# Renoise's separate bypass/effect renders vary at most one float32 ULP around
+# 0.22 despite unchanged dry DSP. Do not confuse that host mixing noise with a
+# second gain stage or a 12-bit wet quantization of the dry bus.
+assert dry_error <= 2e-8, dry_error
 for samples, frequency, gain in ((master_old_left, 440, 0.22), (master_old_right, 550, 0.13)):
     for frame, actual in enumerate(samples):
         expected = (gain - gain * 0.5 * frame / 96000) * math.sin(2 * math.pi * frequency * frame / 48000) if frame < 96000 else 0.0
@@ -122,8 +171,9 @@ master_mix_left, master_mix_right = master_channels("master-play-and-recapture.w
 old_from_left = [actual - dry for actual, dry in zip(master_mix_left, master_live_left)]
 old_from_right = [actual - dry for actual, dry in zip(master_mix_right, master_live_right)]
 assert max(abs(a - b) for a, b in zip(old_from_left, old_from_right)) <= 2e-6
-assert max(abs(a - source) for a, source in zip(old_from_left[:48000], master_old_left[:48000])) <= 1 / 4096 + 2e-6
-assert max(map(abs, old_from_left[48000:])) < 1e-7
+old_codes = captured_codes(master_old_left[:96000])
+old_wet = filtered_voice(old_codes, len(master_mix_left), stop=48000)
+master_old_error = assert_filtered(old_from_left, old_wet, "master old wet/stop")
 # The channels must retain their distinct dry signals; this is not merely a
 # nonzero-output check, and the raw bypass is intentionally not 12-bit exact.
 assert max(abs(a - b) for a, b in zip(master_mix_left, master_mix_right)) > 0.1
@@ -131,23 +181,23 @@ assert tuple(master_mix_left[:96000]) != tuple(master_live_left[:96000])
 
 master_post_left, master_post_right = master_channels("master-play-post-mix.wav")
 assert master_post_left == master_post_right
-post_mix_error = max(abs(actual - source) for actual, source in zip(master_post_left[:48000], master_mix_left[:48000]))
-assert post_mix_error <= 1 / 4096 + 2e-6, post_mix_error
-assert max(map(abs, master_post_left[48000:])) < 1e-7
+post_mix_codes = captured_codes(master_mix_left[:48000])
+post_mix_expected = filtered_voice(post_mix_codes, len(master_post_left))
+post_mix_error = assert_filtered(master_post_left, post_mix_expected, "master post-mix wet")
 assert tuple(master_post_left[:96000]) != tuple(master_mix_left[:96000])
 
 # A later capture has no external input. The old post-mix take remains playable
 # for the whole recording, publication stops it at the timed end, and does not
-# implicitly trigger the replacement. Playing once more yields the same waveform
-# after one additional signed-12-bit capture rounding.
+# implicitly trigger the replacement. Each generation samples the filtered
+# output, rounds it to signed 12-bit PCM, and filters it again on playback.
 master_generation_left, master_generation_right = master_channels("master-silent-recapture.wav")
 assert master_generation_left == master_generation_right
-assert master_generation_left[:48000] == master_post_left[:48000]
-assert max(map(abs, master_generation_left[48000:])) < 1e-7
+assert_filtered(master_generation_left, post_mix_expected, "master retained voice/stop")
 master_retained_left, master_retained_right = master_channels("master-play-retained-generation.wav")
 assert master_retained_left == master_retained_right
-retained_error = max(abs(actual - source) for actual, source in zip(master_retained_left, master_generation_left))
-assert retained_error <= 1 / 4096 + 2e-6, retained_error
+retained_codes = captured_codes(master_generation_left[:48000])
+retained_expected = filtered_voice(retained_codes, len(master_retained_left))
+retained_error = assert_filtered(master_retained_left, retained_expected, "master resampled generation")
 
 # A bypassed reference proves the source reaches the device. The active effect
 # explicitly selects Sample only and remains exactly silent during capture.
@@ -165,10 +215,9 @@ assert 435 < original["estimated_frequency_hz"] < 445, original
 assert 90000 < original["active_extent_frames"] < 100000, original
 original_left, original_right = channels(out / "play-original.wav")
 assert len(original_left) == len(capture_reference_left)
-# Capture rounds the 32-bit source to signed 12-bit codes. Allow half a code
-# plus float/WAV rounding, rather than requiring unquantized passthrough.
-capture_error = max(abs(actual - source) for actual, source in zip(original_left, capture_reference_left))
-assert capture_error <= 1 / 4096 + 1e-7, capture_error
+original_codes = captured_codes(capture_reference_left[:96000])
+original_expected = filtered_voice(original_codes, len(original_left))
+capture_error = assert_filtered(original_left, original_expected, "FX-alias 12-bit wet")
 assert original_right == original_left
 
 # Nonzero 880 Hz host input is overwritten: playback remains sample-exact.
@@ -187,15 +236,13 @@ assert read_wav(out / "play-original.wav") == read_wav(out / "play-record-once.w
 assert read_wav(out / "play-original.wav") == read_wav(out / "playback-control.wav")
 
 reverse = metrics(out / "play-reverse.wav")
-forward_samples = read_wav(out / "play-original.wav")[2]
-reverse_samples = read_wav(out / "play-reverse.wav")[2]
-expected_reverse = [
-    sample
-    for frame in reversed(range(96000))
-    for sample in forward_samples[frame * 2 : frame * 2 + 2]
-]
-assert list(reverse_samples[: 96000 * 2]) == expected_reverse, reverse
-assert all(sample == 0.0 for sample in reverse_samples[96000 * 2 :]), reverse
+reverse_left, reverse_right = channels(out / "play-reverse.wav")
+assert reverse_left == reverse_right
+reverse_error = assert_filtered(
+    reverse_left,
+    filtered_voice(original_codes, len(reverse_left), reverse=True),
+    "reverse raw PCM, then filter",
+)
 
 for name, interval, count in [
     ("play-retrig-120.wav", 6000, 2),
@@ -203,32 +250,39 @@ for name, interval, count in [
     # Independent firmware timer operand at 120 BPM, converted to 48 kHz.
     ("play-retrig-infinite.wav", 2756 * 48000 / 176400, None),
 ]:
-    channel_count, rate, values, _ = read_wav(out / name)
-    assert channel_count == 2 and rate == 48000, name
-    assert len(values) // 2 == (384000 if interval == 12000 else 192000), name
+    left, right = channels(out / name)
+    assert left == right, name
+    assert len(left) == (384000 if interval == 12000 else 192000), name
     hit = 0
-    for frame in range(len(values) // 2):
+    restarts = []
+    for frame in range(len(left)):
         if (count is None or hit + 1 < count) and frame >= round((hit + 1) * interval):
             hit += 1
-        source_frame = frame - round(hit * interval)
-        for channel in range(2):
-            expected = forward_samples[source_frame * 2 + channel] if source_frame < 96000 else 0.0
-            assert values[frame * 2 + channel] == expected, (name, frame, channel)
+            restarts.append(frame)
+    assert_filtered(left, filtered_voice(original_codes, len(left), retriggers=restarts), name)
 assert read_wav(out / "play-retrig-off.wav") == read_wav(out / "play-original.wav")
 
 # Re-arm is another rising edge. It permits the denied 880 Hz take to replace the sample.
 rearmed = metrics(out / "play-rearmed.wav")
 assert rearmed["peak"] > 1e-4 and rearmed["stereo_delta_peak"] < 1e-7, rearmed
 assert 875 < rearmed["estimated_frequency_hz"] < 885, rearmed
+rearmed_left, rearmed_right = channels(out / "play-rearmed.wav")
+assert rearmed_left == rearmed_right
+rearmed_codes = captured_codes(second_reference_left[:48000])
+rearmed_error = assert_filtered(
+    rearmed_left, filtered_voice(rearmed_codes, len(rearmed_left)), "rearmed 880 Hz take"
+)
 
 # One instance has one sample. Starting a new capture at frame 24000 must stop
-# the currently playing 880 Hz take immediately, then replace it with 440 Hz.
+# the 880 Hz voice immediately, then replace it with 440 Hz. The filter still
+# processes zeros after the voice stops, so its short tail must decay in place.
 replacement_left, replacement_right = channels(out / "replacement-stops-playback.wav")
-rearmed_samples = read_wav(out / "play-rearmed.wav")[2][0::2]
-assert replacement_right[:24000] == rearmed_samples[:24000]
-assert max(map(abs, replacement_right[24000:])) < 1e-7
-assert replacement_left[:24000] == rearmed_samples[:24000]
-assert max(map(abs, replacement_left[24000:])) < 1e-7
+replacement_expected = filtered_voice(rearmed_codes, len(replacement_left), stop=24000)
+replacement_error = assert_filtered(replacement_right, replacement_expected, "replacement tail/right")
+assert_filtered(replacement_left, replacement_expected, "replacement tail/left")
+assert replacement_right[:24000] == rearmed_left[:24000]
+assert replacement_left == replacement_right
+assert max(map(abs, replacement_right[24000:])) > 1e-6
 replacement_play = metrics(out / "play-replacement.wav")
 assert read_wav(out / "play-replacement.wav") == read_wav(out / "play-original.wav"), replacement_play
 
@@ -246,12 +300,24 @@ assert side_single["peak"] > 1e-4 and side_single["stereo_delta_peak"] < 1e-7, s
 assert 655 < side_single["estimated_frequency_hz"] < 665, side_single
 reference_right = side_reference[2][1::2]
 single_left = read_wav(out / "side-single-play.wav")[2][0::2]
-side_max_error = max(abs(actual - expected) for actual, expected in zip(single_left, reference_right))
-assert side_max_error <= 1 / 2048, side_max_error
+side_max_error = assert_filtered(
+    single_left,
+    filtered_voice(captured_codes(reference_right[:96000]), len(single_left)),
+    "single sidechain wet",
+)
 assert 435 < main_only["estimated_frequency_hz"] < 445, main_only
-assert_source_tone(read_wav(out / "main-only-play.wav")[2][0::2], 440)
+assert_filtered(
+    read_wav(out / "main-only-play.wav")[2][0::2], original_expected, "main-only wet"
+)
 assert side_sum["peak"] > 1e-4 and side_sum["stereo_delta_peak"] < 1e-7, side_sum
 sum_left = read_wav(out / "side-sum-play.wav")[2][0::2]
+sum_source = [
+    left + (0.12 - 0.06 * frame / 96000) * math.sin(2 * math.pi * 1100 * frame / 48000)
+    for frame, left in enumerate(reference_right[:96000])
+]
+side_sum_error = assert_filtered(
+    sum_left, filtered_voice(captured_codes(sum_source), len(sum_left)), "summed sidechain wet"
+)
 amp_660 = tone_amplitude(sum_left, 48000, 660)
 amp_1100 = tone_amplitude(sum_left, 48000, 1100)
 assert 2.4 < amp_660 / amp_1100 < 2.6, (amp_660, amp_1100)
@@ -286,22 +352,39 @@ assert recapture["peak"] < 1e-7, recapture
 recaptured = metrics(out / "play-recaptured.wav")
 assert recaptured["peak"] > 1e-4 and recaptured["stereo_delta_peak"] < 1e-7, recaptured
 assert 435 < recaptured["estimated_frequency_hz"] < 445, recaptured
+recaptured_left, recaptured_right = channels(out / "play-recaptured.wav")
+assert recaptured_left == recaptured_right
+# Custom saved Track Input (91, L32) and Playback (-3 dB) are active here.
+recaptured_error = assert_filtered(
+    recaptured_left,
+    filtered_voice(
+        captured_codes([x * (91 / 127) * 0.75 for x in capture_reference_left[:96000]]),
+        len(recaptured_left),
+        gain=10 ** (-3 / 20),
+    ),
+    "fresh-instance custom gains",
+)
 
 summary = {
     "master_mode": {
+        "old_bypass_reference": metrics(out / "master-old-bypass-reference.wav"),
         "old_capture_dry_passthrough": metrics(out / "master-old-capture-dry.wav"),
+        "dry_max_error_vs_separate_host_bypass_render": dry_error,
         "live_stereo_reference": metrics(out / "master-live-reference.wav"),
         "simultaneous_play_and_capture": metrics(out / "master-play-and-recapture.wav"),
         "captured_post_mix": metrics(out / "master-play-post-mix.wav"),
         "silent_input_recapture": metrics(out / "master-silent-recapture.wav"),
         "retained_generation": metrics(out / "master-play-retained-generation.wav"),
-        "post_mix_max_error_after_capture": post_mix_error,
-        "retained_max_error_after_recapture": retained_error,
+        "old_wet_max_error_vs_17hz_reference": master_old_error,
+        "post_mix_max_error_vs_17hz_reference": post_mix_error,
+        "retained_max_error_vs_17hz_reference": retained_error,
     },
     "capture_source_reference": metrics(out / "capture-source-reference.wav"),
     "capture_active_effect_silence": capture,
     "fx_alias_playback": original,
+    "fx_alias_max_error_vs_17hz_reference": capture_error,
     "replacement_stops_old_playback": metrics(out / "replacement-stops-playback.wav"),
+    "replacement_max_error_vs_17hz_reference": replacement_error,
     "replacement_take": replacement_play,
     "playback_with_nonzero_host_input": playback_with_input,
     "record_once_source_reference": metrics(out / "second-capture-source-reference.wav"),
@@ -311,16 +394,20 @@ summary = {
     "saved_record_once_denied_input": save_denied,
     "saved_record_once_protected_take": save_protected,
     "reverse": reverse,
+    "reverse_max_error_vs_17hz_reference": reverse_error,
     "rearmed_take": rearmed,
+    "rearmed_max_error_vs_17hz_reference": rearmed_error,
     "after_reopen": reopened,
     "recaptured_after_reopen": recaptured,
+    "recaptured_max_error_vs_17hz_reference": recaptured_error,
     "sidechain": {
         "source_reference": metrics(out / "side-source-reference-660.wav"),
         "wrong_route": side_wrong,
         "rejected_balance": side_rejected,
         "single": side_single,
         "sum": side_sum,
-        "single_max_error_vs_source_right": side_max_error,
+        "single_max_error_vs_17hz_reference": side_max_error,
+        "sum_max_error_vs_17hz_reference": side_sum_error,
         "sum_660_amplitude": amp_660,
         "sum_1100_amplitude": amp_1100,
     },
@@ -337,7 +424,7 @@ summary = {
         "replacement_stops_old_take_and_installs_new_take": True,
         "saved_instance_record_once_is_spent_and_audio_protected": True,
         "rearm_rising_edge_releases_record_once": True,
-        "reverse_and_retrigger_are_sample_exact": True,
+        "reverse_and_retrigger_match_raw_12bit_17hz_reference": True,
         "main_and_sidechain_routing": True,
         "project_controls_and_fx_alias_restored": True,
         "fresh_instance_starts_without_sample_or_spent_latch": True,

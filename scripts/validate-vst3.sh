@@ -17,12 +17,11 @@ done
 [[ -x "$PLUGINVAL_PATH" ]] || { echo "pluginval not executable; set PLUGINVAL or --pluginval-path" >&2; exit 2; }
 mkdir -p "$ROOT/target/validation"
 LOG="$ROOT/target/validation/pluginval-$(basename "$PLUGIN_PATH").log"
-args=(--validate-in-process --strictness-level "$STRICTNESS" --validate "$PLUGIN_PATH")
+args=("$PLUGINVAL_PATH" --validate-in-process --strictness-level "$STRICTNESS" --validate "$PLUGIN_PATH")
 $VERBOSE && args+=(--verbose)
-runner=()
-if [[ "$(uname -s)" == Linux ]]; then runner=(xvfb-run -a); fi
+if [[ "$(uname -s)" == Linux ]]; then args=(xvfb-run -a "${args[@]}"); fi
 set +e
-"${runner[@]}" "$PLUGINVAL_PATH" "${args[@]}" 2>&1 | tee "$LOG"
+"${args[@]}" 2>&1 | tee "$LOG"
 status=${PIPESTATUS[0]}
 set -e
 if grep -Eiq '(panic(ked)?|BadDrawable|BadWindow|Error while closing window)' "$LOG"; then echo "fatal signature in $LOG" >&2; exit 1; fi

@@ -1,3 +1,4 @@
+use crate::dsp::effects::DcBlocker;
 use crate::machines::memory::SampleMemory;
 use crate::machines::ram_play::{RamPlay, RamPlayParams};
 use crate::machines::ram_record::{RamRecord, RamRecordParams};
@@ -187,9 +188,10 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
     player.set_tempo(config.tempo_bpm);
     player.trigger(&config.params);
 
+    let mut wet_filter = DcBlocker::new(SAMPLE_RATE_F);
     let mut output = Vec::with_capacity(output_samples);
     for _ in 0..output_samples {
-        output.push(player.process());
+        output.push(wet_filter.process(player.process()));
     }
 
     write_wav_f32(&config.output, &output, SAMPLE_RATE)?;

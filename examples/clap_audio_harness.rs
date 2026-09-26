@@ -17,6 +17,7 @@ use clap_sys::{
         audio_ports::{clap_audio_port_info, clap_plugin_audio_ports, CLAP_EXT_AUDIO_PORTS},
         params::{clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS},
         state::{clap_plugin_state, CLAP_EXT_STATE},
+        tail::{clap_plugin_tail, CLAP_EXT_TAIL},
     },
     factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID},
     host::clap_host,
@@ -214,6 +215,11 @@ impl Plugin {
                 x.assume_init()
             })
             .collect()
+    }
+    unsafe fn tail(&self) -> u32 {
+        // SAFETY: clap.tail's table belongs to this initialized plugin; get is
+        // called between synchronous process callbacks while it is active.
+        self.ext::<clap_plugin_tail>(CLAP_EXT_TAIL).get.unwrap()(self.raw)
     }
     unsafe fn save(&self) -> Vec<u8> {
         unsafe extern "C" fn write(s: *const clap_ostream, p: *const c_void, n: u64) -> i64 {
@@ -458,6 +464,52 @@ fn quantize(sample: f32) -> f32 {
     (sample * 2048.0).round().clamp(-2048.0, 2047.0) / 2048.0
 }
 
+// Independent f64 oracle for the exported wet path, not the production DSP.
+struct WetReference {
+    a: f64,
+    b: f64,
+    previous_input: f64,
+    previous_output: f64,
+}
+
+impl WetReference {
+    fn new(rate: f64) -> Self {
+        let a = (-2.0 * std::f64::consts::PI * 17.0 / rate).exp();
+        Self {
+            a,
+            b: (1.0 + a) / 2.0,
+            previous_input: 0.0,
+            previous_output: 0.0,
+        }
+    }
+
+    fn next(&mut self, input: f32) -> f32 {
+        let input = input as f64;
+        let output = self.b * (input - self.previous_input) + self.a * self.previous_output;
+        self.previous_input = input;
+        self.previous_output = output;
+        output as f32
+    }
+
+    fn render(&mut self, input: impl IntoIterator<Item = f32>) -> Vec<f32> {
+        input.into_iter().map(|sample| self.next(sample)).collect()
+    }
+}
+
+fn assert_wet(actual: &[f32], expected: &[f32], label: &str) {
+    assert_wet_with_tolerance(actual, expected, 0.00005, label);
+}
+
+fn assert_wet_with_tolerance(actual: &[f32], expected: &[f32], tolerance: f32, label: &str) {
+    assert_eq!(actual.len(), expected.len(), "{label} length");
+    for (i, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            (actual - expected).abs() < tolerance,
+            "{label} frame {i}: {actual} != {expected}"
+        );
+    }
+}
+
 unsafe fn configure(plugin: &Plugin) {
     plugin.flush(&[
         ("Master Mode", "Off"),
@@ -624,13 +676,14 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
     );
     let sample = quantize(0.125 + 0.375);
     let target_gain = 10.0f32.powf(-6.0 / 20.0);
+    let mut wet = WetReference::new(48000.0);
     for (i, (&left, &right)) in output[0].iter().zip(&output[1]).enumerate() {
         let gain = if i < 73 {
             1.0
         } else {
             1.0 - (1.0 - target_gain) * ((i - 73 + 1) as f32 / 240.0).min(1.0)
         };
-        let expected = sample * gain;
+        let expected = wet.next(sample * gain);
         approx(
             left,
             expected,
@@ -685,16 +738,20 @@ unsafe fn master_mode_automation_during_capture(module: &Module) {
             ((i - 337 + 1) as f32 / 240.0).min(1.0)
         }
     };
+    let mut wet = WetReference::new(48000.0);
     for (i, (&left, &right)) in output[0].iter().zip(&output[1]).enumerate() {
-        approx(left, 0.125 * gain(i) + 0.25, "Master mode dry L ramp");
-        approx(right, -0.5 * gain(i) + 0.25, "Master mode dry R ramp");
+        let played = wet.next(0.25);
+        approx(left, 0.125 * gain(i) + played, "Master mode dry L ramp");
+        approx(right, -0.5 * gain(i) + played, "Master mode dry R ramp");
     }
     plugin.reset(); // Publish the nonempty interrupted staged take.
     let recorded = plugin.process([silence; 4], frames, &[Event::note(0, 50, 1.0)], &tr);
+    let mut wet = WetReference::new(48000.0);
+    let first_generation = WetReference::new(48000.0).render(std::iter::repeat_n(0.25, frames));
     for (i, (&left, &right)) in recorded[0].iter().zip(&recorded[1]).enumerate() {
         approx(
             left,
-            quantize(0.125 + 0.25 * gain(i)),
+            wet.next(quantize(0.125 + first_generation[i] * gain(i))),
             "Master mode feedback ramp",
         );
         assert_eq!(left, right);
@@ -768,8 +825,8 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
         vec![0.0625; frames],
     ];
     let captured = render(&plugin, &input, &[(5, 50, 0.625), (capture_at, 48, 1.0)]);
-    for i in 0..frames {
-        let played = if i < end { reference[0][i] } else { 0.0 };
+    for i in 0..end {
+        let played = reference[0][i];
         approx(
             captured[0][i],
             0.25 + played,
@@ -781,6 +838,19 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
             "master preserves dry stereo during resampling",
         );
     }
+    // Publication stops the voice; the filter still receives zeros and emits
+    // its decaying tail rather than snapping the wet bus to zero.
+    assert!(captured[0][end..]
+        .iter()
+        .zip(&input[0][end..])
+        .any(|(out, dry)| (out - dry).abs() > 0.00001));
+    for i in end..frames {
+        approx(
+            captured[0][i] - input[0][i],
+            captured[1][i] - input[1][i],
+            "tail is shared mono wet only",
+        );
+    }
     plugin.flush(&[
         ("Pitch", "+0 st"),
         ("Playback Level", "0 dB"),
@@ -789,16 +859,21 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     ]);
     plugin.reset();
     let replacement = render(&plugin, &silent, &[(0, 50, 1.0)]);
+    let raw_replacement: Vec<_> = (0..frames)
+        .map(|i| {
+            if i < duration {
+                // Centered main = 0.0625, hard-right side = 0.0625.
+                quantize(0.125 + reference[0][capture_at + i])
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let expected_replacement = WetReference::new(rate).render(raw_replacement.iter().copied());
     for i in 0..frames {
-        let expected = if i < duration {
-            // Centered main input = 0.0625; hard-right side = 0.0625.
-            quantize(0.125 + reference[0][capture_at + i])
-        } else {
-            0.0
-        };
         approx(
             replacement[0][i],
-            expected,
+            expected_replacement[i],
             "new take contains master sum, post playback processing",
         );
         assert_eq!(replacement[0][i], replacement[1][i]);
@@ -807,21 +882,60 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     // Record the sample again with silent host input. The next generation must
     // retain it, with no within-take read/write feedback or automatic restart.
     let generation = render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]);
-    assert_eq!(generation, replacement);
+    assert_wet(
+        &generation[0],
+        &expected_replacement,
+        "one filter traversal per generation",
+    );
+    assert_eq!(generation[0], generation[1]);
     plugin.reset();
-    assert_eq!(render(&plugin, &silent, &[(0, 50, 1.0)]), replacement);
+    let next_generation = render(&plugin, &silent, &[(0, 50, 1.0)]);
+    let raw_next: Vec<_> = expected_replacement[..duration]
+        .iter()
+        .copied()
+        .map(quantize)
+        .collect();
+    let expected_next = WetReference::new(rate).render(
+        raw_next
+            .into_iter()
+            .chain(std::iter::repeat_n(0.0, frames - duration)),
+    );
+    // f32 processing vs the f64 oracle can move a feedback sample across one
+    // 12-bit rounding boundary; never permit more than one code of deviation.
+    assert_wet_with_tolerance(
+        &next_generation[0],
+        &expected_next,
+        0.00055,
+        "feedback traverses filter once, not zero/twice",
+    );
+    assert_eq!(next_generation[0], next_generation[1]);
 
     plugin.flush(&[("Record Once", "On")]);
     plugin.reset();
-    assert_eq!(
-        render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]),
-        replacement
+    let protected_generation = render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]);
+    assert_wet_with_tolerance(
+        &protected_generation[0],
+        &expected_next,
+        0.00055,
+        "first Record Once capture hears the existing take",
     );
+    let third_raw = expected_next[..duration]
+        .iter()
+        .copied()
+        .map(quantize)
+        .chain(std::iter::repeat_n(0.0, frames - duration));
+    let expected_third = WetReference::new(rate).render(third_raw);
     plugin.reset();
     let denied = render(&plugin, &input, &[(0, 48, 1.0)]);
     assert_eq!(denied, [input[0].clone(), input[1].clone()]);
     plugin.reset();
-    assert_eq!(render(&plugin, &silent, &[(0, 50, 1.0)]), replacement);
+    let retained = render(&plugin, &silent, &[(0, 50, 1.0)]);
+    assert_wet_with_tolerance(
+        &retained[0],
+        &expected_third,
+        0.0011,
+        "denied capture retains the third take",
+    );
     let state = plugin.save();
     let mut restored = module.create();
     restored.load_state(&state);
@@ -832,8 +946,10 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     render(&restored, &input, &[(0, 48, 1.0)]);
     restored.reset();
     let fresh = render(&restored, &silent, &[(0, 50, 1.0)]);
-    assert!(fresh[0][..duration].iter().all(|&s| s == 0.125));
-    assert!(fresh[0][duration..].iter().all(|&s| s == 0.0));
+    let expected_fresh = WetReference::new(rate).render(
+        std::iter::repeat_n(0.125, duration).chain(std::iter::repeat_n(0.0, frames - duration)),
+    );
+    assert_wet(&fresh[0], &expected_fresh, "restored instance wet response");
 
     // Main level scales the whole master capture source, including the sample,
     // but does not attenuate the audible master bus or the sample's output.
@@ -843,9 +959,10 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
         ("Sidechain Level", "0"),
     ]);
     plugin.reset();
+    let zero_gain_capture = render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]);
     assert_eq!(
-        render(&plugin, &silent, &[(0, 50, 1.0), (0, 48, 1.0)]),
-        replacement
+        zero_gain_capture, retained,
+        "zero main capture level does not attenuate wet output"
     );
     plugin.reset();
     assert_eq!(render(&plugin, &silent, &[(0, 50, 1.0)]), silent[..2]);
@@ -887,16 +1004,110 @@ unsafe fn capture_playback_at_rate(module: &Module, rate: f64, block: usize) {
         &tr,
     );
     assert!(played[0][..play_at].iter().all(|&x| x == 0.0));
+    let mut wet = WetReference::new(rate);
     for (i, (&left, &right)) in played[0].iter().zip(&played[1]).enumerate().skip(play_at) {
         let source = at + i - play_at;
-        let expected = if source < block {
+        let raw = if source < block {
             quantize(main_l[source] + side_r[source]) * 0.5
         } else {
             0.0
         };
-        assert_eq!(left, expected, "{rate} Hz source frame {i}");
-        assert_eq!(right, expected);
+        let expected = wet.next(raw);
+        assert_wet(
+            &[left, right],
+            &[expected, expected],
+            &format!("{rate} Hz source frame {i}"),
+        );
     }
+}
+
+unsafe fn wet_dc_response(module: &Module, rate: f64) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.activate(rate, 4096);
+    let tr = transport(true, 120.0, 0, false);
+    let silence = vec![0.0; 4096];
+    // Capture a deliberately biased, low-frequency waveform. Its quantized
+    // samples are known independently; the exported wet output must implement
+    // exactly one 17 Hz high-pass at each supported host sample rate.
+    let source: Vec<f32> = (0..4096)
+        .map(|i| 0.25 + 0.125 * (2.0 * std::f64::consts::PI * 7.0 * i as f64 / rate).sin() as f32)
+        .collect();
+    plugin.process(
+        [&source, &silence, &silence, &silence],
+        4096,
+        &[Event::note(0, 48, 1.0)],
+        &tr,
+    );
+    plugin.reset();
+    let actual = plugin.process([&silence; 4], 4096, &[Event::note(0, 50, 1.0)], &tr);
+    let mut reference = WetReference::new(rate);
+    let expected = reference.render(source.iter().copied().map(quantize));
+    assert_wet(
+        &actual[0],
+        &expected,
+        &format!("{rate} Hz wet low-frequency response"),
+    );
+    assert_wet(&actual[1], &expected, "wet mono duplication");
+    assert!(
+        expected[0] > 0.24 && expected[4095] < 0.13,
+        "DC rejection must be observable"
+    );
+    // Idle frames feed zero, rather than stopping the filter at voice end.
+    let tail = plugin.process([&silence[..128]; 4], 128, &[], &tr);
+    let expected_tail = reference.render(std::iter::repeat_n(0.0, 128));
+    assert_wet(&tail[0], &expected_tail, "wet tail after voice end");
+    plugin.reset();
+    let restarted = plugin.process([&silence[..16]; 4], 16, &[Event::note(0, 50, 1.0)], &tr);
+    assert_wet(
+        &restarted[0],
+        &WetReference::new(rate).render(source[..16].iter().copied().map(quantize)),
+        "host reset clears DC state",
+    );
+}
+
+unsafe fn exported_tail_contract(module: &Module, rate: f64) {
+    let mut plugin = module.create();
+    configure(&plugin);
+    plugin.activate(rate, 256);
+    let playing = transport(true, 30.0, 0, false);
+    let zero = [0.0; 128];
+    let source = [0.25; 128];
+    let fixed_tail = (rate * 0.25).ceil() as u32;
+
+    plugin.process(
+        [&source, &zero, &zero, &zero],
+        128,
+        &[Event::note(0, 48, 1.0)],
+        &playing,
+    );
+    assert_eq!(
+        plugin.tail(),
+        u32::MAX,
+        "{rate} Hz active capture must keep host awake"
+    );
+    plugin.reset(); // Publish the take and clear the active capture.
+    plugin.process([&zero; 4], 128, &[], &playing);
+    assert_eq!(plugin.tail(), fixed_tail, "{rate} Hz idle after reset");
+
+    plugin.flush(&[("Retrigger", "INF"), ("Retrig Time", "127")]);
+    plugin.process([&zero[..32]; 4], 32, &[Event::note(0, 50, 1.0)], &playing);
+    assert_eq!(plugin.tail(), u32::MAX, "{rate} Hz active playback");
+    // The voice has finished its short take, but the next retrigger at 30 BPM
+    // is far more than 250 ms away. The host must not suspend in this gap.
+    plugin.process([&zero; 4], 128, &[], &playing);
+    assert_eq!(plugin.tail(), u32::MAX, "{rate} Hz infinite retrigger wait");
+
+    plugin.flush(&[("Retrigger", "OFF")]);
+    plugin.reset();
+    plugin.process([&zero; 4], 128, &[Event::note(0, 50, 1.0)], &playing);
+    assert_eq!(
+        plugin.tail(),
+        fixed_tail,
+        "{rate} Hz finished playback tail"
+    );
+    plugin.process([&zero; 4], 128, &[], &playing);
+    assert_eq!(plugin.tail(), fixed_tail, "{rate} Hz idle tail persists");
 }
 
 unsafe fn reverse_pitch_notes_and_triggers(module: &Module) {
@@ -930,20 +1141,32 @@ unsafe fn reverse_pitch_notes_and_triggers(module: &Module) {
 
     plugin.flush(&[("Start", "127"), ("End", "0")]);
     let reverse = plugin.process([&[0.0; 8]; 4], 8, &[Event::note(2, 63, 0.25)], &tr);
-    let expected = [0.0, 0.0, 0.15625, -0.125, 0.09375, -0.0625, 0.03125, 0.0];
-    assert_eq!(reverse[0], expected);
-    assert_eq!(reverse[1], expected);
+    let expected = WetReference::new(48000.0)
+        .render([0.0, 0.0, 0.15625, -0.125, 0.09375, -0.0625, 0.03125, 0.0]);
+    assert_wet(&reverse[0], &expected, "reverse/velocity/offset");
+    assert_eq!(reverse[0], reverse[1]);
 
+    plugin.reset();
     plugin.flush(&[("Start", "0"), ("End", "127"), ("Pitch", "+12 st")]);
     let pitched = plugin.process([&[0.0; 5]; 4], 5, &[Event::note(0, 63, 1.0)], &tr);
-    assert_eq!(pitched[0], [0.125, 0.375, 0.625, 0.0, 0.0]);
+    assert_wet(
+        &pitched[0],
+        &WetReference::new(48000.0).render([0.125, 0.375, 0.625, 0.0, 0.0]),
+        "PTCH doubles speed",
+    );
 
     // Boolean controls are rising-edge triggers, not level gates.
+    plugin.reset();
     plugin.flush(&[("Pitch", "+0 st"), ("Playback", "On")]);
     let first = plugin.process([&[0.0; 3]; 4], 3, &[], &tr);
     let held = plugin.process([&[0.0; 3]; 4], 3, &[], &tr);
-    assert_eq!(first[0], source[..3]);
-    assert_eq!(held[0], [source[3], source[4], 0.0]);
+    let expected = WetReference::new(48000.0).render(source.into_iter().chain([0.0]));
+    assert_wet(&first[0], &expected[..3], "Playback edge first block");
+    assert_wet(
+        &held[0],
+        &expected[3..],
+        "held Playback continues voice and tail",
+    );
 }
 
 unsafe fn capture_control_is_a_rising_edge(module: &Module) {
@@ -978,7 +1201,11 @@ unsafe fn capture_control_is_a_rising_edge(module: &Module) {
         .copied()
         .map(quantize)
         .collect::<Vec<_>>();
-    assert_eq!(played[0], expected);
+    assert_wet(
+        &played[0],
+        &WetReference::new(48000.0).render(expected),
+        "Capture edge keeps take",
+    );
 }
 
 unsafe fn record_priority_and_no_feedback(module: &Module) {
@@ -1003,13 +1230,11 @@ unsafe fn record_priority_and_no_feedback(module: &Module) {
     plugin.reset();
     plugin.flush(&[("Play Note", "62")]);
     let take = plugin.process([&zero[..8]; 4], 8, &[Event::note(0, 62, 1.0)], &tr);
-    assert_eq!(
-        take[0],
-        quarter[..8]
-            .iter()
-            .copied()
-            .map(quantize)
-            .collect::<Vec<_>>()
+    let mut wet = WetReference::new(48000.0);
+    assert_wet(
+        &take[0],
+        &wet.render(quarter[..8].iter().copied().map(quantize)),
+        "equal note Record priority",
     );
 
     // Replace the single sample with silence at an exact nonzero MIDI offset
@@ -1017,9 +1242,14 @@ unsafe fn record_priority_and_no_feedback(module: &Module) {
     // output and invalidate the outgoing voice exactly at the trigger frame.
     plugin.flush(&[("Capture Note", "61")]);
     let replacement = plugin.process([&zero; 4], 32, &[Event::note(9, 61, 1.0)], &tr);
-    let mut expected = vec![0.0; 32];
-    expected[..9].fill(quantize(0.25));
-    assert_eq!(replacement, [expected.clone(), expected]);
+    let expected =
+        wet.render(std::iter::repeat_n(quantize(0.25), 9).chain(std::iter::repeat_n(0.0, 23)));
+    assert_wet(
+        &replacement[0],
+        &expected,
+        "replacement stops voice at event offset but preserves filter tail",
+    );
+    assert_eq!(replacement[0], replacement[1]);
     plugin.reset();
     let replaced = plugin.process([&zero; 4], 32, &[Event::note(0, 62, 1.0)], &tr);
     assert_eq!(
@@ -1044,10 +1274,10 @@ unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
     plugin.process([&b, &z, &z, &z], 8, &[Event::note(0, 48, 1.0)], &tr);
     plugin.reset();
     let protected = plugin.process([&z; 4], 8, &[Event::note(0, 50, 1.0)], &tr);
-    assert_eq!(
-        protected[0],
-        a.map(quantize),
-        "reset must not clear Record Once latch"
+    assert_wet(
+        &protected[0],
+        &WetReference::new(48000.0).render(a.map(quantize)),
+        "reset must not clear Record Once latch",
     );
 
     plugin.flush(&[("Re-arm", "On")]);
@@ -1060,13 +1290,10 @@ unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
     plugin.reset();
     let silence = [0.0; 16];
     let replaced = plugin.process([&silence; 4], 16, &[Event::note(0, 50, 1.0)], &tr);
-    assert_eq!(
-        replaced[0],
-        [c, b]
-            .concat()
-            .into_iter()
-            .map(quantize)
-            .collect::<Vec<_>>()
+    assert_wet(
+        &replaced[0],
+        &WetReference::new(48000.0).render([c, b].concat().into_iter().map(quantize)),
+        "re-arm protects active take",
     );
 
     // A same-length replacement invalidates a voice latched to the old revision.
@@ -1080,7 +1307,15 @@ unsafe fn one_shot_rearm_and_invalidation(module: &Module) {
         &[Event::note(0, 48, 1.0)],
         &tr,
     );
-    assert_eq!(invalidated, [vec![0.0; 16], vec![0.0; 16]]);
+    let mut reference = WetReference::new(48000.0);
+    reference.render(std::iter::once(quantize(0.75)));
+    let expected = reference.render(std::iter::repeat_n(0.0, 16));
+    assert_wet(
+        &invalidated[0],
+        &expected,
+        "same-length replacement stops voice but preserves DC tail",
+    );
+    assert_eq!(invalidated[0], invalidated[1]);
 }
 
 unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
@@ -1102,13 +1337,14 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
         &[Event::note(0, 50, 1.0)],
         &playing,
     );
-    for (i, &sample) in output[0].iter().enumerate() {
-        assert_eq!(
-            sample,
-            if matches!(i, 0 | 6000) { 0.25 } else { 0.0 },
-            "120 BPM frame {i}"
-        );
-    }
+    let expected = WetReference::new(48000.0).render((0..12001).map(|i| {
+        if matches!(i, 0 | 6000) {
+            0.25
+        } else {
+            0.0
+        }
+    }));
+    assert_wet(&output[0], &expected, "120 BPM retrigger frames and gaps");
     plugin.reset();
     let silent = plugin.process(
         [&vec![0.0; 6001]; 4],
@@ -1123,11 +1359,17 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
         &[Event::note(0, 50, 1.0)],
         &transport(true, 240.0, 0, false),
     );
-    assert_eq!(at_240[0][0], 0.25);
-    assert_eq!(at_240[0][3000], 0.25);
-    assert_eq!(at_240[0][6000], 0.0);
+    let expected = WetReference::new(48000.0).render((0..6001).map(|i| {
+        if matches!(i, 0 | 3000) {
+            0.25
+        } else {
+            0.0
+        }
+    }));
+    assert_wet(&at_240[0], &expected, "240 BPM retrigger frames and gaps");
     // At 48 kHz the measured 44100/32 Hz floor gives 5120/147 frames/hit.
     // Finite raw 126 means 156 total hits; 127 must continue past that boundary.
+    let mut last_wet = WetReference::new(48000.0);
     for (setting, hits) in [("126", 156), ("INF", 161)] {
         plugin.reset();
         plugin.flush(&[("Retrigger", setting), ("Retrig Time", "MIN")]);
@@ -1138,17 +1380,19 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
             &playing,
         );
         let positions: Vec<_> = (0..hits).map(|n| (n * 5120 + 73) / 147).collect();
-        for (frame, &sample) in fast[0].iter().enumerate() {
-            assert_eq!(
-                sample,
-                if positions.contains(&frame) {
-                    0.25
-                } else {
-                    0.0
-                },
-                "{setting}, frame={frame}"
-            );
-        }
+        last_wet = WetReference::new(48000.0);
+        let expected = last_wet.render((0..5600).map(|frame| {
+            if positions.binary_search(&frame).is_ok() {
+                0.25
+            } else {
+                0.0
+            }
+        }));
+        assert_wet(
+            &fast[0],
+            &expected,
+            &format!("{setting} finite/infinite retrigger positions"),
+        );
     }
     let stopped = plugin.process(
         [&[0.0; 128]; 4],
@@ -1156,7 +1400,9 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
         &[],
         &transport(false, 120.0, 0, false),
     );
-    assert_eq!(stopped, [vec![0.0; 128], vec![0.0; 128]]);
+    let expected = last_wet.render(std::iter::repeat_n(0.0, 128));
+    assert_wet(&stopped[0], &expected, "transport stop leaves filter tail");
+    assert_eq!(stopped[0], stopped[1]);
 }
 
 unsafe fn state_and_instance_isolation(module: &Module) {
@@ -1202,17 +1448,17 @@ unsafe fn state_and_instance_isolation(module: &Module) {
     );
     isolated.reset();
     let recaptured = isolated.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
-    assert_eq!(
-        recaptured[0],
-        source.map(quantize),
-        "restored instance must be able to recapture"
+    assert_wet(
+        &recaptured[0],
+        &WetReference::new(48000.0).render(source.map(quantize)),
+        "restored instance recaptures",
     );
 
     let owner_take = owner.process([&zero; 4], 8, &[Event::note(0, 45, 1.0)], &tr);
-    assert_eq!(
-        owner_take[0],
-        source.map(quantize),
-        "other instance retains only its own RAM"
+    assert_wet(
+        &owner_take[0],
+        &WetReference::new(48000.0).render(source.map(quantize)),
+        "other instance retains own RAM",
     );
 }
 
@@ -1268,10 +1514,10 @@ unsafe fn restored_and_reset_commands_need_new_edges(module: &Module) {
     restored.flush(&[("Capture", "Off"), ("Playback", "Off"), ("Re-arm", "Off")]);
     restored.reset();
     let protected = restored.process([&z; 4], 16, &[Event::note(0, 50, 1.0)], &tr);
-    assert_eq!(
-        protected[0],
-        vec![quantize(0.25); 16],
-        "held Re-arm must not release Record Once on reset"
+    assert_wet(
+        &protected[0],
+        &WetReference::new(48000.0).render(std::iter::repeat_n(quantize(0.25), 16)),
+        "held Re-arm must not release Record Once on reset",
     );
 }
 
@@ -1291,6 +1537,10 @@ fn main() {
     unsafe {
         let started = Instant::now();
         let module = Module::load(&library("ultrawave_plugin"));
+        for rate in [44100.0, 48000.0, 96000.0] {
+            exported_tail_contract(&module, rate);
+            wet_dc_response(&module, rate);
+        }
         contract_and_sample_only_output(&module);
         master_mode_automation_during_capture(&module);
         for (rate, block) in [(44100.0, 65), (48000.0, 257), (96000.0, 1025)] {

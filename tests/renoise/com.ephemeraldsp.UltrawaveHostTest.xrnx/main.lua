@@ -304,7 +304,11 @@ local function run()
     end
 
       render_sequence(song, {
+      {"master-old-bypass-reference.wav", function()
+        clear_master_edges(); master_effect.is_active = false
+      end},
       {"master-old-capture-dry.wav", function()
+        master_effect.is_active = true
         clear_master_edges(); automate_edge(master_capture)
       end},
       {"master-live-reference.wav", function()

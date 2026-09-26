@@ -192,11 +192,34 @@ reopen. Artifacts and logs: `target/renoise-test/`. This exercises VST3; the CLA
 harness and clap-validator exercise CLAP. `tests/test.RPP` remains unverified
 historical scratch, not a supported setup.
 
+### Native macOS host regression
+
+```bash
+cargo xtask bundle ultrawave-plugin --release
+./scripts/mac-host-smoke.sh
+```
+
+Requires Apple Silicon macOS, REAPER and Python. Refuses to run alongside an
+existing REAPER process, uses a private HOME/config and verifies the loaded
+VST3 path. Real MIDI captures and plays audio; a fresh-process project reopen
+restores controls but plays silence until recaptured. Editor open/close is
+checked through the host API. Artifacts: `target/mac-host-smoke/`.
+
 ## Fidelity and platform limits
 
 **UW-inspired, not bit-exact Machinedrum emulation.** Quantization, interpolation,
-envelopes, drive and intermediate retrigger curves still need hardware captures.
-No measured DAC equalization or fixed hardware sample-clock model is claimed.
+envelopes and drive remain approximations. Retrigger hit counts/intervals now
+follow original firmware and hardware measurements; see the
+[measurement notes](docs/testing/machinedrum-measurement.md).
+A fixed 17 Hz low cut models the repeatable low-frequency playback loss. It
+affects only the wet sample, including each master-resampling generation;
+dry-through stays unchanged. State runs continuously through notes and the
+short playback tail, and clears on host reset. Offline playback matches this
+path. Float playback can briefly exceed unity after DC removal; leave headroom.
+
+No complete DAC EQ, treble/interpolation match or fixed hardware sample-clock
+model is claimed. Exported hardware RAM disproved the initial capture-side
+treble-filter hypothesis; that speculative filter is not included.
 RAM stores its source rate; 44.1/48/96 kHz playback preserves duration and pitch.
 Each instance has capacity for 441,000 samples: 10 s at 44.1 kHz, 9.19 s at 48 kHz,
 4.59 s at 96 kHz with Capture rate HI. Reduced rate also observes the ten-second
@@ -207,6 +230,8 @@ Capture mixing uses SSE2 on x86-64 and NEON on supported AArch64 targets with
 scalar tails/fallback. Stateful SRR/envelopes remain sequential. Allocation
 checks and scalar equivalence tests protect the real-time path; run
 `cargo run --release --example dsp_bench` for local measurements. Linux x86-64
-is the exercised platform. macOS/ARM, Live, and hardware A/B remain to be verified.
+and native macOS/ARM have workspace and exported CLAP coverage. Real-host checks
+exercise Renoise VST3 on Linux and REAPER VST3 on Mac. Ableton Live and a finished
+hardware sound match remain unverified.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [LICENSE](LICENSE).

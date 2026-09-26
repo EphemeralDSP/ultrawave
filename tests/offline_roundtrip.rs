@@ -7,6 +7,9 @@ use ultrawave::offline::{
     RecordConfig,
 };
 
+#[path = "support/wet_reference.rs"]
+mod wet_reference;
+
 const SR: f32 = 44100.0;
 
 fn args(values: &[&str]) -> Vec<String> {
@@ -95,6 +98,90 @@ fn generate_sine(freq_hz: f32, duration_secs: f32, sample_rate: f32) -> Vec<(f32
             (s, s)
         })
         .collect()
+}
+
+#[test]
+fn offline_playback_removes_dc_and_matches_measured_low_frequency_loss() {
+    let dir = std::env::temp_dir().join(format!("ultrawave_low_cut_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("input.wav");
+    let output = dir.join("output.wav");
+    for (frequency, expected_db) in [
+        (0.0, 0.0),
+        (30.0, -1.21),
+        (100.0, -0.124),
+        (1000.0, -0.0013),
+    ] {
+        let mut wav = hound::WavWriter::create(
+            &input,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 44100,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        let mut reference_energy = 0.0;
+        for frame in 0..44100 {
+            let sample = if frequency == 0.0 {
+                8192
+            } else {
+                // Already on the 12-bit grid so quantization is not confused
+                // with the fixed playback filter's response.
+                ((512.0 * (std::f64::consts::TAU * frequency * frame as f64 / 44100.0).sin())
+                    .round() as i16)
+                    * 16
+            };
+            wav.write_sample(sample).unwrap();
+            if frame >= 22050 {
+                reference_energy += (sample as f64 / 32768.0).powi(2);
+            }
+        }
+        wav.finalize().unwrap();
+        run_offline_play(&PlayConfig {
+            input: input.clone(),
+            output: output.clone(),
+            output_secs: Some(1.2),
+            tempo_bpm: 120.0,
+            params: RamPlayParams {
+                vol: 127,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        let rendered: Vec<_> = hound::WavReader::open(&output)
+            .unwrap()
+            .into_samples::<f32>()
+            .map(Result::unwrap)
+            .collect();
+        if frequency == 0.0 {
+            assert!(
+                rendered[0] > 0.24,
+                "must pass the leading edge, not mute DC input"
+            );
+            assert!(
+                rendered[22050..44100].iter().all(|s| s.abs() < 1e-6),
+                "DC must decay during playback"
+            );
+            assert!(
+                rendered[44100] < -0.24,
+                "filter history must survive the end of a voice"
+            );
+            assert!(rendered.last().unwrap().abs() < 1e-6, "tail must decay");
+        } else {
+            let energy: f64 = rendered[22050..44100]
+                .iter()
+                .map(|s| (*s as f64).powi(2))
+                .sum();
+            let db = 10.0 * (energy / reference_energy).log10();
+            assert!(
+                (db - expected_db).abs() < 0.025,
+                "{frequency} Hz: {db} dB, expected {expected_db}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -248,11 +335,21 @@ fn wav_file_roundtrip() {
         .into_samples::<f32>()
         .map(Result::unwrap)
         .collect();
-    assert_eq!(
-        &reversed[..recorded.len()],
-        recorded.into_iter().rev().collect::<Vec<_>>()
+    // Reverse the stored sample, then apply the causal playback filter. Reversing
+    // the already-filtered forward render would incorrectly reverse its phase.
+    let expected = wet_reference::wet_reference(
+        recorded
+            .into_iter()
+            .rev()
+            .chain(std::iter::repeat(0.0))
+            .take(reversed.len()),
     );
-    assert!(reversed[4410..].iter().all(|&sample| sample == 0.0));
+    for (frame, (actual, expected)) in reversed.iter().zip(expected).enumerate() {
+        assert!(
+            (actual - expected).abs() < 2e-6,
+            "reverse frame {frame}: {actual} != {expected}"
+        );
+    }
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&dir);
@@ -332,8 +429,8 @@ fn vinyl909_record_then_play() {
         "play output should have audible content (peak={peak})"
     );
 
-    // The tail (after buffer ends + some margin) should be silent
-    let tail_start = record_samples.len() + 2205; // buffer length + 50ms margin
+    // The reported 250ms filter tail must have decayed to silence.
+    let tail_start = record_samples.len() + 11025;
     if tail_start < play_samples.len() {
         let tail = &play_samples[tail_start..];
         let tail_peak = tail.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
