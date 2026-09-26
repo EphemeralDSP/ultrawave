@@ -58,6 +58,11 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn(".git", archive.getnames())
             self.assertFalse(any("secret-ignored" in name for name in archive.getnames()))
             archive.extractall(dest, filter="data")
+        if sys.platform != "win32":  # Windows symlink creation may require elevation.
+            alias = self.out / "source-alias"
+            alias.symlink_to(dest, target_is_directory=True)
+            with patch.object(release, "ROOT", alias):
+                self.assertEqual(release.source_state(), {"version": "0.3.7", "commit": self.commit})
         with patch.object(release, "ROOT", dest):
             self.assertEqual(release.source_state(), {"version": "0.3.7", "commit": self.commit})
             (dest / "Cargo.toml").write_text('changed')

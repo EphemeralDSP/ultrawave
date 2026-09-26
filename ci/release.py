@@ -62,7 +62,7 @@ def source_state():
         info = json.loads((ROOT / SOURCE_INFO).read_text())
         for name, expected in info["files"].items():
             path = ROOT / name
-            if not path.resolve().is_relative_to(ROOT) or digest(path) != expected:
+            if not path.resolve().is_relative_to(ROOT.resolve()) or digest(path) != expected:
                 raise ValueError(f"Exported source changed: {name}")
         commit = info["commit"]
         if info["version"] != version():
