@@ -143,6 +143,13 @@ Install destinations: `~/.vst3` / `~/.clap` on Linux, and
 `~/Library/Audio/Plug-Ins/{VST3,CLAP}` on macOS. Close hosts before replacing a
 loaded binary, then rescan. The new bundle does not overwrite the old pair.
 
+Native release candidates for Linux x86-64, Apple Silicon macOS and Windows
+x86-64 are built deliberately with `python3 ci/release.py build`; nothing
+publishes on an ordinary push. See the [manual release workflow](docs/releasing.md)
+for version bumps, source transfer, validation, packaging and explicit GitHub
+publication. Mac distributions are ad-hoc signed, not notarized; Windows
+distributions are unsigned.
+
 ## Fast offline iteration
 
 ```bash

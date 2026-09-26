@@ -1,8 +1,10 @@
 # Plugin validation
 
 Ultrawave exports one VST3/CLAP audio effect. Validate the built bundle, not an
-installed copy that may be stale. Linux/macOS are the current targets; there is
-no AU export. Windows validation remains out of scope.
+installed copy that may be stale. Native targets are Linux x86-64, Apple Silicon
+macOS and Windows x86-64/MSVC; there is no AU export. The shell helpers below
+target Linux/macOS; the [native release command](../releasing.md) also supports
+Windows without Bash.
 
 ## Fast iteration and full checks
 
@@ -68,9 +70,12 @@ personal DAW session.
 
 ## CI and release checks
 
-[Buildkite](../../.buildkite/pipeline.yml) runs Linux/macOS builds, tests and
-VST3/CLAP validation on main pushes and release tags. Release jobs package only
-the unified bundles. No Windows/AU or Ableton test is implied by this pipeline.
+The checked-in [Buildkite pipeline](../../.buildkite/pipeline.yml) enables
+Linux/macOS validation only with `ULTRAWAVE_VALIDATE=1`; it no longer publishes
+releases. Hosted settings require a separate audit. Use the
+[manual native release workflow](../releasing.md) to validate and package all
+three platforms from one committed source archive. It gates publication on
+matching receipts/hashes and the exact remote version tag.
 
 Before releasing, verify both formats on each target platform, inspect editor
 states, run the exported audio harness and an actual host routing/state test,

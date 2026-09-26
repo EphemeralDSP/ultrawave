@@ -55,10 +55,19 @@ See [docs/testing/plugin-validation.md](docs/testing/plugin-validation.md) for d
 
 ### CI Validation
 
-The [Buildkite pipeline](.buildkite/pipeline.yml) builds and validates VST3/CLAP
-on Linux and macOS for main-branch pushes and release tags. Ultrawave does not
-export AU. Run local checks before proposing changes; CI configuration alone
-does not prove a platform or DAW works.
+The checked-in [Buildkite pipeline](.buildkite/pipeline.yml) is optional
+Linux/macOS validation, enabled only with `ULTRAWAVE_VALIDATE=1`. It contains no
+publisher. Hosted pipeline settings are managed separately. Run local checks
+before proposing changes; CI configuration alone does not prove a DAW works.
+
+### Releases
+
+Use the [manual native release workflow](docs/releasing.md) for Linux x86-64,
+Apple Silicon macOS and Windows x86-64 VST3/CLAP builds. `ci/release.py` separates
+version bump, source export, native validation/packaging and explicit GitHub
+publication. Publication requires all three platforms from the same commit and
+an exact remote version tag; ordinary commits never invoke this publisher.
+Run `python3 ci/test_release.py` when modifying the release tooling.
 
 ## Pull Request Guidelines
 
