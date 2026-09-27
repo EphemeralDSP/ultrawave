@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -68,6 +69,13 @@ class BuildkiteTests(unittest.TestCase):
                     buildkite.main([])
             build.assert_not_called()
             run.assert_not_called()
+
+
+class BuildkiteIntegrationTests(unittest.TestCase):
+    def test_release_suite_passes_through_real_log_gate(self):
+        with tempfile.TemporaryDirectory(prefix="ultrawave nested gate ") as tmp:
+            release.checked([sys.executable, str(Path(__file__).with_name("test_release.py"))],
+                            Path(tmp) / "release-tests.log", os.environ.copy())
 
 
 if __name__ == "__main__":

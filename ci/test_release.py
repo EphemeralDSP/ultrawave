@@ -227,7 +227,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_validator_exit_and_caught_panics_both_fail(self):
         for code in ("raise SystemExit(7)", "print('thread panicked at audio callback')"):
-            with self.subTest(code=code), self.assertRaises(RuntimeError):
+            # Keep the simulated panic's command out of the enclosing CI log.
+            # The subprocess output still reaches checked() and must fail it.
+            with self.subTest(code=code), self.assertRaises(RuntimeError), patch("builtins.print"):
                 release.checked([sys.executable, "-c", code], self.out / "validator.log", None)
         release.checked([sys.executable, "-c", "print('validated')"], self.out / "validator.log", None)
 
