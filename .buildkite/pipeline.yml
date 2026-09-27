@@ -33,7 +33,7 @@ steps:
         concurrency: 1
         concurrency_group: "ultrawave-native-macos"
         timeout_in_minutes: 60
-        command: "/opt/homebrew/bin/python3 ci/buildkite.py"
+        command: "/usr/bin/caffeinate -is /opt/homebrew/bin/python3 ci/buildkite.py"
 
       - label: ":windows: Windows x86-64"
         key: "native-windows"

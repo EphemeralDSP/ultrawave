@@ -57,6 +57,9 @@ agents are connected and provisioned. Agent/service changes are separate work.
 
 Jobs use existing Rust **1.95.0** (with rustfmt and Clippy), Python 3.11+ and
 validators. Mac invokes Homebrew Python, Windows `py -3.12`, Linux `python3`.
+The Mac command runs under `caffeinate -is` to prevent idle/system sleep on AC
+power for that job's lifetime, without keeping the display on or changing power
+settings. The wrapper preserves the gate's exit status.
 The adapter adds the user's `.cargo/bin` and `.local/bin` to PATH. Set
 `PLUGINVAL_BIN`/`CLAP_VALIDATOR_BIN` for validator executables elsewhere.
 No dependency installer, default-toolchain change or plugin installer runs.
