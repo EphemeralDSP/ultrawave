@@ -27,6 +27,49 @@ No command here installs plugins, provisions services or changes firewall rules.
 Run one build at a time per checkout. Do not edit source while a build runs.
 Unset `CARGO_BUILD_TARGET` and `CARGO_TARGET_DIR`; builds are native, not cross builds.
 
+## Buildkite dispatch (manual, no publisher)
+
+Buildkite can run the same native gate instead of invoking it on each node.
+The hosted configuration must match [bootstrap.yml](../.buildkite/bootstrap.yml),
+which loads [pipeline.yml](../.buildkite/pipeline.yml) from the checked-out commit.
+Set the GitHub provider's `trigger_mode` to `none` and `build_branches`,
+`build_pull_requests`, and `build_tags` to `false`. Updating repository YAML
+alone does not change an old hosted inline pipeline. Changing these hosted
+settings requires the owner's approval.
+
+Create a build in the UI or with the authenticated Buildkite CLI, specifying
+the exact committed revision and both variables:
+
+```bash
+BUILDKITE_ORGANIZATION_SLUG=jmlynn bk build create --yes \
+  --pipeline ultrawave --branch main --commit COMMIT_SHA \
+  --env ULTRAWAVE_VALIDATE=1 --env ULTRAWAVE_PLATFORM=macos-arm64 \
+  --message "Manual native validation; no publication"
+```
+
+`ULTRAWAVE_PLATFORM` accepts `linux-x86_64`, `macos-arm64`, `windows-x86_64`
+or `all`. With validation enabled, an invalid/missing platform fails the loader
+instead of producing an empty green build. Only UI/API builds are allowed by
+the step conditions.
+The loader currently uses the Mac agent. Native jobs select `queue=juce-build`
+and their OS; Mac also requires `arch=arm64`. Do not select `all` until all three
+agents are connected and provisioned. Agent/service changes are separate work.
+
+Jobs use existing Rust **1.95.0** (with rustfmt and Clippy), Python 3.11+ and
+validators. Mac invokes Homebrew Python, Windows `py -3.12`, Linux `python3`.
+The adapter adds the user's `.cargo/bin` and `.local/bin` to PATH. Set
+`PLUGINVAL_BIN`/`CLAP_VALIDATOR_BIN` for validator executables elsewhere.
+No dependency installer, default-toolchain change or plugin installer runs.
+
+Each attempt uploads its source archive/receipt, native ZIP/receipt and logs
+under `target/buildkite/JOB_ID-RETRY/`. Failure logs are uploaded too; a failed
+validation never becomes successful because artifact upload succeeded. No
+previous job's output is selected from a reused checkout. Download artifacts
+from successful jobs of the **same build/commit**; collect all three native
+ZIPs/receipts plus one matching source archive/receipt before using `publish`.
+Buildkite never creates a GitHub release or pushes a tag. Publishing remains
+the separate approved operation in step 4 below.
+
 ## 1. Choose and commit the version
 
 From a clean checkout (example version; choose the intended one):
@@ -126,7 +169,6 @@ a separately authorized identity/setup. Linux builds use the build host's libc;
 an Arch build is not a claim of compatibility with older distributions.
 
 The old automatic tag publisher and platform-specific package scripts have
-been removed. The checked-in Buildkite pipeline is optional validation only,
-gated by `ULTRAWAVE_VALIDATE=1`. Hosted webhook/inline pipeline settings were
-not changed by this work; audit them before using old Buildkite triggers. Do
-not assume changing YAML disables a separately configured hosted publisher.
+been removed. The checked-in Buildkite pipeline only produces validated
+candidates and logs. Verify the hosted bootstrap and provider settings above
+before use; a repository change alone cannot disable a hosted inline publisher.

@@ -1,35 +1,47 @@
 env:
   CARGO_TERM_COLOR: "always"
+  RUSTUP_TOOLCHAIN: "1.95.0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
 
-# Optional self-hosted validation only. Release builds/publication are explicit
-# local commands in ci/release.py; neither a main push nor a tag runs this file.
+# The hosted pipeline only loads this file. No step installs tools or publishes.
+# Provision native toolchains/validators on agents before selecting their target.
 steps:
-  - label: ":linux: Validate (manual)"
-    if: build.env("ULTRAWAVE_VALIDATE") == "1"
-    agents:
-      queue: "juce-build"
-      os: "linux"
-    env:
-      VALIDATION_STRICTNESS: "5"
-    commands:
-      - "bash ci/scripts/deps-linux.sh"
-      - "bash ci/scripts/build.sh"
-      - "bash ci/scripts/test.sh"
-      - "bash ci/scripts/bundle.sh"
-      - "bash ci/scripts/validate.sh"
+  - group: "Native candidates (manual)"
+    if: >-
+      (build.source == "ui" || build.source == "api") &&
+      build.env("ULTRAWAVE_VALIDATE") == "1"
+    steps:
+      - label: ":linux: Linux x86-64"
+        key: "native-linux"
+        if: build.env("ULTRAWAVE_PLATFORM") == "linux-x86_64" || build.env("ULTRAWAVE_PLATFORM") == "all"
+        agents:
+          queue: "juce-build"
+          os: "linux"
+        concurrency: 1
+        concurrency_group: "ultrawave-native-linux"
+        timeout_in_minutes: 60
+        command: "python3 ci/buildkite.py"
 
-  - label: ":mac: Validate (manual)"
-    if: build.env("ULTRAWAVE_VALIDATE") == "1"
-    agents:
-      queue: "juce-build"
-      os: "macos"
-    env:
-      PATH: "/Users/jeff/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-      CARGO: "/Users/jeff/.cargo/bin/cargo"
-      VALIDATION_STRICTNESS: "5"
-    commands:
-      - "bash ci/scripts/deps-macos.sh"
-      - "bash ci/scripts/build.sh"
-      - "bash ci/scripts/test.sh"
-      - "bash ci/scripts/bundle.sh"
-      - "bash ci/scripts/validate.sh"
+      - label: ":mac: macOS arm64"
+        key: "native-macos"
+        if: build.env("ULTRAWAVE_PLATFORM") == "macos-arm64" || build.env("ULTRAWAVE_PLATFORM") == "all"
+        agents:
+          queue: "juce-build"
+          os: "macos"
+          arch: "arm64"
+        concurrency: 1
+        concurrency_group: "ultrawave-native-macos"
+        timeout_in_minutes: 60
+        command: "/opt/homebrew/bin/python3 ci/buildkite.py"
+
+      - label: ":windows: Windows x86-64"
+        key: "native-windows"
+        if: build.env("ULTRAWAVE_PLATFORM") == "windows-x86_64" || build.env("ULTRAWAVE_PLATFORM") == "all"
+        agents:
+          queue: "juce-build"
+          os: "windows"
+        concurrency: 1
+        concurrency_group: "ultrawave-native-windows"
+        timeout_in_minutes: 60
+        command: "py -3.12 ci/buildkite.py"

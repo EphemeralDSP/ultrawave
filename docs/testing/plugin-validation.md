@@ -71,11 +71,12 @@ personal DAW session.
 ## CI and release checks
 
 The checked-in [Buildkite pipeline](../../.buildkite/pipeline.yml) enables
-Linux/macOS validation only with `ULTRAWAVE_VALIDATE=1`; it no longer publishes
-releases. Hosted settings require a separate audit. Use the
-[manual native release workflow](../releasing.md) to validate and package all
-three platforms from one committed source archive. It gates publication on
-matching receipts/hashes and the exact remote version tag.
+native validation only with `ULTRAWAVE_VALIDATE=1` and an explicit
+`ULTRAWAVE_PLATFORM` selection. Its hosted bootstrap loads repository YAML;
+GitHub provider triggers must be disabled. It uploads candidates and logs,
+never publishes releases. The [manual native release workflow](../releasing.md)
+describes both Buildkite dispatch and direct native commands. Publication still
+requires all three platforms, matching receipts/hashes and the exact remote tag.
 
 Before releasing, verify both formats on each target platform, inspect editor
 states, run the exported audio harness and an actual host routing/state test,

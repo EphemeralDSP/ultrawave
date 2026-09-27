@@ -55,10 +55,13 @@ See [docs/testing/plugin-validation.md](docs/testing/plugin-validation.md) for d
 
 ### CI Validation
 
-The checked-in [Buildkite pipeline](.buildkite/pipeline.yml) is optional
-Linux/macOS validation, enabled only with `ULTRAWAVE_VALIDATE=1`. It contains no
-publisher. Hosted pipeline settings are managed separately. Run local checks
-before proposing changes; CI configuration alone does not prove a DAW works.
+The [Buildkite pipeline](.buildkite/pipeline.yml) dispatches the same native
+release gate on explicitly selected platforms. Set `ULTRAWAVE_VALIDATE=1` and
+`ULTRAWAVE_PLATFORM` as described in the [release workflow](docs/releasing.md).
+It uploads candidates/logs, never publishes or installs plugins. The hosted
+pipeline must use the checked-in bootstrap with automatic provider triggers
+disabled. Run local checks before proposing changes; CI configuration alone
+does not prove a DAW works.
 
 ### Releases
 
@@ -67,7 +70,8 @@ Apple Silicon macOS and Windows x86-64 VST3/CLAP builds. `ci/release.py` separat
 version bump, source export, native validation/packaging and explicit GitHub
 publication. Publication requires all three platforms from the same commit and
 an exact remote version tag; ordinary commits never invoke this publisher.
-Run `python3 ci/test_release.py` when modifying the release tooling.
+Run `python3 ci/test_release.py` and `python3 ci/test_buildkite.py` when modifying
+the release tooling.
 
 ## Pull Request Guidelines
 

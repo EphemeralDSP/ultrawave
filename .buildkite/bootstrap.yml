@@ -1,0 +1,13 @@
+# This is the complete hosted configuration for jmlynn/ultrawave.
+# GitHub provider trigger_mode must also be set to none; see docs/releasing.md.
+steps:
+  - label: ":pipeline: Load manual native build"
+    if: >-
+      (build.source == "ui" || build.source == "api") &&
+      build.env("ULTRAWAVE_VALIDATE") == "1"
+    agents:
+      queue: "juce-build"
+      os: "macos"
+      arch: "arm64"
+    timeout_in_minutes: 5
+    command: "/opt/homebrew/bin/python3 ci/buildkite.py --upload"
