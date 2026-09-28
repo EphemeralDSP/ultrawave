@@ -122,7 +122,9 @@ def prepare(args):
     path = output / artifact_name(state["version"], "source")
     if path.exists() or (output / "source.json").exists():
         raise ValueError("Source output already exists; choose a fresh output directory")
-    archive = subprocess.check_output(["git", "archive", "--format=tar", state["commit"]], cwd=ROOT)
+    archive = subprocess.check_output(
+        ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf",
+         "archive", "--format=tar", state["commit"]], cwd=ROOT)
     files = {}
     with tarfile.open(fileobj=io.BytesIO(archive)) as source, tarfile.open(path, "w:gz") as dest:
         for member in source:

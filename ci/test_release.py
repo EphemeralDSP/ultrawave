@@ -69,6 +69,26 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "source changed"):
                 release.source_state()
 
+    def test_export_ignores_host_line_endings_without_changing_binary_bytes(self):
+        script = b'#!/bin/sh\nprintf "fixture\\n"\n'
+        binary = b'\x00\x01\r\n\xff\r\n'
+        (self.root / "fixture.sh").write_bytes(script)
+        (self.root / "fixture.bin").write_bytes(binary)
+        (self.root / ".gitattributes").write_bytes(b'* text=auto\n')
+        self.git("config", "core.autocrlf", "input")
+        self.git("add", "--renormalize", ".")
+        self.git("add", ".")
+        self.git("commit", "-m", "canonical export fixtures")
+        self.git("config", "core.eol", "crlf")
+        for autocrlf in ("true", "false"):
+            with self.subTest(autocrlf=autocrlf):
+                self.git("config", "core.autocrlf", autocrlf)
+                output = self.out / autocrlf
+                release.prepare(argparse.Namespace(output=output))
+                with tarfile.open(output / release.artifact_name("0.3.7", "source")) as archive:
+                    self.assertEqual(archive.extractfile("fixture.sh").read(), script)
+                    self.assertEqual(archive.extractfile("fixture.bin").read(), binary)
+
     def test_dirty_source_and_mismatched_versions_are_rejected(self):
         (self.root / "new-source.rs").write_text("uncommitted")
         with self.assertRaisesRegex(ValueError, "clean worktree"):
