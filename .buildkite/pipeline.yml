@@ -16,8 +16,9 @@ steps:
         key: "native-linux"
         if: build.env("ULTRAWAVE_PLATFORM") == "linux-x86_64" || build.env("ULTRAWAVE_PLATFORM") == "all"
         agents:
-          queue: "juce-build"
+          queue: "ultrawave-native"
           os: "linux"
+          arch: "x86_64"
         concurrency: 1
         concurrency_group: "ultrawave-native-linux"
         timeout_in_minutes: 60
@@ -39,8 +40,9 @@ steps:
         key: "native-windows"
         if: build.env("ULTRAWAVE_PLATFORM") == "windows-x86_64" || build.env("ULTRAWAVE_PLATFORM") == "all"
         agents:
-          queue: "juce-build"
+          queue: "ultrawave-native"
           os: "windows"
+          arch: "x86_64"
         concurrency: 1
         concurrency_group: "ultrawave-native-windows"
         timeout_in_minutes: 60

@@ -51,9 +51,13 @@ BUILDKITE_ORGANIZATION_SLUG=jmlynn bk build create --yes \
 or `all`. With validation enabled, an invalid/missing platform fails the loader
 instead of producing an empty green build. Only UI/API builds are allowed by
 the step conditions.
-The loader currently uses the Mac agent. Native jobs select `queue=juce-build`
-and their OS; Mac also requires `arch=arm64`. Do not select `all` until all three
-agents are connected and provisioned. Agent/service changes are separate work.
+The loader and Mac job use `queue=juce-build,os=macos,arch=arm64`. Linux and
+Windows use the dedicated `queue=ultrawave-native`, their OS and `arch=x86_64`,
+so legacy jobs in `juce-build` cannot claim those workers. Windows runs under
+an interactive user logon for GUI validation; it must stay logged in. The Linux
+worker is provisioned separately by the homelab repository. Do not select `all`
+until all three agents are connected and provisioned. Agent/service changes
+require the owner's approval.
 
 Jobs use existing Rust **1.95.0** (with rustfmt and Clippy), Python 3.11+ and
 validators. Mac invokes Homebrew Python, Windows `py -3.12`, Linux `python3`.
