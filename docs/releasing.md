@@ -172,8 +172,9 @@ partial draft before doing anything else. Never blindly retry or use `--clobber`
 
 Mac bundles are ad-hoc signed, **not Developer ID signed or notarized**; Windows
 bundles are unsigned. OS trust prompts may occur. Signing/notarization requires
-a separately authorized identity/setup. Linux builds use the build host's libc;
-an Arch build is not a claim of compatibility with older distributions.
+a separately authorized identity/setup. The homelab Buildkite worker uses
+Ubuntu 24.04 with glibc 2.39; manual Linux builds use their build host's libc.
+Compatibility with older distributions has not been validated.
 
 The old automatic tag publisher and platform-specific package scripts have
 been removed. The checked-in Buildkite pipeline only produces validated
