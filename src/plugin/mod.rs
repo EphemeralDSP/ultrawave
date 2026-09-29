@@ -18,11 +18,35 @@ pub struct UiState {
     pub playing: AtomicBool,
     pub capture_peak: AtomicU32,
     pub playback_peak: AtomicU32,
+    pub sample_rate: AtomicU32,
+    pub tempo: AtomicU64,
+    /// Latched take length and elapsed host frames, not the number of stored samples.
+    pub capture_frames: AtomicU64,
     /// One coherent snapshot: valid bit and absolute sample position.
     playback_cursor: AtomicU64,
 }
 
 impl UiState {
+    pub fn sample_rate(&self) -> f32 {
+        match self.sample_rate.load(Ordering::Relaxed) {
+            0 => 44_100.0,
+            bits => f32::from_bits(bits),
+        }
+    }
+
+    pub fn tempo(&self) -> f64 {
+        match self.tempo.load(Ordering::Relaxed) {
+            0 => 120.0,
+            bits => f64::from_bits(bits),
+        }
+    }
+
+    pub fn capture_seconds(&self) -> (f32, f32) {
+        let frames = self.capture_frames.load(Ordering::Relaxed);
+        let rate = self.sample_rate();
+        ((frames as u32) as f32 / rate, (frames >> 32) as f32 / rate)
+    }
+
     pub fn publish_playback(&self, position: usize) {
         self.playback_cursor
             .store((1 << 63) | position as u64, Ordering::Relaxed);
@@ -79,4 +103,22 @@ pub fn maybe_preload_buffer_from_env(memory: &SampleMemory) -> Result<Option<usi
     let len = mono_buffer.len();
     memory.replace_buffer_at_rate(mono_buffer, spec.sample_rate as f32);
     Ok(Some(len))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_clock_uses_latched_host_frames_not_current_tempo_or_stored_length() {
+        let ui = UiState::default();
+        ui.sample_rate
+            .store(48_000.0f32.to_bits(), Ordering::Relaxed);
+        ui.capture_frames
+            .store((240_000u64 << 32) | 96_000, Ordering::Relaxed);
+        assert_eq!(ui.capture_seconds(), (2.0, 5.0));
+        ui.tempo.store(75.0f64.to_bits(), Ordering::Relaxed);
+        assert_eq!(ui.tempo(), 75.0);
+        assert_eq!(ui.capture_seconds(), (2.0, 5.0));
+    }
 }

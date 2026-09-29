@@ -143,6 +143,9 @@ impl Plugin for UltrawavePlugin {
             self.preload_attempted = true;
         }
         self.sample_rate = config.sample_rate;
+        self.ui
+            .sample_rate
+            .store(config.sample_rate.to_bits(), Ordering::Relaxed);
         self.recorder.set_sample_rate(config.sample_rate);
         self.player.set_sample_rate(config.sample_rate);
         self.reset();
@@ -174,6 +177,7 @@ impl Plugin for UltrawavePlugin {
         }
         self.ui.capture_peak.store(0, Ordering::Relaxed);
         self.ui.playback_peak.store(0, Ordering::Relaxed);
+        self.ui.capture_frames.store(0, Ordering::Relaxed);
         self.ui.clear_playback();
     }
 
@@ -185,6 +189,7 @@ impl Plugin for UltrawavePlugin {
     ) -> ProcessStatus {
         let transport = context.transport();
         let tempo = transport.tempo.unwrap_or(120.0);
+        self.ui.tempo.store(tempo.to_bits(), Ordering::Relaxed);
         self.player.set_tempo(tempo);
         if self.transport_was_playing && !transport.playing {
             self.player.stop();
@@ -332,6 +337,11 @@ impl Plugin for UltrawavePlugin {
                 }
             }
         }
+        let total = self.recorder.target_length() as u64;
+        let elapsed = total - self.recorder.samples_remaining() as u64;
+        self.ui
+            .capture_frames
+            .store((total << 32) | elapsed, Ordering::Relaxed);
         self.ui
             .recording
             .store(self.recorder.is_recording(), Ordering::Relaxed);

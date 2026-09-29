@@ -59,6 +59,19 @@ pub fn rec_len_to_beats(rec_len: i32) -> Option<f64> {
     }
 }
 
+/// Effective duration, shared with the editor so capped beat choices are honest.
+pub fn capture_duration(rec_len: i32, tempo_bpm: f64) -> f64 {
+    rec_len_to_beats(rec_len)
+        .map(|beats| beats * (60.0 / tempo_bpm))
+        .unwrap_or(RamRecord::MAX_RECORD_SECONDS as f64)
+        .min(RamRecord::MAX_RECORD_SECONDS as f64)
+}
+
+/// Integer-frame sampling makes the effective divisor the ceiling of this value.
+pub fn capture_rate_divisor(rec_rate: i32) -> f32 {
+    1.0 + (1.0 - param_to_normalized(rec_rate)) * 15.0
+}
+
 pub struct RamRecord {
     memory: Arc<SampleMemory>,
     sample_rate: f32,
@@ -110,19 +123,13 @@ impl RamRecord {
 
     fn start(&mut self, params: &RamRecordParams, staging: bool) {
         self.stop_recording();
-        let target_length = match rec_len_to_beats(params.rec_len) {
-            Some(beats) => {
-                let seconds = beats * (60.0 / params.tempo_bpm);
-                (seconds * self.sample_rate as f64) as usize
-            }
-            None => self.max_length,
-        };
+        let target_length =
+            (capture_duration(params.rec_len, params.tempo_bpm) * self.sample_rate as f64) as usize;
         self.target_length = target_length.min(self.max_length).max(1);
         self.samples_recorded = 0;
         self.elapsed_samples = 0;
 
-        let rate_normalized = param_to_normalized(params.rec_rate);
-        self.rec_rate_divisor = 1.0 + (1.0 - rate_normalized) * 15.0;
+        self.rec_rate_divisor = capture_rate_divisor(params.rec_rate);
         self.rec_rate_counter = 0.0;
         self.monitor = 0.0;
 

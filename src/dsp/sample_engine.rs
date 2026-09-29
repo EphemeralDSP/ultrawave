@@ -133,9 +133,13 @@ impl Default for SampleEngine {
 
 /// BRR progressively removes up to ten bits from the 12-bit playback signal.
 /// This deliberately stepped mapping is an approximation, not an MD ROM table.
+pub fn playback_bits(brr: i32) -> i32 {
+    12 - brr.clamp(0, 127) * 10 / 127
+}
+
 #[inline]
 pub fn apply_bit_reduction(sample: f32, brr: i32) -> f32 {
-    let bits = 12 - brr.clamp(0, 127) * 10 / 127;
+    let bits = playback_bits(brr);
     let scale = (1 << (bits - 1)) as f32;
     (sample * scale).round().clamp(-scale, scale - 1.0) / scale
 }

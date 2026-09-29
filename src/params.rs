@@ -73,14 +73,48 @@ fn parse_rec_len(string: &str) -> Option<i32> {
 }
 
 fn parse_rate(string: &str) -> Option<i32> {
-    let trimmed = string.trim();
-    if trimmed.eq_ignore_ascii_case("LO") {
-        Some(0)
-    } else if trimmed.eq_ignore_ascii_case("HI") {
-        Some(127)
+    parse_from_formatter_lookup(string, 0, 127, format_rate).or_else(|| parse_0_127(string))
+}
+
+fn format_amount(value: i32) -> String {
+    format!("{:.1}%", value as f32 * 100.0 / 127.0)
+}
+
+fn parse_amount(string: &str) -> Option<i32> {
+    if let Some(percent) = string.trim().strip_suffix('%') {
+        percent
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .map(|v| (v.clamp(0.0, 100.0) * 127.0 / 100.0).round() as i32)
     } else {
-        parse_0_127(trimmed)
+        parse_0_127(string)
     }
+}
+
+fn format_srr(value: f32) -> String {
+    format!("{:.1}%", value / 0.9629 * 100.0)
+}
+
+fn parse_srr(string: &str) -> Option<f32> {
+    let value = string
+        .trim()
+        .trim_end_matches('%')
+        .trim()
+        .parse::<f32>()
+        .ok()?;
+    value
+        .is_finite()
+        .then(|| value.clamp(0.0, 100.0) / 100.0 * 0.9629)
+}
+
+fn format_bits(value: i32) -> String {
+    format!("{} bits", crate::dsp::sample_engine::playback_bits(value))
+}
+
+fn parse_bits(string: &str) -> Option<i32> {
+    parse_from_formatter_lookup(string, 0, 127, format_bits).or_else(|| parse_0_127(string))
 }
 
 fn parse_pitch(string: &str) -> Option<i32> {
@@ -156,13 +190,12 @@ fn format_rec_len(value: i32) -> String {
     }
 }
 
-/// Format sample rate: HI at max, LO at min, otherwise numeric
+/// Hosts without editor context show the rate divisor; the editor shows Hz.
 fn format_rate(value: i32) -> String {
-    match value {
-        0 => "LO".to_string(),
-        127 => "HI".to_string(),
-        _ => format!("{}", value),
-    }
+    format!(
+        "÷{:.0}",
+        crate::machines::ram_record::capture_rate_divisor(value).ceil()
+    )
 }
 
 /// Format pitch: semitones from center (64)
@@ -192,8 +225,7 @@ fn format_percent(value: i32) -> String {
 /// Total hits including the first, not additional repeats or the raw MD value.
 fn format_rtrg(value: i32) -> String {
     match value {
-        0 => "OFF".to_string(),
-        1 => "1 hit".to_string(),
+        0 | 1 => "1 hit".to_string(),
         127 => "INF".to_string(),
         _ => format!(
             "{} hits",
@@ -202,17 +234,9 @@ fn format_rtrg(value: i32) -> String {
     }
 }
 
-/// Nominal quarter-note beats at 120 BPM. Only the maximum is an exact note
-/// division; the original integer timer and minimum rate limit depend on tempo.
+/// Host parameter text cannot observe tempo. The editor shows actual milliseconds.
 fn format_rtim(value: i32) -> String {
-    match value {
-        0 => "MIN".to_string(),
-        127 => "1/16".to_string(),
-        _ => format!(
-            "{:.4} bt",
-            crate::machines::ram_play::retrig_interval_seconds(value, 120.0) * 2.0
-        ),
-    }
+    format!("MD {value}")
 }
 
 #[derive(Params)]
@@ -236,11 +260,11 @@ pub struct UltrawaveParams {
 impl Default for UltrawaveParams {
     fn default() -> Self {
         Self {
-            record_note: IntParam::new("Capture Note", 48, IntRange::Linear { min: 0, max: 127 })
+            record_note: IntParam::new("Record Note", 48, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
             play_note: IntParam::new("Play Note", 50, IntRange::Linear { min: 0, max: 127 })
                 .with_string_to_value(Arc::new(parse_0_127)),
-            master_mode: BoolParam::new("Master Mode", true),
+            master_mode: BoolParam::new("Resample", true),
             playback: BoolParam::new("Playback", false),
             rearm: BoolParam::new("Re-arm", false),
             record: RamRecordParams::default(),
@@ -304,19 +328,22 @@ impl Default for RamRecordParams {
                     factor: 14.0,
                 },
             )
-            .with_value_to_string(formatters::v2s_f32_rounded(3)),
+            .with_value_to_string(Arc::new(format_srr))
+            .with_string_to_value(Arc::new(parse_srr)),
             dist: IntParam::new(
                 "Capture Distortion",
                 0,
                 IntRange::Linear { min: 0, max: 127 },
             )
-            .with_string_to_value(Arc::new(parse_0_127)),
+            .with_value_to_string(Arc::new(format_amount))
+            .with_string_to_value(Arc::new(parse_amount)),
             mlev: IntParam::new(
-                "Track Input Level",
+                "Main Capture Level",
                 127,
                 IntRange::Linear { min: 0, max: 127 },
             )
-            .with_string_to_value(Arc::new(parse_0_127)),
+            .with_value_to_string(Arc::new(format_amount))
+            .with_string_to_value(Arc::new(parse_amount)),
             mbal: IntParam::new(
                 "Track Input Balance",
                 64,
@@ -325,7 +352,8 @@ impl Default for RamRecordParams {
             .with_value_to_string(Arc::new(format_balance))
             .with_string_to_value(Arc::new(parse_balance)),
             ilev: IntParam::new("Sidechain Level", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_string_to_value(Arc::new(parse_0_127)),
+                .with_value_to_string(Arc::new(format_amount))
+                .with_string_to_value(Arc::new(parse_amount)),
             ibal: IntParam::new(
                 "Sidechain Balance",
                 64,
@@ -394,15 +422,18 @@ impl Default for RamPlayParams {
                     factor: 14.0,
                 },
             )
-            .with_value_to_string(formatters::v2s_f32_rounded(3)),
+            .with_value_to_string(Arc::new(format_srr))
+            .with_string_to_value(Arc::new(parse_srr)),
             dist: IntParam::new(
                 "Playback Distortion",
                 0,
                 IntRange::Linear { min: 0, max: 127 },
             )
-            .with_string_to_value(Arc::new(parse_0_127)),
+            .with_value_to_string(Arc::new(format_amount))
+            .with_string_to_value(Arc::new(parse_amount)),
             brr: IntParam::new("Bit Reduction", 0, IntRange::Linear { min: 0, max: 127 })
-                .with_string_to_value(Arc::new(parse_0_127)),
+                .with_value_to_string(Arc::new(format_bits))
+                .with_string_to_value(Arc::new(parse_bits)),
             strt: IntParam::new("Start", 0, IntRange::Linear { min: 0, max: 127 })
                 .with_value_to_string(Arc::new(format_percent))
                 .with_string_to_value(Arc::new(parse_percent)),
@@ -452,6 +483,8 @@ mod tests {
         assert_roundtrip_stable(0, 127, format_balance, parse_balance);
         assert_roundtrip_stable(0, 127, format_rec_len, parse_rec_len);
         assert_roundtrip_stable(0, 127, format_rate, parse_rate);
+        assert_roundtrip_stable(0, 127, format_amount, parse_amount);
+        assert_roundtrip_stable(0, 127, format_bits, parse_bits);
     }
 
     #[test]
@@ -479,9 +512,10 @@ mod tests {
         assert_eq!(format_decay(127), "4000 ms");
         assert_eq!(parse_decay("2000 ms"), Some(64));
         assert_eq!(format_hold(127), "2000 ms");
-        assert_eq!(format_rtim(127), "1/16");
-        assert_eq!(format_rtim(109), "0.1684 bt");
-        assert_eq!(format_rtim(0), "MIN");
+        assert_eq!(format_rtim(127), "MD 127");
+        assert_eq!(format_rtim(109), "MD 109");
+        assert_eq!(format_rtim(0), "MD 0");
+        assert_eq!(format_rtrg(0), "1 hit");
         assert_eq!(format_rtrg(1), "1 hit");
         assert_eq!(format_rtrg(2), "2 hits");
         assert_eq!(format_rtrg(96), "104 hits");
@@ -495,5 +529,27 @@ mod tests {
         }
         assert_eq!(parse_rtim("500 ms"), None);
         assert_eq!(format_decay(0), "OFF");
+    }
+
+    #[test]
+    fn amounts_and_bits_show_units_without_changing_raw_parameters() {
+        assert_eq!(format_amount(91), "71.7%");
+        assert_eq!(parse_amount("71.7%"), Some(91));
+        assert_eq!(parse_amount("91"), Some(91));
+        for value in 0..=127 {
+            assert_eq!(parse_amount(&format_amount(value)), Some(value));
+        }
+        assert_eq!(format_srr(0.48145), "50.0%");
+        assert!((parse_srr("50.0%").unwrap() - 0.48145).abs() < 1e-6);
+        assert_eq!(format_bits(12), "12 bits");
+        assert_eq!(format_bits(13), "11 bits");
+        assert_eq!(format_bits(126), "3 bits");
+        assert_eq!(format_bits(127), "2 bits");
+        assert_eq!(format_rate(127), "÷1");
+        assert_eq!(format_rate(126), "÷2");
+        for invalid in ["NaN%", "inf%", "wrong"] {
+            assert_eq!(parse_amount(invalid), None);
+            assert_eq!(parse_srr(invalid), None);
+        }
     }
 }

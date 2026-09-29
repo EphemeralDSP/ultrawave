@@ -10,28 +10,28 @@ and egui; available as VST3, CLAP, and a standalone application.
 ## Record and play in one instance
 
 1. Insert **Ultrawave** on the audio track, group, send bus, or master you want to sample.
-2. Play audio through that track. Leave **Track input** at 127 and **Sidechain** at 0.
-3. Press **Capture**. The adjacent duration dropdown defaults to **1 bar**.
-   When recording finishes, press **Play sample**. Both actions are always visible.
-   MIDI note **48** captures; **50** plays. Change these in the small **MIDI**
+2. Play audio through that track. Leave **Main + sample** at 100% and **Sidechain** at 0%.
+3. Press **Record**. The adjacent duration dropdown defaults to **1 bar**.
+   When recording finishes, press **Play**. Both actions are always visible.
+   MIDI note **48** records; **50** plays. Change these in the small **MIDI**
    dropdown panel at the top right. Numbers are definitive because DAWs use
    different octave names. Automatable Capture/Playback rising edges also work.
-4. **Master** mode (default) passes stereo input through and adds sample playback.
-   Capture records this sum, including the sample's playback processing and level.
+4. **Resample** mode (default) passes dry stereo input through and adds sample playback.
+   Recording includes the configured input mix and the sample's processed playback.
    Use **Sample only** for the previous input-only capture and sample-only output,
    for example on a dedicated send receiver.
 
 There is no automatic access to the DAW master: insert on the master or route
-that mix to the effect. **Track input** and **Sidechain** mix to mono before
-capture gain and signed 12-bit quantization. In Master mode, Track input level
-also scales the sampler's contribution to capture; it does not change audible
-dry-through or playback. Sidechain feeds capture only, not dry output.
-**Capture sound & balance** contains the source balances, capture rate,
-rate crush (SRR) and drive. These print into the take during recording.
+that mix to the effect. The **Inputs** popover contains **Main + sample** in
+Resample mode (or **Main input** in Sample only), **Sidechain**, and their stereo
+balances. These sources mix to mono before Gain and signed 12-bit quantization.
+They affect recording only, never audible dry output or playback level.
+The **Record FX** popover contains stored sample rate, rate crush (SRR), and
+drive. Rate crush and drive are printed into each new recording.
 Playback has independent level, rate crush, bit crush (BRR) and drive controls.
 
-**Master capture keeps the old take playable until recording finishes.** The
-new take then replaces it and stops old playback/repeats; press Play sample or
+**Resample recording keeps the old take playable until recording finishes.** The
+new take then replaces it and stops old playback/repeats; press Play or
 send another Play Note to hear the replacement. Repeat this to resample previous
 generations. Interrupted recordings keep their nonempty prefix; an empty attempt
 retains the old take. Record once prevents replacement until re-armed.
@@ -59,7 +59,7 @@ choose the receiver track and Ultrawave device, then raise Sidechain. Put a side
 receiver **after the sending tracks**: Renoise refuses sends to previous tracks.
 Multiple sidechain senders sum. Select **Sample only** on a dedicated receiver
 to avoid doubling the original source. For master resampling, put Ultrawave on
-the **Master** track and leave **Master** mode selected; Capture/Playback automation
+the **Master** track and leave **Resample** mode selected; Capture/Playback automation
 also works without an FX alias.
 
 ### Ableton Live and other hosts
@@ -85,21 +85,23 @@ Capture and Playback automation instead. Live does not host CLAP natively.
   are equal, Record takes priority; use different notes for separate commands.
 - **Hits** shows total hits, including the first. Raw MD values 0/1 play once,
   2–63 give that many hits, and 64–126 use the hardware's nonlinear range
-  (96 → 104 hits; 126 → 156 hits). Raw 127 is **INF**. OFF or 1 hit cancels
+  (96 → 104 hits; 126 → 156 hits). Raw 127 is **INF**. Selecting **1 hit** cancels
   pending hits without cutting the current hit. A new note replaces the train.
   Host stop/reset stops recording and playback, preserving RAM.
 - Interval follows host tempo (120 BPM fallback) using the original firmware's
-  linear/logarithmic mapping. **MIN is not off**: it reaches the measured steady
-  limit of about 1378 hits/second. The maximum is a sixteenth note; other beat
-  readouts are nominal at 120 BPM, not exact note divisions. Fractional intervals
-  retain their remainder and tempo changes preserve interval progress. Raw
-  numeric entry retains the MD's 0–127 scale. See the [hardware measurements](docs/testing/machinedrum-measurement.md)
+  linear/logarithmic mapping. The minimum is not off: it reaches the measured
+  steady limit of about 1378 hits/second. The maximum is a sixteenth note;
+  intermediate settings are not exact note divisions. The editor displays
+  and accepts actual milliseconds at the current host tempo. Generic host
+  parameter text remains the raw MD 0–127 code because it has no tempo context.
+  Fractional intervals retain their remainder and tempo changes preserve interval
+  progress. See the [hardware measurements](docs/testing/machinedrum-measurement.md)
   for evidence and the deliberate omission of hardware block jitter/smoothing.
 
 ### Record once and project saving
 
 Record once records on the first trigger for the chosen duration (or capacity),
-then shows **SAMPLE PROTECTED** and ignores further capture triggers. Re-arm,
+then shows **Protected** and ignores further capture triggers. Re-arm,
 or a rising Re-arm automation edge,
 allows another take. Re-arming waits for the next trigger and is ignored during
 capture. Disabling Record once restores repeated recording; enabling it during a
@@ -116,12 +118,27 @@ This replaces the old Record/Play pair; old plugin IDs/presets are not supported
 
 ## Editor
 
-One 920×650 pane shows Record and Playback together. The waveform has draggable
+One 920×650 pane shows Record and Play together. The waveform has draggable
 Start/End handles and adjacent Start/End knobs linked to the same controls,
-dimmed excluded audio and a reverse indicator. Master/Sample only sits in the header.
-MIDI assignments are dropdowns in a small panel, not sound knobs. Click numeric
-values to type; drag knobs vertically, Shift-drag for fine changes, double-click
-to restore defaults.
+dimmed excluded audio and a reverse indicator. Start and End support both numeric
+entry and dragging, including crossing them for reverse playback. Resample/Sample
+only sits in the header. MIDI assignments are labeled **Record** and **Play** in
+a small panel, not sound knobs. Notes outside those two assignments are ignored;
+note numbers are authoritative when hosts disagree about octave names.
+
+The Record panel keeps Record and its duration dropdown together, followed by
+Record once, contextual Re-arm (shown only after a protected take finishes),
+Ready/Recording/Protected status, actual recording progress and elapsed/total
+time, and one Gain knob. Beat-based duration choices show a 10-second cap when
+the requested duration exceeds it, with effective seconds beside the status;
+actual timing is latched when recording starts. The Inputs and Record FX controls
+live in popovers rather than on the faceplate.
+
+Record FX sample rate is shown in actual kHz; its editor accepts kHz or Hz. The
+generic host-facing Capture Rate text remains the divisor **÷1…÷16**. Source,
+drive, and rate-crush readouts are percentage amounts, while Bit crush reports
+the effective number of bits. Click numeric values to type; drag knobs vertically,
+Shift-drag for fine changes, and double-click to restore defaults.
 
 ![Ultrawave single-pane editor](screenshots/ultrawave.png)
 
@@ -193,7 +210,7 @@ cargo xtask bundle ultrawave-plugin --release
 Requires Renoise 3.5.4, Xvfb, xdotool, ImageMagick and Python. Uses a disposable
 HOME/display and only the newly built bundle, leaving personal sessions and
 installed plugins untouched. Tests FX-alias notes, main/sidechain routing,
-actual Master-track resampling, sample-only output, Record once, replacement,
+actual Master-track resampling in Resample mode, sample-only output, Record once, replacement,
 reverse/retrigger, project save and process
 reopen. Artifacts and logs: `target/renoise-test/`. This exercises VST3; the CLAP
 harness and clap-validator exercise CLAP. `tests/test.RPP` remains unverified

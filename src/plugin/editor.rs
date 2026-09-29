@@ -16,8 +16,12 @@ use std::time::Duration;
 
 use super::UiState;
 use crate::machines::memory::SampleMemory;
+use crate::machines::ram_play::retrig_interval_seconds;
+use crate::machines::ram_record::{capture_duration, capture_rate_divisor, rec_len_to_beats};
 use crate::params::UltrawaveParams;
-use crate::widgets::{parameter_value, rotary_knob, waveform, WaveformCache};
+use crate::widgets::{
+    parameter_value, parameter_value_with_format, rotary_knob, waveform, WaveformCache,
+};
 
 const BACKGROUND: Color32 = Color32::from_rgb(19, 21, 24);
 const PANEL: Color32 = Color32::from_rgb(28, 31, 35);
@@ -160,7 +164,6 @@ impl NiceEguiApp for UltrawaveEditorApp {
                                 .font(FontId::monospace(24.0))
                                 .strong(),
                         );
-                        ui.label(RichText::new("12-bit capture sampler").weak());
                     });
                     ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.selectable_label(self.midi_open, "MIDI ▾").clicked() {
@@ -172,16 +175,16 @@ impl NiceEguiApp for UltrawaveEditorApp {
                             if ui
                                 .selectable_label(!master_mode, "Sample only")
                                 .on_hover_text(
-                                    "Sample only: capture track input and output only the sample.",
+                                    "Record the inputs; output only the sample.",
                                 )
                                 .clicked()
                             {
                                 set_bool(&gui, &self.params.master_mode, false);
                             }
                             if ui
-                                .selectable_label(master_mode, "Master")
+                                .selectable_label(master_mode, "Resample")
                                 .on_hover_text(
-                                    "Master: pass track input plus sample, and capture that sum.",
+                                    "Pass input plus sample; record that mix. No automatic master-bus routing.",
                                 )
                                 .clicked()
                             {
@@ -207,21 +210,10 @@ impl NiceEguiApp for UltrawaveEditorApp {
             ui.painter()
                 .rect_filled(wave_rect.shrink(10.0), 0.0, Color32::BLACK);
             ui.painter().text(
-                wave_rect.center() - vec2(0.0, 12.0),
+                wave_rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "No sample yet",
+                "Empty",
                 FontId::proportional(18.0),
-                Color32::WHITE,
-            );
-            ui.painter().text(
-                wave_rect.center() + vec2(0.0, 15.0),
-                egui::Align2::CENTER_CENTER,
-                if self.params.master_mode.unmodulated_plain_value() {
-                    "Send track audio, then capture the master sum."
-                } else {
-                    "Play audio through this track, then press Capture."
-                },
-                FontId::proportional(13.0),
                 PLAY,
             );
         }
@@ -250,7 +242,9 @@ impl NiceEguiApp for UltrawaveEditorApp {
                 ui.label(RichText::new(if start > end { "← REVERSE" } else if start == end { "EMPTY REGION" } else { "FORWARD →" }).color(PLAY))
                     .on_hover_text("Drag the Start handle past End to reverse the sample. Direction latches when playback starts.");
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("{:.2} s  ·  {:.1} kHz  ·  12-bit mono", len as f32 / rate.max(1.0), rate / 1000.0)).monospace().small().weak());
+                    if len > 0 {
+                        ui.label(RichText::new(format!("{:.2} s  ·  {:.1} kHz", len as f32 / rate.max(1.0), rate / 1000.0)).monospace().small().weak());
+                    }
                 });
             });
         });
@@ -315,8 +309,8 @@ impl UltrawaveEditorApp {
     fn midi_panel(&self, ui: &mut egui::Ui, gui: &GuiContext) {
         ui.set_width(252.0);
         for (label, param) in [
-            ("Capture", &self.params.record_note),
-            ("Play sample", &self.params.play_note),
+            ("Record", &self.params.record_note),
+            ("Play", &self.params.play_note),
         ] {
             ui.horizontal(|ui| {
                 ui.add_sized([85.0, 24.0], egui::Label::new(label));
@@ -329,25 +323,11 @@ impl UltrawaveEditorApp {
                 );
             });
         }
-        ui.label(
-            RichText::new(
-                "MIDI numbers are definitive; DAW octave names vary. Other notes are ignored.",
-            )
-            .small()
-            .weak(),
-        );
         if self.params.record_note.unmodulated_plain_value()
             == self.params.play_note.unmodulated_plain_value()
         {
-            ui.label(
-                RichText::new(
-                    "Same note: Capture takes priority. Choose different notes to play back.",
-                )
-                .color(CAPTURE),
-            );
+            ui.label(RichText::new("Note conflict — Record takes priority").color(CAPTURE));
         }
-        ui.separator();
-        ui.label(RichText::new("Renoise: send notes through an FX alias to this effect. Buttons work without MIDI.").small());
     }
 
     fn capture_panel(&self, ui: &mut egui::Ui, gui: &GuiContext) {
@@ -359,15 +339,17 @@ impl UltrawaveEditorApp {
         ui.label(RichText::new("Record").color(CAPTURE).strong());
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(!locked, egui::Button::new(RichText::new("●  Capture").color(BACKGROUND).strong()).fill(CAPTURE).min_size(vec2(133.0, 34.0)))
+            if ui.add_enabled(!locked, egui::Button::new(RichText::new("●  Record").color(BACKGROUND).strong()).fill(CAPTURE).min_size(vec2(117.0, 34.0)))
                 .on_hover_text(if master_mode {
-                    "Capture the passed track input plus played sample. The old take keeps playing while the new take is staged, then is replaced and stopped when recording ends; an empty take leaves it intact."
+                    "Record the mix; replace the previous take when finished. Click again to restart.
+The previous take remains playable while recording."
                 } else {
-                    "Start a timed input capture. This replaces the previous take and stops its playback."
+                    "Record the inputs, replacing the previous take immediately. Click again to restart."
                 }).clicked() {
                 self.ui_state.record_trigger.store(true, Ordering::Relaxed);
             }
-            int_choice(ui, &p.rec_len, gui, 96.0, [(0, "1/2 beat"), (16, "1 beat"), (32, "2 beats"), (48, "1 bar"), (64, "2 bars"), (80, "4 bars"), (96, "8 bars"), (112, "Maximum")].into_iter().map(|(v, s)| (v, s.into())));
+            int_choice(ui, &p.rec_len, gui, 120.0, [0, 16, 32, 48, 64, 80, 96, 112]
+                .into_iter().map(|value| (value, duration_choice(value, self.ui_state.tempo()))));
         });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -375,69 +357,45 @@ impl UltrawaveEditorApp {
             if ui.checkbox(&mut checked, "Record once").on_hover_text("Protect the first take from later capture triggers, even when the pattern loops.").changed() {
                 set_bool(gui, &p.one_shot, checked);
             }
-            if ui.add_enabled(locked && !recording, egui::Button::new("Re-arm"))
-                .on_hover_text("Keep this take until the next Capture trigger replaces it.").clicked() {
+            if locked && !recording && ui.button("Re-arm")
+                .on_hover_text("Keep this take until the next Record trigger.").clicked() {
                 self.ui_state.rearm.store(true, Ordering::Relaxed);
             }
         });
         ui.add_space(8.0);
         ui.label(
             RichText::new(if recording {
-                "● RECORDING"
+                "● Recording"
             } else if locked {
-                "SAMPLE PROTECTED"
+                "Protected"
             } else {
-                "READY TO CAPTURE"
+                "Ready"
             })
             .color(CAPTURE)
             .small()
             .strong(),
         );
-        if recording || locked {
+        if recording {
+            let (elapsed, total) = self.ui_state.capture_seconds();
+            ui.add(
+                egui::ProgressBar::new(elapsed / total.max(f32::EPSILON))
+                    .text(format!("{elapsed:.2} / {total:.2} s"))
+                    .desired_width(250.0),
+            );
+        } else {
             ui.label(
-                RichText::new(if recording {
-                    "The take ends at the selected duration."
-                } else {
-                    "Re-arm to allow another take."
-                })
+                RichText::new(format!(
+                    "{:.2} s",
+                    capture_duration(p.rec_len.unmodulated_plain_value(), self.ui_state.tempo())
+                ))
                 .small()
                 .weak(),
             );
         }
-
         let origin = ui.max_rect().min;
-        for (index, (label, param, hint)) in [
-            (
-                "Track input",
-                &p.mlev,
-                if master_mode {
-                    "Level of the passed stereo track input in the captured master sum. Played sample audio is included after its playback effects, velocity and level."
-                } else {
-                    "Audio from this track or bus, before sample playback is added."
-                },
-            ),
-            (
-                "Sidechain",
-                &p.ilev,
-                "Audio sent to the effect's optional sidechain. Route it in your DAW first.",
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            knob(
-                ui,
-                origin + vec2(index as f32 * 86.0, 181.0),
-                84.0,
-                label,
-                param,
-                gui,
-                hint,
-            );
-        }
         knob(
             ui,
-            origin + vec2(172.0, 181.0),
+            origin + vec2(86.0, 170.0),
             84.0,
             "Gain",
             &p.lev,
@@ -450,35 +408,39 @@ impl UltrawaveEditorApp {
                 vec2(256.0, 30.0),
             )),
             |ui| {
-                MenuButton::new("Capture sound & balance ▾")
+                ui.horizontal(|ui| {
+                MenuButton::new("Inputs ▾")
                     .config(
                         MenuConfig::new()
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
                     )
                     .ui(ui, |ui| {
-                        ui.set_width(376.0);
-                        ui.label(RichText::new("PRINT INTO THE TAKE").strong());
-                        ui.label(
-                            RichText::new(
-                                "These controls affect new recordings, not the current sample.",
-                            )
-                            .small()
-                            .weak(),
-                        );
+                        ui.set_width(252.0);
                         ui.horizontal(|ui| {
-                            for (label, param) in [
-                                ("Track balance", &p.mbal),
-                                ("Side balance", &p.ibal),
-                                ("Capture rate", &p.rec_rate),
-                            ] {
-                                knob_column(ui, 118.0, label, param, gui);
-                            }
+                            knob_column(ui, 118.0, if master_mode { "Main + sample" } else { "Main input" }, &p.mlev, gui,
+                                "Level into recording only; does not change the audible output.");
+                            knob_column(ui, 118.0, "Sidechain", &p.ilev, gui, "Host-routed sidechain into recording only.");
                         });
                         ui.horizontal(|ui| {
-                            knob_column(ui, 118.0, "Rate crush", &p.srr, gui);
-                            knob_column(ui, 118.0, "Drive", &p.dist, gui);
+                            knob_column(ui, 118.0, "Main balance", &p.mbal, gui, "Left/right weighting of the main input before mono recording.");
+                            knob_column(ui, 118.0, "Side balance", &p.ibal, gui, "Left/right weighting of the sidechain before mono recording.");
                         });
                     });
+                MenuButton::new("Record FX ▾")
+                    .config(MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside))
+                    .ui(ui, |ui| {
+                        ui.set_width(376.0);
+                        ui.horizontal(|ui| {
+                            ui.allocate_ui_with_layout(vec2(118.0, 100.0), Layout::top_down(egui::Align::Center), |ui| {
+                                ui.label("Sample rate").on_hover_text("Stored sample rate, latched when recording starts.");
+                                rotary_knob(ui, &p.rec_rate, gui);
+                                contextual_value(ui, &p.rec_rate, gui, |value| self.ui_state.sample_rate() as f64 / capture_rate_divisor(value).ceil() as f64, "kHz", 1000.0);
+                            });
+                            knob_column(ui, 118.0, "Rate crush", &p.srr, gui, "Rate reduction printed into new recordings.");
+                            knob_column(ui, 118.0, "Drive", &p.dist, gui, "Distortion printed into new recordings.");
+                        });
+                    });
+                });
             },
         );
     }
@@ -487,15 +449,13 @@ impl UltrawaveEditorApp {
         let p = &self.params.play;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(RichText::new("Playback").color(PLAY).strong());
+                ui.label(RichText::new("Play").color(PLAY).strong());
                 if self.ui_state.playing.load(Ordering::Relaxed) {
-                    ui.label(RichText::new("● PLAYING").small().weak());
-                } else if len == 0 {
-                    ui.label(RichText::new("Capture a take to begin.").small().weak());
+                    ui.label(RichText::new("● Playing").small().weak());
                 }
             });
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add_enabled(len > 0, egui::Button::new(RichText::new("▶  Play sample").color(BACKGROUND).strong()).fill(PLAY).min_size(vec2(142.0, 34.0)))
+                if ui.add_enabled(len > 0, egui::Button::new(RichText::new("▶  Play").color(BACKGROUND).strong()).fill(PLAY).min_size(vec2(142.0, 34.0)))
                     .on_hover_text("Trigger the sample from Start. Pitch sets playback speed; MIDI velocity sets loudness.").clicked() {
                     self.ui_state.play_trigger.store(true, Ordering::Relaxed);
                 }
@@ -506,7 +466,6 @@ impl UltrawaveEditorApp {
             (0.0, 64.0, "PITCH & ENVELOPE"),
             (338.0, 64.0, "REPEAT"),
             (0.0, 199.0, "CHARACTER"),
-            (432.0, 199.0, "OUTPUT"),
         ] {
             ui.painter().text(
                 origin + vec2(x, y),
@@ -517,14 +476,49 @@ impl UltrawaveEditorApp {
             );
         }
         for (x, label, param, hint) in [
-            (0.0, "Pitch", &p.pitch, "Varispeed in semitones. Independent of MIDI note number."),
-            (106.0, "Hold", &p.hold, "Time at full level before decay. Hold and Decay both zero bypass the envelope."),
+            (
+                0.0,
+                "Pitch",
+                &p.pitch,
+                "Varispeed in semitones. Independent of MIDI note number.",
+            ),
+            (
+                106.0,
+                "Hold",
+                &p.hold,
+                "Time at full level before decay. Hold and Decay both zero bypass the envelope.",
+            ),
             (212.0, "Decay", &p.dec, "Fade-out after Hold."),
-            (338.0, "Hits", &p.rtrg, "Total hits, including the first. OFF and 1 hit play once; INF continues until stopped. Uses the Machinedrum's nonlinear count range."),
-            (444.0, "Interval", &p.rtim, "Machinedrum timing, following host tempo. Beat display is nominal at 120 BPM. MIN is the fastest rate (about 1378 hits/s), not off."),
+            (
+                338.0,
+                "Hits",
+                &p.rtrg,
+                "Total hits, including the first. INF repeats until stopped.",
+            ),
         ] {
             knob(ui, origin + vec2(x, 84.0), 90.0, label, param, gui, hint);
         }
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(egui::Rect::from_min_size(
+                    origin + vec2(444.0, 84.0),
+                    vec2(90.0, 100.0),
+                ))
+                .layout(Layout::top_down(egui::Align::Center)),
+            |ui| {
+                ui.label(RichText::new("Interval").small())
+                    .on_hover_text("Time between hits at the current host tempo.");
+                rotary_knob(ui, &p.rtim, gui);
+                contextual_value(
+                    ui,
+                    &p.rtim,
+                    gui,
+                    |value| retrig_interval_seconds(value, self.ui_state.tempo()),
+                    "ms",
+                    0.001,
+                );
+            },
+        );
         knob(
             ui,
             origin + vec2(0.0, 220.0),
@@ -638,14 +632,134 @@ fn knob<P: Param>(
     );
 }
 
-fn knob_column<P: Param>(ui: &mut egui::Ui, width: f32, label: &str, param: &P, gui: &GuiContext) {
+fn knob_column<P: Param>(
+    ui: &mut egui::Ui,
+    width: f32,
+    label: &str,
+    param: &P,
+    gui: &GuiContext,
+    hint: &str,
+) {
     ui.allocate_ui_with_layout(
         vec2(width, 100.0),
         Layout::top_down(egui::Align::Center),
         |ui| {
-            ui.label(RichText::new(label).small());
-            rotary_knob(ui, param, gui);
+            ui.label(RichText::new(label).small()).on_hover_text(hint);
+            rotary_knob(ui, param, gui).on_hover_text(hint);
             parameter_value(ui, ui.id().with(label), param, gui);
         },
     );
+}
+
+fn duration_choice(value: i32, tempo: f64) -> String {
+    let label = match value {
+        0..=15 => "1/2 beat",
+        16..=31 => "1 beat",
+        32..=47 => "2 beats",
+        48..=63 => "1 bar",
+        64..=79 => "2 bars",
+        80..=95 => "4 bars",
+        96..=111 => "8 bars",
+        _ => return format!("{:.0} s max", capture_duration(value, tempo)),
+    };
+    let seconds = capture_duration(value, tempo);
+    if rec_len_to_beats(value).unwrap() * 60.0 / tempo > seconds {
+        format!("{label} → {seconds:.0} s")
+    } else {
+        label.into()
+    }
+}
+
+fn contextual_value(
+    ui: &mut egui::Ui,
+    param: &IntParam,
+    gui: &GuiContext,
+    value: impl Fn(i32) -> f64,
+    unit: &str,
+    scale: f64,
+) {
+    parameter_value_with_format(
+        ui,
+        ui.id().with(param.name()),
+        param,
+        gui,
+        &|normalized| {
+            format!(
+                "{:.3} {unit}",
+                value(param.preview_plain(normalized)) / scale
+            )
+        },
+        &|text| {
+            parse_contextual(text, unit, scale, &value).map(|raw| param.preview_normalized(raw))
+        },
+    );
+}
+
+fn parse_contextual(
+    text: &str,
+    unit: &str,
+    scale: f64,
+    value: &impl Fn(i32) -> f64,
+) -> Option<i32> {
+    let text = text.trim().to_ascii_lowercase();
+    let unit = unit.to_ascii_lowercase();
+    let (number, factor) = if let Some(number) = text.strip_suffix(&unit) {
+        (number, scale)
+    } else if unit == "khz" && text.ends_with("hz") {
+        (text.strip_suffix("hz")?, 1.0)
+    } else {
+        (text.as_str(), scale)
+    };
+    let requested = number.trim().parse::<f64>().ok()? * factor;
+    if !requested.is_finite() || requested <= 0.0 {
+        return None;
+    }
+    (0..=127).rev().min_by(|a, b| {
+        (value(*a) - requested)
+            .abs()
+            .total_cmp(&(value(*b) - requested).abs())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duration_choices_show_the_effective_cap_at_host_tempo() {
+        assert_eq!(duration_choice(96, 120.0), "8 bars → 10 s");
+        assert_eq!(duration_choice(96, 240.0), "8 bars");
+        assert_eq!(duration_choice(80, 60.0), "4 bars → 10 s");
+        assert_eq!(duration_choice(80, 96.0), "4 bars");
+        assert_eq!(duration_choice(80, 95.0), "4 bars → 10 s");
+        assert_eq!(duration_choice(112, 240.0), "10 s max");
+        assert_eq!(capture_duration(48, 90.0), 8.0 / 3.0);
+    }
+
+    #[test]
+    fn contextual_units_follow_actual_rates_and_tempo() {
+        let rate = |raw| 96_000.0 / capture_rate_divisor(raw).ceil() as f64;
+        assert_eq!(rate(127), 96_000.0);
+        assert_eq!(rate(126), 48_000.0);
+        assert_eq!(rate(0), 6_000.0);
+        for text in ["24", "24 kHz", "24000 Hz"] {
+            let raw = parse_contextual(text, "kHz", 1000.0, &rate).unwrap();
+            assert_eq!(rate(raw), 24_000.0);
+        }
+        for tempo in [75.0, 150.0] {
+            let interval = |raw| retrig_interval_seconds(raw, tempo);
+            let raw = parse_contextual(&format!("{} ms", 15_000.0 / tempo), "ms", 0.001, &interval)
+                .unwrap();
+            assert_eq!(raw, 127);
+            assert!((interval(raw) - 15.0 / tempo).abs() < 1e-8);
+        }
+        for invalid in ["NaN", "inf", "-20", "0", "garbage", "3 Hz"] {
+            assert_eq!(
+                parse_contextual(invalid, "ms", 0.001, &|raw| retrig_interval_seconds(
+                    raw, 75.0
+                )),
+                None
+            );
+        }
+    }
 }

@@ -80,10 +80,10 @@ local function render_sequence(song, steps, done)
 end
 
 local expected_parameters = {
-  "Master Mode",
-  "Capture Note", "Play Note", "Playback", "Re-arm",
+  "Resample",
+  "Record Note", "Play Note", "Playback", "Re-arm",
   "Capture", "Record Once", "Capture Level", "Capture SRR", "Capture Distortion",
-  "Track Input Level", "Track Input Balance", "Sidechain Level", "Sidechain Balance",
+  "Main Capture Level", "Track Input Balance", "Sidechain Level", "Sidechain Balance",
   "Capture Length", "Capture Rate",
   "Playback Level", "Playback SRR", "Playback Distortion", "Bit Reduction",
   "Start", "End", "Pitch", "Hold", "Decay", "Retrigger", "Retrig Time"
@@ -109,15 +109,15 @@ local function run()
       assert(parameter(effect, "Capture").value == 0, "Capture not restored low")
       assert(parameter(effect, "Playback").value == 0, "Playback not restored low")
       assert(parameter(effect, "Re-arm").value == 0, "Re-arm not restored low")
-      assert(tonumber(parameter(effect, "Capture Note").value_string) == 47, "Capture Note not restored")
+      assert(tonumber(parameter(effect, "Record Note").value_string) == 47, "Record Note not restored")
       assert(tonumber(parameter(effect, "Play Note").value_string) == 51, "Play Note not restored")
-      assert(tonumber(parameter(effect, "Track Input Level").value_string) == 91,
-        "Track Input Level not restored")
+      assert(math.abs(parameter(effect, "Main Capture Level").value - 91 / 127) < 0.000001,
+        "Main Capture Level not restored")
       assert(parameter(effect, "Track Input Balance").value_string:match("L32"),
         "Track Input Balance not restored")
       assert(parameter(effect, "Playback Level").value_string:match("%-3%.0"),
         "Playback Level not restored")
-      assert(parameter(effect, "Master Mode").value == 0, "Master Mode Off not restored")
+      assert(parameter(effect, "Resample").value == 0, "Resample Off not restored")
       report("project_controls_and_fx_alias_restored=true")
 
       local source_note = song.patterns[1].tracks[1].lines[1].note_columns[1]
@@ -129,7 +129,7 @@ local function run()
         {"recapture-after-reopen.wav", function()
           clear_note(trigger_note)
           note(source_note, "C-4", 0)
-          note(trigger_note, "B-3", 1) -- MIDI 47: saved Capture Note
+          note(trigger_note, "B-3", 1) -- MIDI 47: saved Record Note
         end},
         {"play-recaptured.wav", function()
           clear_note(source_note)
@@ -191,22 +191,22 @@ local function run()
       assert(found[name], "missing exported parameter: " .. name)
     end
     for _, removed in ipairs({
-      "Buffer", "Bank", "Dry Monitor", "Capture Monitor", "Playback Only", "One Shot", "Record Note",
+      "Buffer", "Bank", "Dry Monitor", "Capture Monitor", "Playback Only", "One Shot", "Capture Note",
       "Main Level", "Main Balance", "Rec Length", "Rec Rate"
     }) do
       assert(not found[removed], "removed parameter still exported: " .. removed)
     end
-    assert(tonumber(parameter(effect, "Capture Note").value_string) == 48,
-      "Capture Note default is not 48")
+    assert(tonumber(parameter(effect, "Record Note").value_string) == 48,
+      "Record Note default is not 48")
     assert(tonumber(parameter(effect, "Play Note").value_string) == 50, "Play Note default is not 50")
-    assert(parameter(effect, "Master Mode").value == 1, "Master Mode default is not On")
+    assert(parameter(effect, "Resample").value == 1, "Resample default is not On")
     report("master_mode_default_on=true")
     -- Everything below which exercises the original overwrite/silence contract
     -- is explicitly sample-only. The separate master-track fixture later tests
     -- the new default mode without weakening those assertions.
-    parameter(effect, "Master Mode").value = 0
+    parameter(effect, "Resample").value = 0
     parameter(effect, "Record Once").value = 1
-    parameter(effect, "Track Input Level").value_string = "127"
+    parameter(effect, "Main Capture Level").value_string = "127"
     parameter(effect, "Track Input Balance").value_string = "L64"
     parameter(effect, "Sidechain Level").value_string = "0"
     parameter(effect, "Capture Length").value_string = "48" -- one bar
@@ -224,7 +224,7 @@ local function run()
         "FX alias did not resolve to the inserted effect")
       report("fx_alias_target=1/2")
       local trigger_note = song.patterns[1].tracks[2].lines[1].note_columns[1]
-      note(trigger_note, "C-4", 1) -- MIDI 48: Capture Note
+      note(trigger_note, "C-4", 1) -- MIDI 48: Record Note
 
     -- Renoise's #Sidechain device is the only send into a VST3 auxiliary bus.
     local sidechain_path
@@ -260,10 +260,10 @@ local function run()
     assert(master_index, "fixture has no master track")
     local master = song.tracks[master_index]
     local master_effect = master:insert_device_at(effect_path, 2)
-    assert(parameter(master_effect, "Master Mode").value == 1, "fresh master instance did not default On")
+    assert(parameter(master_effect, "Resample").value == 1, "fresh master instance did not default On")
     parameter(master_effect, "Record Once").value = 0
     parameter(master_effect, "Capture Length").value_string = "48"
-    parameter(master_effect, "Track Input Level").value_string = "127"
+    parameter(master_effect, "Main Capture Level").value_string = "127"
     parameter(master_effect, "Track Input Balance").value_string = "L64"
     parameter(master_effect, "Sidechain Level").value_string = "0"
     local master_capture = parameter(master_effect, "Capture")
@@ -296,11 +296,11 @@ local function run()
       clear_note(side_note_a); clear_note(side_note_b)
     end
     local function capture_take(main_level, main_balance, side_level, side_balance)
-      parameter(effect, "Track Input Level").value_string = tostring(main_level)
+      parameter(effect, "Main Capture Level").value_string = tostring(main_level)
       parameter(effect, "Track Input Balance").value_string = main_balance
       parameter(effect, "Sidechain Level").value_string = tostring(side_level)
       parameter(effect, "Sidechain Balance").value_string = side_balance
-      note(trigger_note, "C-4", 1) -- a real Capture Note edge through the FX alias
+      note(trigger_note, "C-4", 1) -- a real Record Note edge through the FX alias
     end
 
       render_sequence(song, {
@@ -380,7 +380,7 @@ local function run()
         parameter(effect, "Start").value_string = "0"
         parameter(effect, "End").value_string = "127"
         parameter(effect, "Retrigger").value_string = "2"
-        parameter(effect, "Retrig Time").value_string = "127"
+        parameter(effect, "Retrig Time").value_string = "MD 127"
       end},
       {"play-retrig-60.wav", function()
         local tempo = song.patterns[1].tracks[2].lines[1].effect_columns[1]
@@ -390,7 +390,7 @@ local function run()
         local tempo = song.patterns[1].tracks[2].lines[1].effect_columns[1]
         tempo.number_string, tempo.amount_value = "ZT", 120
         parameter(effect, "Retrigger").value_string = "127"
-        parameter(effect, "Retrig Time").value_string = "32"
+        parameter(effect, "Retrig Time").value_string = "MD 32"
       end},
       {"play-retrig-off.wav", function()
         parameter(effect, "Retrigger").value_string = "0"
@@ -414,7 +414,7 @@ local function run()
         note(replacement_source_note, "C-4", 0)
         note(replacement_trigger_note, "C-4", 1)
         parameter(effect, "Record Once").value = 0
-        parameter(effect, "Track Input Level").value_string = "127"
+        parameter(effect, "Main Capture Level").value_string = "127"
         parameter(effect, "Track Input Balance").value_string = "L64"
         parameter(effect, "Sidechain Level").value_string = "0"
       end},
@@ -477,9 +477,9 @@ local function run()
       end},
       {"save-record-once-capture.wav", function()
         -- Finish on a known populated sample and spend Record Once through the
-        -- real Capture Note. The next two renders prove this final latch state.
+        -- real Record Note. The next two renders prove this final latch state.
         clear_notes(); note(source_note, "C-4", 0); note(trigger_note, "C-4", 1)
-        parameter(effect, "Track Input Level").value_string = "127"
+        parameter(effect, "Main Capture Level").value_string = "127"
         parameter(effect, "Track Input Balance").value_string = "L64"
         parameter(effect, "Sidechain Level").value_string = "0"
         parameter(effect, "Sidechain Balance").value_string = "R63"
@@ -508,13 +508,13 @@ local function run()
               report("editor_open_close_cycles=5")
               clear_notes(); note(trigger_note, "D#4", 1)
               capture.value = 0; playback.value = 0; rearm.value = 0
-              parameter(effect, "Capture Note").value_string = "47"
+              parameter(effect, "Record Note").value_string = "47"
               parameter(effect, "Play Note").value_string = "51"
-              parameter(effect, "Track Input Level").value_string = "91"
+              parameter(effect, "Main Capture Level").value_string = "91"
               parameter(effect, "Track Input Balance").value_string = "L32"
               parameter(effect, "Playback Level").value_string = "-3.0 dB"
-              parameter(effect, "Master Mode").value = 0
-              -- The preceding Capture Note spent Record Once; its denied overwrite
+              parameter(effect, "Resample").value = 0
+              -- The preceding Record Note spent Record Once; its denied overwrite
               -- preserved the populated take, and nothing above re-arms it.
               -- A new process restores controls/alias, but not the sample or latch.
               renoise.app():save_song_as(root .. "/ultrawave-host-test.xrns")

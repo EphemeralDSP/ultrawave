@@ -512,21 +512,21 @@ fn assert_wet_with_tolerance(actual: &[f32], expected: &[f32], tolerance: f32, l
 
 unsafe fn configure(plugin: &Plugin) {
     plugin.flush(&[
-        ("Master Mode", "Off"),
-        ("Track Input Level", "127"),
+        ("Resample", "Off"),
+        ("Main Capture Level", "127"),
         ("Track Input Balance", "L64"),
         ("Sidechain Level", "127"),
         ("Sidechain Balance", "R64"),
         ("Capture Length", "INF"),
-        ("Capture Rate", "HI"),
+        ("Capture Rate", "÷1"),
         ("Capture Level", "0 dB"),
         ("Start", "0"),
         ("End", "127"),
         ("Pitch", "+0 st"),
         ("Hold", "OFF"),
         ("Decay", "OFF"),
-        ("Retrigger", "OFF"),
-        ("Retrig Time", "MIN"),
+        ("Retrigger", "1 hit"),
+        ("Retrig Time", "MD 0"),
         ("Playback Level", "0 dB"),
     ]);
 }
@@ -562,10 +562,10 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
     let names = plugin.param_names();
     assert_eq!(names.len(), 27, "single-sample plugin parameter count");
     for name in [
-        "Master Mode",
+        "Resample",
         "Record Once",
-        "Capture Note",
-        "Track Input Level",
+        "Record Note",
+        "Main Capture Level",
         "Track Input Balance",
         "Capture Length",
         "Capture Rate",
@@ -576,7 +576,7 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
         "Buffer",
         "Playback Only",
         "One Shot",
-        "Record Note",
+        "Capture Note",
         "Main Level",
         "Main Balance",
         "Rec Length",
@@ -588,8 +588,8 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
         );
     }
     for (name, expected) in [
-        ("Capture Note", 48.0),
-        ("Track Input Level", 127.0),
+        ("Record Note", 48.0),
+        ("Main Capture Level", 127.0),
         ("Track Input Balance", 64.0),
         ("Capture Length", 48.0),
         ("Capture Rate", 127.0),
@@ -598,7 +598,7 @@ unsafe fn contract_and_sample_only_output(module: &Module) {
     }
     assert_eq!(plugin.value("Record Once"), 0.0);
     assert_eq!(plugin.value("Play Note").round(), 50.0);
-    assert_eq!(plugin.value("Master Mode"), 1.0);
+    assert_eq!(plugin.value("Resample"), 1.0);
     plugin.activate(48000.0, 512);
     let master_l = [0.125, -0.75, 0.0, 0.25, -0.125];
     let master_r = [-0.25, 0.5, 0.75, 0.0, -0.5];
@@ -710,7 +710,7 @@ unsafe fn master_mode_automation_during_capture(module: &Module) {
         &[Event::note(0, 48, 1.0)],
         &tr,
     );
-    plugin.flush(&[("Master Mode", "On")]);
+    plugin.flush(&[("Resample", "On")]);
     plugin.reset();
     let frames = 800;
     let left = vec![0.125; frames];
@@ -722,8 +722,8 @@ unsafe fn master_mode_automation_during_capture(module: &Module) {
         &[
             Event::note(0, 50, 1.0),
             Event::note(0, 48, 1.0),
-            Event::param(73, plugin.param("Master Mode"), 0.0),
-            Event::param(337, plugin.param("Master Mode"), 1.0),
+            Event::param(73, plugin.param("Resample"), 0.0),
+            Event::param(337, plugin.param("Resample"), 1.0),
         ],
         &tr,
     );
@@ -783,7 +783,7 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     };
     let mut plugin = module.create();
     configure(&plugin);
-    plugin.flush(&[("Master Mode", "On"), ("Sidechain Level", "0")]);
+    plugin.flush(&[("Resample", "On"), ("Sidechain Level", "0")]);
     plugin.activate(rate, block as u32);
     let duration = (rate / 4.0) as usize; // Half a beat at 120 BPM.
     let seed: [Vec<f32>; 4] = std::array::from_fn(|channel| {
@@ -805,7 +805,7 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
         ("Sidechain Level", "127"),
         ("Pitch", "+12 st"),
         ("Playback Level", "-6 dB"),
-        ("Playback Distortion", "32"),
+        ("Playback Distortion", "25.2%"),
         ("Bit Reduction", "24"),
     ]);
     plugin.reset();
@@ -854,7 +854,7 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     plugin.flush(&[
         ("Pitch", "+0 st"),
         ("Playback Level", "0 dB"),
-        ("Playback Distortion", "0"),
+        ("Playback Distortion", "0.0%"),
         ("Bit Reduction", "0"),
     ]);
     plugin.reset();
@@ -939,7 +939,7 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     let state = plugin.save();
     let mut restored = module.create();
     restored.load_state(&state);
-    assert_eq!(restored.value("Master Mode"), 1.0);
+    assert_eq!(restored.value("Resample"), 1.0);
     assert_eq!(restored.value("Record Once"), 1.0);
     restored.activate(rate, block as u32);
     assert_eq!(render(&restored, &silent, &[(0, 50, 1.0)]), silent[..2]);
@@ -955,7 +955,7 @@ unsafe fn master_resamples_playback(module: &Module, rate: f64, block: usize) {
     // but does not attenuate the audible master bus or the sample's output.
     plugin.flush(&[
         ("Record Once", "Off"),
-        ("Track Input Level", "0"),
+        ("Main Capture Level", "0"),
         ("Sidechain Level", "0"),
     ]);
     plugin.reset();
@@ -1090,7 +1090,7 @@ unsafe fn exported_tail_contract(module: &Module, rate: f64) {
     plugin.process([&zero; 4], 128, &[], &playing);
     assert_eq!(plugin.tail(), fixed_tail, "{rate} Hz idle after reset");
 
-    plugin.flush(&[("Retrigger", "INF"), ("Retrig Time", "127")]);
+    plugin.flush(&[("Retrigger", "INF"), ("Retrig Time", "MD 127")]);
     plugin.process([&zero[..32]; 4], 32, &[Event::note(0, 50, 1.0)], &playing);
     assert_eq!(plugin.tail(), u32::MAX, "{rate} Hz active playback");
     // The voice has finished its short take, but the next retrigger at 30 BPM
@@ -1098,7 +1098,7 @@ unsafe fn exported_tail_contract(module: &Module, rate: f64) {
     plugin.process([&zero; 4], 128, &[], &playing);
     assert_eq!(plugin.tail(), u32::MAX, "{rate} Hz infinite retrigger wait");
 
-    plugin.flush(&[("Retrigger", "OFF")]);
+    plugin.flush(&[("Retrigger", "1 hit")]);
     plugin.reset();
     plugin.process([&zero; 4], 128, &[Event::note(0, 50, 1.0)], &playing);
     assert_eq!(
@@ -1113,7 +1113,7 @@ unsafe fn exported_tail_contract(module: &Module, rate: f64) {
 unsafe fn reverse_pitch_notes_and_triggers(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
-    plugin.flush(&[("Capture Note", "61"), ("Play Note", "63")]);
+    plugin.flush(&[("Record Note", "61"), ("Play Note", "63")]);
     plugin.activate(48000.0, 64);
     let tr = transport(true, 120.0, 0, false);
     let source = [0.125, -0.25, 0.375, -0.5, 0.625];
@@ -1211,7 +1211,7 @@ unsafe fn capture_control_is_a_rising_edge(module: &Module) {
 unsafe fn record_priority_and_no_feedback(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
-    plugin.flush(&[("Capture Note", "60"), ("Play Note", "60")]);
+    plugin.flush(&[("Record Note", "60"), ("Play Note", "60")]);
     plugin.activate(48000.0, 64);
     let tr = transport(true, 120.0, 0, false);
     let quarter = [0.25; 32];
@@ -1240,7 +1240,7 @@ unsafe fn record_priority_and_no_feedback(module: &Module) {
     // Replace the single sample with silence at an exact nonzero MIDI offset
     // while its old voice is still active. Capture must read host input before
     // output and invalidate the outgoing voice exactly at the trigger frame.
-    plugin.flush(&[("Capture Note", "61")]);
+    plugin.flush(&[("Record Note", "61")]);
     let replacement = plugin.process([&zero; 4], 32, &[Event::note(9, 61, 1.0)], &tr);
     let expected =
         wet.render(std::iter::repeat_n(quantize(0.25), 9).chain(std::iter::repeat_n(0.0, 23)));
@@ -1330,7 +1330,7 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
         &playing,
     );
     plugin.reset();
-    plugin.flush(&[("Retrigger", "2"), ("Retrig Time", "127")]);
+    plugin.flush(&[("Retrigger", "2"), ("Retrig Time", "MD 127")]);
     let output = plugin.process(
         [&vec![0.0; 12001]; 4],
         12001,
@@ -1372,7 +1372,7 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
     let mut last_wet = WetReference::new(48000.0);
     for (setting, hits) in [("126", 156), ("INF", 161)] {
         plugin.reset();
-        plugin.flush(&[("Retrigger", setting), ("Retrig Time", "MIN")]);
+        plugin.flush(&[("Retrigger", setting), ("Retrig Time", "MD 0")]);
         let fast = plugin.process(
             [&vec![0.0; 5600]; 4],
             5600,
@@ -1409,7 +1409,7 @@ unsafe fn state_and_instance_isolation(module: &Module) {
     let mut owner = module.create();
     configure(&owner);
     owner.flush(&[
-        ("Capture Note", "44"),
+        ("Record Note", "44"),
         ("Play Note", "45"),
         ("Record Once", "On"),
     ]);
@@ -1428,7 +1428,7 @@ unsafe fn state_and_instance_isolation(module: &Module) {
 
     let mut isolated = module.create();
     isolated.load_state(&state);
-    assert_eq!(isolated.value("Capture Note").round(), 44.0);
+    assert_eq!(isolated.value("Record Note").round(), 44.0);
     assert_eq!(isolated.value("Play Note").round(), 45.0);
     assert_eq!(isolated.value("Record Once"), 1.0);
     isolated.activate(48000.0, 16);

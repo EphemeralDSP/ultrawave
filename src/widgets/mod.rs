@@ -20,6 +20,26 @@ pub fn parameter_value<P: nice_plug::prelude::Param>(
     param: &P,
     gui: &nice_plug::context::gui::GuiContext,
 ) {
+    parameter_value_with_format(
+        ui,
+        id,
+        param,
+        gui,
+        &|value| param.normalized_value_to_string(value, true),
+        &|text| param.string_to_normalized_value(text),
+    );
+}
+
+/// Contextual units (host sample rate/tempo) use the same editing and host gesture
+/// path as ordinary parameters. Both display and input use the supplied units.
+pub fn parameter_value_with_format<P: nice_plug::prelude::Param>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    param: &P,
+    gui: &nice_plug::context::gui::GuiContext,
+    format: &dyn Fn(f32) -> String,
+    parse: &dyn Fn(&str) -> Option<f32>,
+) {
     let mut state = ui.data(|d| d.get_temp::<ValueEdit>(id)).unwrap_or_default();
     if let Some((before, value)) = state.pending {
         let current = param.unmodulated_normalized_value();
@@ -44,10 +64,17 @@ pub fn parameter_value<P: nice_plug::prelude::Param>(
             state.invalid = false;
         }
         if enter {
-            if let Some(normalized) = param
-                .string_to_normalized_value(&state.text)
-                .filter(|v| v.is_finite())
-            {
+            let current = state
+                .pending
+                .map_or_else(|| param.unmodulated_normalized_value(), |(_, value)| value);
+            // Rounded/contextual readouts must not change a raw value when the
+            // user simply opens it and presses Enter without editing.
+            let parsed = if state.text == format(current) {
+                Some(current)
+            } else {
+                parse(&state.text)
+            };
+            if let Some(normalized) = parsed.filter(|v| v.is_finite()) {
                 let setter = gui.param_setter();
                 let snapped = param.preview_normalized(param.preview_plain(normalized));
                 setter.begin_set_parameter(param);
@@ -70,14 +97,11 @@ pub fn parameter_value<P: nice_plug::prelude::Param>(
             .map(|(_, value)| value)
             .unwrap_or_else(|| param.unmodulated_normalized_value());
         if ui
-            .add(
-                egui::Label::new(param.normalized_value_to_string(normalized, true))
-                    .sense(egui::Sense::click()),
-            )
+            .add(egui::Label::new(format(normalized)).sense(egui::Sense::click()))
             .on_hover_text("Click to type a value. Enter commits; Esc cancels.")
             .clicked()
         {
-            state.text = param.normalized_value_to_string(normalized, false);
+            state.text = format(normalized);
             state.editing = true;
             state.focus = true;
             state.invalid = false;
@@ -162,6 +186,85 @@ mod tests {
             unreachable!()
         }
         fn request_restart(&self) {}
+    }
+
+    #[test]
+    fn contextual_edit_uses_display_units_and_preserves_unchanged_rounded_values() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "test".into(),
+            Arc::new(egui::FontData::from_static(include_bytes!(
+                "../../assets/fonts/DejaVuSans.ttf"
+            ))),
+        );
+        fonts
+            .families
+            .insert(egui::FontFamily::Proportional, vec!["test".into()]);
+        fonts
+            .families
+            .insert(egui::FontFamily::Monospace, vec!["test".into()]);
+        ctx.set_fonts(fonts);
+        let host = Arc::new(Host::default());
+        let gui = GuiContext::new(host.clone());
+        let param = IntParam::new("Rate", 33, IntRange::Linear { min: 0, max: 127 });
+        let id = egui::Id::new("contextual-edit");
+        for (text, expected) in [("4 kHz", Some(33)), ("7 kHz", Some(56)), ("NaN", None)] {
+            host.0.lock().unwrap().clear();
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    id,
+                    ValueEdit {
+                        text: text.into(),
+                        editing: true,
+                        focus: true,
+                        ..Default::default()
+                    },
+                )
+            });
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(240.0, 100.0),
+                    )),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ui| {
+                    parameter_value_with_format(
+                        ui,
+                        id,
+                        &param,
+                        &gui,
+                        &|value| format!("{} kHz", param.preview_plain(value) / 8),
+                        &|text| {
+                            text.trim_end_matches(" kHz")
+                                .parse::<f32>()
+                                .ok()
+                                .map(|value| value * 8.0 / 127.0)
+                        },
+                    );
+                },
+            )
+            .drop_without_applying_deltas();
+            let events = host.0.lock().unwrap();
+            if let Some(expected) = expected {
+                assert_eq!(events.len(), 3);
+                assert_eq!(events[0], None);
+                assert_eq!(param.preview_plain(events[1].unwrap()), expected);
+                assert_eq!(events[2], None);
+                assert_eq!(param.value(), 33, "edits must go through the host");
+            } else {
+                assert!(events.is_empty());
+            }
+        }
     }
 
     #[test]
