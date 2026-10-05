@@ -1,7 +1,7 @@
 # Elektron Machinedrum RAM Machines Reference
 
-> **Note:** Ultrawave adds SRR (sample rate reduction) and DIST (distortion) to both plugins.
-> These effects use code from `ephemeraldsp/Ephemeral` library (pending Rust availability).
+> **Note:** Ultrawave adds SRR (sample rate reduction) and DIST (distortion) to capture and playback.
+> Both effects are implemented locally; the SRR decimator was copied from Ephemeral under MIT.
 
 ---
 

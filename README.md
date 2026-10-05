@@ -144,8 +144,9 @@ Shift-drag for fine changes, and double-click to restore defaults.
 
 ## Build and install
 
-Requires Rust 1.95+ and SSH access to the pinned `EphemeralDSP/ephemeral` DSP
-dependency. Linux development packages are listed in `ci/scripts/deps-linux.sh`.
+Requires Rust 1.95+. No private repository access or SSH credentials are needed
+to build: the DSP used from Ephemeral is included locally with MIT attribution.
+Linux development packages are listed in `ci/scripts/deps-linux.sh`.
 NICE-plug/core 0.4.2 and egui adapter 0.5.1 are pinned. The framework is ISC;
 VST3 bindings are MIT/Apache-2.0. See [vendor patches](vendor/README.md).
 

@@ -19,7 +19,6 @@ path = "src/bin/ultrawave.rs"
 nice-plug = { version = "=0.4.2", features = ["standalone"] }
 nice-plug-egui = "=0.5.1"
 egui = { version = "=0.36.1", default-features = false }
-ephemeral-dsp = { git = "ssh://git@github.com/EphemeralDSP/ephemeral.git", rev = "243d21b7aef5337ea8ff0e30750c01d1fa3af296" }
 
 hound = "3.5"
 

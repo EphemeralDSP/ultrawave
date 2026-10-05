@@ -873,11 +873,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ephemeral-dsp"
-version = "0.1.0"
-source = "git+ssh://git@github.com/EphemeralDSP/ephemeral.git?rev=243d21b7aef5337ea8ff0e30750c01d1fa3af296#243d21b7aef5337ea8ff0e30750c01d1fa3af296"
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2775,7 +2770,6 @@ version = "0.1.0"
 dependencies = [
  "clap-sys",
  "egui",
- "ephemeral-dsp",
  "hound",
  "libloading 0.8.9",
  "nice-plug",

@@ -13,8 +13,8 @@ There is no Intel Mac/universal, AU, standalone executable or installer package.
 
 - Python 3.11+, Git, Rust 1.95+ with rustfmt and Clippy. On nodes with an older
   default Rust, set `RUSTUP_TOOLCHAIN=1.95.0` for the commands below.
-- Access to the pinned private `EphemeralDSP/ephemeral` dependency through the
-  node's existing Git authentication. Do not copy credentials into source archives.
+- No Ephemeral checkout or private dependency credentials are required. The
+  needed DSP source and its MIT attribution are included in Ultrawave.
 - Native toolchains: Linux packages in `ci/scripts/deps-linux.sh` plus Xvfb;
   Xcode command-line tools on Mac; Visual Studio 2022 C++ tools/Windows SDK on
   Windows (use a Developer PowerShell if MSVC isn't discoverable).
