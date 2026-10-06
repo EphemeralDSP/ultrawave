@@ -64,7 +64,7 @@ Inspect empty/loaded screenshots and changed interactive states, including MIDI
 dropdown selection/scrolling, capture details and protected/re-arm feedback.
 A screenshot file alone is not verification. The Renoise fixture uses a disposable HOME/display
 and the unified bundle to test actual FX-alias notes, audio routing and project
-save/reopen. See the [README](../../README.md#actual-renoise-regression) for
+save/reopen. See [Contributing](../../CONTRIBUTING.md#actual-renoise-regression) for
 requirements, safety and artifact paths. Do not overwrite plugins loaded by a
 personal DAW session.
 

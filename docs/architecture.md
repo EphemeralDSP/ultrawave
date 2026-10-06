@@ -79,7 +79,7 @@ or Re-arm is not a new rising edge. MIDI and UI triggers remain independent.
 The standalone alone may preload a fixture WAV for screenshots. Hosted effects
 ignore that environment variable. Renoise's FX alias and Live MIDI-to-effect
 routing address the same effect instance, not a second memory owner; there is
-no implicit host-master tap. See [README](../README.md) for routing and semantics.
+no implicit host-master tap. See the [user guide](manual.md) for routing and semantics.
 
 ## Executable checks
 
