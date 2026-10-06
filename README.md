@@ -1,15 +1,17 @@
-![Ultrawave: one waveform, Record and Play, and a handful of ways to mess with a sample](screenshots/ultrawave.png)
+![Ultrawave's recording and playback controls](screenshots/ultrawave.png)
 
 # Ultrawave
 
-**Grab a loop. Make a mess. Sample it again.**
+Ultrawave is a free, open-source audio effect for **real-time sampling**, inspired
+by the RAM machines of the Elektron Machinedrum UW.
 
-Ultrawave is a free, open-source **12-bit sampling effect** inspired by the
-Elektron Machinedrum UW. Catch a phrase from your track, twist it into something
-else, then record the result back into itself.
+**Sequence both recording and playback** from your DAW using MIDI notes or
+automation. Capture audio while the music is running, then trigger and rearrange
+the captured sound as part of the same sequence.
 
-One instance. One mono sample. No sample library to organize—just whatever is
-playing right now.
+Each instance records one mono sample in 12-bit resolution. Sample a track, a
+bus or the master output, or resample the processed playback into a new take
+without stopping the music.
 
 **[Releases & downloads](https://github.com/EphemeralDSP/ultrawave/releases)** ·
 [User guide](docs/manual.md) ·
@@ -32,43 +34,44 @@ Mac builds are ad-hoc signed, not notarized; Windows builds are unsigned.
 Your OS may show a trust prompt. Linux compatibility depends on the build's
 glibc version; see the installation guide.
 
-## Small sampler, bad habits
+## Sampling and playback
 
-- **Catch it live.** Record a drum bus, a synth phrase or your whole mix. Capture
-  a beat, a bar, or up to ten seconds, depending on sample rate.
-- **Give it some grit.** Start with 12-bit capture, then push rate crush, bit
-  crush and drive. Recording and playback have their own processing.
-- **Find the good bit.** Trim with the waveform handles, pitch it down, or cross
-  Start and End to play the slice backward.
-- **Make it stutter.** Turn a one-shot into a roll with Hits and Interval, all
-  the way to an infinite retrigger train.
-- **Go around again.** Resample the processed take along with incoming audio.
+- **Separate record and play triggers.** Place recording and playback notes in
+  your DAW's sequence, or use automation. Recording becomes part of the pattern,
+  rather than a separate preparation step.
+- **Timed capture.** Record from the main input or sidechain for a beat-based
+  duration, or fill the available RAM—up to ten seconds, depending on sample rate.
+- **Resampling.** Record the processed sample playback along with incoming audio.
   The old take stays playable until the new one is ready.
-- **Play it like an effect.** Use the buttons, MIDI notes or DAW automation.
-  No second plugin or sampler instrument needed.
+- **Sample manipulation.** Change pitch, select a region with Start and End, or
+  cross the markers for reverse playback. Hits and Interval control repeated
+  playback, including infinite retriggering.
+- **12-bit sound.** Recording and playback have independent rate crush and drive.
+  Playback bit crush reduces the resolution further, down to 2 bits.
 
-This is **UW-inspired, not a bit-exact Machinedrum emulation**. The aim is that
-immediate capture–mangle–resample workflow, with its own rough edges and happy
-accidents. [More on the sound](docs/manual.md#capacity-and-sound).
+Ultrawave follows the UW's approach to live sampling, but is **not a bit-exact
+Machinedrum emulation**. [More on the sound](docs/manual.md#capacity-and-sound).
 
-## Your first loop
+## Sequence a recording
 
 1. Put Ultrawave on an **audio track or bus**—it's an effect, not an instrument.
-2. Play some audio and press **Record**. The default capture length is **1 bar**.
-3. When recording finishes, press **Play**. Try lowering Pitch or crossing the
-   waveform's Start and End handles.
-4. Leave **Resample** selected and hit Record while the sample plays to capture
-   another generation. Press Play again when the new take is ready.
+   Route MIDI to that same effect instance.
+2. Leave the capture length at **1 bar**. Place MIDI note **48** at the start of
+   a bar to record the audio passing through the effect.
+3. Place MIDI note **50** at the start of the following bar to play the recording.
+   Add more Play notes to retrigger it at different points in the pattern.
+4. Automate Pitch, Start and End to vary the playback. With **Resample** selected,
+   another Record note can capture the processed playback along with the input.
 
-Looping a pattern? Enable **Record once** to protect the take. **Re-arm** lets
-the next Record trigger replace it. Start quietly: drive and resampling can get
-loud.
+Enable **Record once** to keep the first take when the pattern loops. Leave it
+off to capture new audio on each Record trigger. **Re-arm** allows another take
+when protected. Start quietly: drive and resampling can get loud.
 
-MIDI note **48** records; **50** plays. In Renoise, use an
-[FX alias](docs/manual.md#renoise-use-an-fx-alias) to send notes to the effect.
+In Renoise, use an [FX alias](docs/manual.md#renoise-use-an-fx-alias) to send
+notes to the effect. You can also use the Record/Play buttons or host automation.
 See the guide for [other hosts and sidechains](docs/manual.md#midi-and-daw-routing).
 
-**Print the happy accidents.** Projects save controls, **not recorded audio**.
+**Recorded audio is temporary.** Projects save controls, **not recorded audio**.
 RAM starts empty when you reopen a project. Record or render Ultrawave's output
 in your DAW before closing if you want to keep the take.
 
