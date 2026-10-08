@@ -83,8 +83,12 @@ target/release/ultrawave play --input target/capture.wav --output target/retrig.
 ```
 
 WAV tools require 44.1 kHz input. Integer synthesis controls range 0–127; pitch
-64 is unity, 52/76 one octave down/up. SRR ranges 0–0.9629. `--output-secs` bounds
-even infinite retrigger renders. Start quietly: drive raises loudness.
+64 is unity, 52/76 one octave down/up. SRR ranges 0–0.9629. By default, playback
+renders the finite retrigger train plus one pitch-adjusted retained take and a
+one-second settling tail. Only the first ten seconds of input fit in RAM.
+`--output-secs` sets a hard render limit and is required for infinite retriggers
+(`--retrigger 127`). Render duration must be in (0, 600] seconds.
+Start quietly: drive raises loudness.
 
 For live standalone audio/MIDI device options, use `target/release/ultrawave --help`.
 On Linux JACK/PipeWire, connect source audio and MIDI through your patchbay.

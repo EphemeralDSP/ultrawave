@@ -1,6 +1,8 @@
 use crate::dsp::effects::DcBlocker;
 use crate::machines::memory::SampleMemory;
-use crate::machines::ram_play::{RamPlay, RamPlayParams};
+use crate::machines::ram_play::{
+    retrig_interval_seconds, retrig_total_hits, RamPlay, RamPlayParams,
+};
 use crate::machines::ram_record::{RamRecord, RamRecordParams};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -173,17 +175,29 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
         ));
     }
 
-    let input_duration_secs = samples.len() as f64 / SAMPLE_RATE as f64;
-    let output_secs = config.output_secs.unwrap_or(
-        input_duration_secs / crate::dsp::sample_engine::pitch_to_ratio(config.params.pitch) + 1.0,
-    );
+    let memory = Arc::new(SampleMemory::new());
+    memory.replace_buffer(samples);
+    let output_secs = match config.output_secs {
+        Some(seconds) => seconds,
+        None => {
+            let hits = retrig_total_hits(config.params.rtrg)
+                .ok_or("infinite retriggers require an explicit --output-secs")?;
+            let repeat_duration = if hits > 1 {
+                (hits - 1) as f64 * retrig_interval_seconds(config.params.rtim, config.tempo_bpm)
+            } else {
+                0.0
+            };
+            let sample_duration = memory.buffer_len() as f64
+                / SAMPLE_RATE as f64
+                / crate::dsp::sample_engine::pitch_to_ratio(config.params.pitch);
+            repeat_duration + sample_duration + 1.0
+        }
+    };
     if !output_secs.is_finite() || output_secs <= 0.0 || output_secs > 600.0 {
         return Err("output duration must be finite and in (0, 600] seconds".into());
     }
     let output_samples = (output_secs * SAMPLE_RATE as f64) as usize;
 
-    let memory = Arc::new(SampleMemory::new());
-    memory.replace_buffer(samples);
     let mut player = RamPlay::new(SAMPLE_RATE_F, memory);
     player.set_tempo(config.tempo_bpm);
     player.trigger(&config.params);

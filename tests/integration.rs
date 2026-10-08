@@ -2,6 +2,143 @@
 mod wet_reference;
 
 #[test]
+fn offline_duration_covers_finite_trains_and_requires_a_bound_for_infinite_trains() {
+    use std::process::Command;
+    let dir = std::env::temp_dir().join(format!("ultrawave-duration-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("pulse.wav");
+    let output = dir.join("render.wav");
+    let mut writer = hound::WavWriter::create(
+        &input,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    writer.write_sample(8192i16).unwrap();
+    writer.finalize().unwrap();
+    let render = |options: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ultrawave"))
+            .arg("play")
+            .arg("--input")
+            .arg(&input)
+            .arg("--output")
+            .arg(&output)
+            .args(options)
+            .output()
+            .unwrap()
+    };
+    // RTIM 127 is a sixteenth note. Raw 96 means 104 hits, not 96.
+    for (raw, tempo, total, interval, explicit) in [
+        ("12", "120", 12, 5512.5, false),
+        ("96", "300", 104, 2205.0, false),
+        ("127", "120", 8, 5512.5, true),
+    ] {
+        let mut options = vec!["--retrigger", raw, "--retrig-time", "127", "--tempo", tempo];
+        if explicit {
+            options.extend(["--output-secs", "1"]);
+        }
+        let result = render(&options);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let samples: Vec<_> = hound::WavReader::open(&output)
+            .unwrap()
+            .into_samples::<f32>()
+            .map(Result::unwrap)
+            .collect();
+        let starts: Vec<_> = (0..total)
+            .map(|hit| (hit as f64 * interval).round() as usize)
+            .collect();
+        let last = *starts.last().unwrap();
+        assert!(
+            samples.len() > last,
+            "raw {raw}: render cut off the last hit at {last}, length {}",
+            samples.len()
+        );
+        if explicit {
+            assert_eq!(samples.len(), 44100, "explicit bounds remain exact");
+        } else {
+            let expected_frames = last + 1 + 44100; // Final one-frame hit plus the existing one-second tail.
+            assert!((samples.len() as isize - expected_frames as isize).abs() <= 1);
+        }
+        let mut expected = vec![0.0; samples.len()];
+        for start in starts {
+            expected[start] = 0.25;
+        }
+        for (actual, expected) in samples
+            .into_iter()
+            .zip(wet_reference::wet_reference(expected))
+        {
+            assert!((actual - expected).abs() < 2e-6);
+        }
+    }
+    let previous = std::fs::read(&output).unwrap();
+    let result = render(&["--retrigger", "127"]);
+    assert!(
+        !result.status.success(),
+        "infinite repeats need an explicit render duration"
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("--output-secs"));
+    assert_eq!(
+        std::fs::read(&output).unwrap(),
+        previous,
+        "invalid render must not overwrite output"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn offline_default_duration_uses_retained_ram_not_the_discarded_file_tail() {
+    use ultrawave::machines::ram_play::RamPlayParams;
+    use ultrawave::offline::{run_offline_play, PlayConfig};
+    let dir =
+        std::env::temp_dir().join(format!("ultrawave-retained-length-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("long.wav");
+    let output = dir.join("render.wav");
+    let mut writer = hound::WavWriter::create(
+        &input,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    // Eleven seconds in the file, but only ten fit in RAM at this rate.
+    for _ in 0..485100 {
+        writer.write_sample(8192i16).unwrap();
+    }
+    writer.finalize().unwrap();
+    run_offline_play(&PlayConfig {
+        input,
+        output: output.clone(),
+        output_secs: None,
+        tempo_bpm: 120.0,
+        params: RamPlayParams {
+            vol: 127,
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let reader = hound::WavReader::open(&output).unwrap();
+    assert_eq!(
+        reader.duration(),
+        485100,
+        "ten-second take plus one-second tail"
+    );
+    drop(reader);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn offline_binaries_preserve_wav_levels_and_render_distinct_character() {
     use std::process::Command;
     let dir = std::env::temp_dir().join(format!("ultrawave-cli-{}", std::process::id()));
