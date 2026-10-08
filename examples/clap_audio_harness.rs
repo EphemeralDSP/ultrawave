@@ -1258,6 +1258,169 @@ unsafe fn capture_control_is_a_rising_edge(module: &Module) {
     );
 }
 
+unsafe fn rate_reactivation_preserves_the_protected_take(module: &Module) {
+    for resample in ["Off", "On"] {
+        for (record_rate, play_rate, expected) in [
+            (
+                48000.0,
+                96000.0,
+                vec![0.25, 0.0625, -0.125, 0.1875, 0.5, 0.125, -0.25, -0.25],
+            ),
+            (96000.0, 48000.0, vec![0.25, 0.5]),
+        ] {
+            let mut plugin = module.create();
+            configure(&plugin);
+            plugin.flush(&[("Resample", resample), ("Record Once", "On")]);
+            plugin.activate(record_rate, 64);
+            let tr = transport(true, 120.0, 0, false);
+            let source = [0.25, -0.125, 0.5, -0.25];
+            let zero = [0.0; 16];
+            plugin.process(
+                [&source, &zero[..4], &zero[..4], &zero[..4]],
+                4,
+                &[Event::note(0, 48, 1.0)],
+                &tr,
+            );
+            // Deactivate mid-capture, then reactivate at another host rate.
+            // The prefix must keep its original source rate and protection.
+            plugin.stop();
+            plugin.activate(play_rate, 64);
+            assert_eq!(
+                plugin.process([&zero; 4], 16, &[], &tr),
+                [zero.to_vec(), zero.to_vec()]
+            );
+            let output = plugin.process(
+                [&zero; 4],
+                16,
+                &[Event::note(0, 48, 1.0), Event::note(0, 50, 1.0)],
+                &tr,
+            );
+            let expected = WetReference::new(play_rate)
+                .render(expected.into_iter().chain(std::iter::repeat(0.0)).take(16));
+            assert_wet(
+                &output[0],
+                &expected,
+                &format!("reactivation {record_rate}->{play_rate}, Resample={resample}"),
+            );
+            assert_eq!(output[0], output[1]);
+        }
+    }
+}
+
+unsafe fn action_timeline_is_independent_of_host_block_size(module: &Module, rate: f64) {
+    for resample in ["Off", "On"] {
+        let mut reference: Option<[Vec<f32>; 2]> = None;
+        for block in [1, 17, 64, 257, 1025] {
+            let mut plugin = module.create();
+            configure(&plugin);
+            plugin.flush(&[("Resample", resample)]);
+            plugin.activate(rate, 2048);
+            // Compress the musical clock to fit take endings between these
+            // events: half a beat is 240 frames at each tested sample rate.
+            let tr = transport(true, rate / 8.0, 0, false);
+            let seed: Vec<_> = (0..256)
+                .map(|i| ((i * 37 % 701) as f32 - 350.0) / 2048.0)
+                .collect();
+            let zero = vec![0.0; 256];
+            plugin.process(
+                [&seed, &zero, &zero, &zero],
+                256,
+                &[Event::note(0, 48, 1.0)],
+                &tr,
+            );
+            plugin.reset();
+            plugin.flush(&[("Capture Length", "0"), ("Record Once", "On")]);
+            let param = |at, name, text| {
+                Event::param(at, plugin.param(name), plugin.text_value(name, text))
+            };
+            let events = [
+                Event::note(3, 50, 0.75),
+                Event::note(31, 48, 1.0),
+                param(79, "Re-arm", "On"),
+                param(113, "Playback Level", "-6 dB"),
+                param(131, "Record Once", "Off"),
+                Event::note(157, 48, 1.0),
+                param(173, "Record Once", "On"),
+                param(239, "Re-arm", "Off"),
+                Event::note(251, 48, 1.0),
+                param(303, "Re-arm", "On"),
+                Event::note(421, 48, 1.0),
+                param(447, "Re-arm", "Off"),
+                param(449, "Re-arm", "On"),
+                Event::note(463, 48, 1.0),
+                param(495, "Resample", if resample == "On" { "Off" } else { "On" }),
+                param(521, "Main Capture Level", "64"),
+                Event::note(575, 50, 0.5),
+                param(607, "Pitch", "-12 st"),
+                param(639, "End", "0"),
+                param(655, "Start", "127"),
+                Event::note(671, 50, 1.0),
+                param(703, "Capture", "On"),
+                param(769, "Record Once", "Off"),
+                Event::note(787, 48, 1.0),
+                param(863, "Playback", "On"),
+                param(900, "End", "127"),
+                Event::note(939, 50, 1.0),
+            ];
+            let input: [Vec<f32>; 4] = std::array::from_fn(|channel| {
+                (0..1025)
+                    .map(|i| ((i * 29 + channel * 97) % 1024) as f32 / 2048.0 - 0.25)
+                    .collect()
+            });
+            let mut rendered = [Vec::new(), Vec::new()];
+            for start in (0..1025).step_by(block) {
+                let end = (start + block).min(1025);
+                let events: Vec<_> = events
+                    .iter()
+                    .filter(|event| (start..end).contains(&((*event.header()).time as usize)))
+                    .map(|event| match event {
+                        Event::Param(value) => {
+                            let mut value = *value;
+                            value.header.time -= start as u32;
+                            Event::Param(value)
+                        }
+                        Event::Note(note) => {
+                            let mut note = *note;
+                            note.header.time -= start as u32;
+                            Event::Note(note)
+                        }
+                    })
+                    .collect();
+                let output = plugin.process(
+                    input.each_ref().map(|x| &x[start..end]),
+                    end - start,
+                    &events,
+                    &tr,
+                );
+                for (rendered, output) in rendered.iter_mut().zip(output) {
+                    rendered.extend(output);
+                }
+            }
+            // Also compare the resulting take, not just sound during the commands.
+            plugin.reset();
+            plugin.flush(&[("Start", "0"), ("End", "127"), ("Pitch", "+0 st")]);
+            let take = plugin.process([&zero; 4], 256, &[Event::note(0, 50, 1.0)], &tr);
+            for (rendered, output) in rendered.iter_mut().zip(take) {
+                rendered.extend(output);
+            }
+            assert!(rendered[0].iter().any(|sample| sample.abs() > 0.01));
+            if let Some(reference) = &reference {
+                for (actual, expected) in rendered.iter().zip(reference) {
+                    assert_wet(
+                        actual,
+                        expected,
+                        &format!(
+                            "block invariance: rate={rate}, Resample={resample}, block={block}"
+                        ),
+                    );
+                }
+            } else {
+                reference = Some(rendered);
+            }
+        }
+    }
+}
+
 unsafe fn record_priority_and_no_feedback(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
@@ -1638,6 +1801,7 @@ fn main() {
         for rate in [44100.0, 48000.0, 96000.0] {
             exported_tail_contract(&module, rate);
             wet_dc_response(&module, rate);
+            action_timeline_is_independent_of_host_block_size(&module, rate);
         }
         contract_and_sample_only_output(&module);
         master_mode_automation_during_capture(&module);
@@ -1648,6 +1812,7 @@ fn main() {
         reverse_pitch_notes_and_triggers(&module);
         end_automation_preserves_retrigger_direction(&module);
         capture_control_is_a_rising_edge(&module);
+        rate_reactivation_preserves_the_protected_take(&module);
         record_priority_and_no_feedback(&module);
         one_shot_rearm_and_invalidation(&module);
         retrigger_tempo_transport_and_reset(&module);
@@ -1656,7 +1821,7 @@ fn main() {
         restored_and_reset_commands_need_new_edges(&module);
         assert!(started.elapsed() < Duration::from_secs(20));
         println!(
-            "CLAP audio harness ok: master self-resampling + sample-only; one sample; 27 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM ({:.2?})",
+            "CLAP audio harness ok: master self-resampling + sample-only; one sample; 27 params; rates=44.1/48/96k; routing, offsets, automation, replacement, retrigger, Record Once, volatile RAM, block partitioning, rate reactivation ({:.2?})",
             started.elapsed()
         );
     }
