@@ -17,7 +17,7 @@ use std::time::Duration;
 use super::UiState;
 use crate::machines::memory::SampleMemory;
 use crate::machines::ram_play::retrig_interval_seconds;
-use crate::machines::ram_record::{capture_duration, capture_rate_divisor, rec_len_to_beats};
+use crate::machines::ram_record::{capture_length, capture_rate_divisor, rec_len_to_beats};
 use crate::params::UltrawaveParams;
 use crate::widgets::{
     parameter_value, parameter_value_with_format, rotary_knob, waveform, WaveformCache,
@@ -334,6 +334,9 @@ impl UltrawaveEditorApp {
         let p = &self.params.record;
         let master_mode = self.params.master_mode.unmodulated_plain_value();
         let recording = self.ui_state.recording.load(Ordering::Relaxed);
+        let tempo = self.ui_state.tempo();
+        let sample_rate = self.ui_state.sample_rate();
+        let rec_rate = p.rec_rate.unmodulated_plain_value();
         let once = p.one_shot.unmodulated_plain_value();
         let locked = once && self.ui_state.capture_locked.load(Ordering::Relaxed);
         ui.label(RichText::new("Record").color(CAPTURE).strong());
@@ -349,7 +352,7 @@ The previous take remains playable while recording."
                 self.ui_state.record_trigger.store(true, Ordering::Relaxed);
             }
             int_choice(ui, &p.rec_len, gui, 120.0, [0, 16, 32, 48, 64, 80, 96, 112]
-                .into_iter().map(|value| (value, duration_choice(value, self.ui_state.tempo()))));
+                .into_iter().map(|value| (value, duration_choice(value, tempo, rec_rate, sample_rate))));
         });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -386,7 +389,13 @@ The previous take remains playable while recording."
             ui.label(
                 RichText::new(format!(
                     "{:.2} s",
-                    capture_duration(p.rec_len.unmodulated_plain_value(), self.ui_state.tempo())
+                    capture_length(
+                        p.rec_len.unmodulated_plain_value(),
+                        tempo,
+                        rec_rate,
+                        sample_rate
+                    ) as f64
+                        / sample_rate as f64
                 ))
                 .small()
                 .weak(),
@@ -651,7 +660,10 @@ fn knob_column<P: Param>(
     );
 }
 
-fn duration_choice(value: i32, tempo: f64) -> String {
+fn duration_choice(value: i32, tempo: f64, rec_rate: i32, sample_rate: f32) -> String {
+    let frames = capture_length(value, tempo, rec_rate, sample_rate);
+    let seconds = format!("{:.2}", frames as f64 / sample_rate as f64);
+    let seconds = seconds.trim_end_matches('0').trim_end_matches('.');
     let label = match value {
         0..=15 => "1/2 beat",
         16..=31 => "1 beat",
@@ -660,11 +672,12 @@ fn duration_choice(value: i32, tempo: f64) -> String {
         64..=79 => "2 bars",
         80..=95 => "4 bars",
         96..=111 => "8 bars",
-        _ => return format!("{:.0} s max", capture_duration(value, tempo)),
+        _ => return format!("{seconds} s max"),
     };
-    let seconds = capture_duration(value, tempo);
-    if rec_len_to_beats(value).unwrap() * 60.0 / tempo > seconds {
-        format!("{label} → {seconds:.0} s")
+    let requested_frames =
+        (rec_len_to_beats(value).unwrap() * (60.0 / tempo) * sample_rate as f64) as usize;
+    if requested_frames > frames {
+        format!("{label} → {seconds} s")
     } else {
         label.into()
     }
@@ -727,13 +740,19 @@ mod tests {
 
     #[test]
     fn duration_choices_show_the_effective_cap_at_host_tempo() {
-        assert_eq!(duration_choice(96, 120.0), "8 bars → 10 s");
-        assert_eq!(duration_choice(96, 240.0), "8 bars");
-        assert_eq!(duration_choice(80, 60.0), "4 bars → 10 s");
-        assert_eq!(duration_choice(80, 96.0), "4 bars");
-        assert_eq!(duration_choice(80, 95.0), "4 bars → 10 s");
-        assert_eq!(duration_choice(112, 240.0), "10 s max");
-        assert_eq!(capture_duration(48, 90.0), 8.0 / 3.0);
+        assert_eq!(duration_choice(96, 120.0, 127, 44_100.0), "8 bars → 10 s");
+        assert_eq!(duration_choice(96, 240.0, 127, 44_100.0), "8 bars");
+        assert_eq!(duration_choice(80, 60.0, 127, 44_100.0), "4 bars → 10 s");
+        assert_eq!(duration_choice(80, 96.0, 127, 44_100.0), "4 bars");
+        assert_eq!(duration_choice(80, 95.0, 127, 44_100.0), "4 bars → 10 s");
+        assert_eq!(duration_choice(112, 240.0, 127, 44_100.0), "10 s max");
+        assert_eq!(duration_choice(96, 240.0, 127, 96_000.0), "8 bars → 4.59 s");
+        assert_eq!(duration_choice(112, 120.0, 127, 96_000.0), "4.59 s max");
+        assert_eq!(duration_choice(112, 120.0, 126, 96_000.0), "9.19 s max");
+        assert_eq!(duration_choice(112, 120.0, 0, 96_000.0), "10 s max");
+        // Rounding a beat duration down to whole frames is not a capacity cap.
+        assert_eq!(duration_choice(48, 137.0, 127, 96_000.0), "1 bar");
+        assert_eq!(capture_length(48, 90.0, 127, 44_100.0), 117_600);
     }
 
     #[test]

@@ -188,7 +188,10 @@ impl Plugin for UltrawavePlugin {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let transport = context.transport();
-        let tempo = transport.tempo.unwrap_or(120.0);
+        let tempo = transport
+            .tempo
+            .filter(|tempo| tempo.is_finite() && *tempo > 0.0)
+            .unwrap_or(120.0);
         self.ui.tempo.store(tempo.to_bits(), Ordering::Relaxed);
         self.player.set_tempo(tempo);
         if self.transport_was_playing && !transport.playing {

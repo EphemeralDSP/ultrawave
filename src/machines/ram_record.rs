@@ -59,12 +59,17 @@ pub fn rec_len_to_beats(rec_len: i32) -> Option<f64> {
     }
 }
 
-/// Effective duration, shared with the editor so capped beat choices are honest.
-pub fn capture_duration(rec_len: i32, tempo_bpm: f64) -> f64 {
-    rec_len_to_beats(rec_len)
+/// Host-frame limit, shared with the editor. Reduced-rate samples are written
+/// every ceil(divisor) frames, and both the time and RAM limits still apply.
+pub fn capture_length(rec_len: i32, tempo_bpm: f64, rec_rate: i32, sample_rate: f32) -> usize {
+    let seconds = rec_len_to_beats(rec_len)
         .map(|beats| beats * (60.0 / tempo_bpm))
         .unwrap_or(RamRecord::MAX_RECORD_SECONDS as f64)
-        .min(RamRecord::MAX_RECORD_SECONDS as f64)
+        .min(RamRecord::MAX_RECORD_SECONDS as f64);
+    let capacity = MAX_BUFFER_SAMPLES * capture_rate_divisor(rec_rate).ceil() as usize;
+    ((seconds * sample_rate as f64) as usize)
+        .min(capacity)
+        .max(1)
 }
 
 /// Integer-frame sampling makes the effective divisor the ceiling of this value.
@@ -75,7 +80,6 @@ pub fn capture_rate_divisor(rec_rate: i32) -> f32 {
 pub struct RamRecord {
     memory: Arc<SampleMemory>,
     sample_rate: f32,
-    max_length: usize,
     target_length: usize,
     samples_recorded: usize,
     elapsed_samples: usize,
@@ -89,11 +93,9 @@ impl RamRecord {
     const MAX_RECORD_SECONDS: f32 = 10.0;
 
     pub fn new(sample_rate: f32, memory: Arc<SampleMemory>) -> Self {
-        let max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
         Self {
             memory,
             sample_rate,
-            max_length,
             target_length: MAX_BUFFER_SAMPLES,
             samples_recorded: 0,
             elapsed_samples: 0,
@@ -106,8 +108,9 @@ impl RamRecord {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
-        self.max_length = (sample_rate * Self::MAX_RECORD_SECONDS) as usize;
-        self.target_length = self.target_length.min(self.max_length);
+        self.target_length = self
+            .target_length
+            .min((sample_rate * Self::MAX_RECORD_SECONDS) as usize);
     }
 
     /// Starts a new capture, replacing the previous sample.
@@ -123,9 +126,12 @@ impl RamRecord {
 
     fn start(&mut self, params: &RamRecordParams, staging: bool) {
         self.stop_recording();
-        let target_length =
-            (capture_duration(params.rec_len, params.tempo_bpm) * self.sample_rate as f64) as usize;
-        self.target_length = target_length.min(self.max_length).max(1);
+        self.target_length = capture_length(
+            params.rec_len,
+            params.tempo_bpm,
+            params.rec_rate,
+            self.sample_rate,
+        );
         self.samples_recorded = 0;
         self.elapsed_samples = 0;
 
@@ -274,6 +280,39 @@ mod tests {
         }
         assert_eq!(recorder.target_length(), 200);
         assert_eq!(memory.buffer_len(), 200);
+    }
+
+    #[test]
+    fn capture_target_matches_time_or_ram_limit_at_the_selected_storage_rate() {
+        for (rate, rec_rate, rec_len, frames, stored) in [
+            (96_000.0, 127, 127, 441_000, 441_000),
+            (96_000.0, 126, 127, 882_000, 441_000),
+            (96_000.0, 0, 127, 960_000, 60_000),
+            (44_100.0, 127, 127, 441_000, 441_000),
+            (96_000.0, 127, 48, 192_000, 192_000),
+        ] {
+            let memory = Arc::new(SampleMemory::new());
+            let mut recorder = RamRecord::new(rate, memory.clone());
+            recorder.start_recording(&RamRecordParams {
+                rec_rate,
+                rec_len,
+                ..basic_params()
+            });
+            assert_eq!(
+                recorder.target_length(),
+                frames,
+                "rate={rate}, rec_rate={rec_rate}"
+            );
+            for _ in 0..frames - 1 {
+                recorder.record_mono(0.25);
+            }
+            assert!(recorder.is_recording());
+            assert_eq!(recorder.samples_remaining(), 1);
+            recorder.record_mono(0.25);
+            assert!(!recorder.is_recording());
+            assert_eq!(recorder.samples_remaining(), 0);
+            assert_eq!(memory.buffer_len(), stored);
+        }
     }
 
     #[test]

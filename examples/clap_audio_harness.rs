@@ -1405,6 +1405,54 @@ unsafe fn retrigger_tempo_transport_and_reset(module: &Module) {
     assert_eq!(stopped[0], stopped[1]);
 }
 
+unsafe fn capture_uses_the_same_tempo_fallback_as_playback(module: &Module) {
+    for tempo in [
+        Some(120.0),
+        None,
+        Some(0.0),
+        Some(-30.0),
+        Some(f64::NAN),
+        Some(f64::INFINITY),
+        Some(75.0),
+    ] {
+        let mut plugin = module.create();
+        configure(&plugin);
+        plugin.flush(&[("Capture Length", "0")]); // Half a beat.
+        plugin.activate(48_000.0, 32768);
+        let mut tr = transport(true, tempo.unwrap_or(0.0), 0, false);
+        if tempo.is_none() {
+            tr.flags &= !CLAP_TRANSPORT_HAS_TEMPO;
+        }
+        // Independently calculated: 0.25 s at 120 BPM, 0.4 s at 75 BPM.
+        let captured = if tempo == Some(75.0) { 19_200 } else { 12_000 };
+        let frames = captured + 31;
+        let input: Vec<_> = (0..frames)
+            .map(|i| ((i % 17) as f32 - 8.0) / 32.0)
+            .collect();
+        let silence = vec![0.0; frames];
+        plugin.process(
+            [&input, &silence, &silence, &silence],
+            frames,
+            &[Event::note(0, 48, 1.0)],
+            &tr,
+        );
+        plugin.reset();
+        let output = plugin.process([&silence; 4], frames, &[Event::note(0, 50, 1.0)], &tr);
+        let expected = WetReference::new(48_000.0).render(
+            input[..captured]
+                .iter()
+                .copied()
+                .chain(std::iter::repeat_n(0.0, 31)),
+        );
+        assert_wet(
+            &output[0],
+            &expected,
+            &format!("capture duration with tempo {tempo:?}"),
+        );
+        assert_eq!(output[0], output[1]);
+    }
+}
+
 unsafe fn state_and_instance_isolation(module: &Module) {
     let mut owner = module.create();
     configure(&owner);
@@ -1552,6 +1600,7 @@ fn main() {
         record_priority_and_no_feedback(&module);
         one_shot_rearm_and_invalidation(&module);
         retrigger_tempo_transport_and_reset(&module);
+        capture_uses_the_same_tempo_fallback_as_playback(&module);
         state_and_instance_isolation(&module);
         restored_and_reset_commands_need_new_edges(&module);
         assert!(started.elapsed() < Duration::from_secs(20));

@@ -186,9 +186,10 @@ The Record panel shows Ready/Recording/Protected status, recording progress,
 elapsed/total time and Gain. Re-arm appears only after a protected take finishes.
 Inputs and Record FX open in popovers.
 
-Beat-based durations show a 10-second cap when needed, with effective seconds
-beside the status. Actual timing is latched when recording starts, so a later
-tempo or duration change does not retime that capture.
+Beat-based durations show the effective cap when needed: ten seconds or the
+available RAM at the selected sample rate, whichever is shorter. Effective
+seconds also appear beside the status. Actual timing is latched when recording
+starts, so a later tempo, duration or capture-rate change does not retime that take.
 
 Record FX sample rate is shown in kHz and accepts kHz or Hz. Generic host-facing
 Capture Rate text remains the divisor **÷1…÷16**. Source, drive and rate-crush

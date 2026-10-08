@@ -22,6 +22,7 @@ fn parse_f32_clamped(string: &str, min: f32, max: f32) -> Option<f32> {
         .trim()
         .parse::<f32>()
         .ok()
+        .filter(|value| value.is_finite())
         .map(|value| clamp_f32(value, min, max))
 }
 
@@ -503,6 +504,47 @@ mod tests {
         assert_eq!(parse_0_127("999"), Some(127));
         assert_eq!(parse_level_db("-999 dB"), Some(-60.0));
         assert_eq!(parse_level_db("999 dB"), Some(12.0));
+    }
+
+    #[test]
+    fn parameter_text_rejects_nonfinite_values_before_clamping_or_integer_conversion() {
+        let params = UltrawaveParams::default();
+        for text in ["NaN", "inf", "-inf", "1e999"] {
+            for (name, value) in [
+                (
+                    "Pitch",
+                    params
+                        .play
+                        .pitch
+                        .string_to_normalized_value(&format!("{text} st")),
+                ),
+                (
+                    "Hold",
+                    params
+                        .play
+                        .hold
+                        .string_to_normalized_value(&format!("{text} ms")),
+                ),
+                (
+                    "Decay",
+                    params
+                        .play
+                        .dec
+                        .string_to_normalized_value(&format!("{text} ms")),
+                ),
+                (
+                    "Level",
+                    params
+                        .play
+                        .lev
+                        .string_to_normalized_value(&format!("{text} dB")),
+                ),
+            ] {
+                assert_eq!(value, None, "{name} accepted {text}");
+            }
+        }
+        assert_eq!(parse_pitch("-12 st"), Some(52));
+        assert_eq!(parse_pitch("999 st"), Some(127));
     }
 
     #[test]

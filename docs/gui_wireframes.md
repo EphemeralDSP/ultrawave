@@ -40,11 +40,12 @@ Record once protects the first take: show Protected, disable Record, and show
 Re-arm only after the protected take finishes. Re-arm retains the take until the
 next trigger. New instances start empty and unprotected, even after project restore.
 
-Duration choices are beat-based, but show a 10-second cap when a choice would
-exceed it and provide effective seconds feedback. Actual duration and routing
-strategy are latched at record start. Record FX rate crush and Drive are retained
-and printed into new recordings. Sample rate is displayed and edited as actual
-kHz (Hz input is also accepted); generic host Capture Rate text is the divisor
+Duration choices are beat-based, but show the shorter of the 10-second and RAM
+capacity limits when a choice would exceed it, including fractional seconds at
+high storage rates. They also provide effective seconds feedback. Actual duration
+and routing strategy are latched at record start. Record FX rate crush and Drive
+are retained and printed into new recordings. Sample rate is displayed and edited
+as actual kHz (Hz input is also accepted); generic host Capture Rate text is the divisor
 ÷1…÷16 because the host has no editor context. Source, drive and rate-crush
 readouts are percentage amounts; Bit crush shows effective bits.
 
