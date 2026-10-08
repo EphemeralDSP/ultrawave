@@ -148,6 +148,7 @@ impl RamPlay {
         self.playback_ratio =
             pitch_to_ratio(params.pitch) * source_rate.unwrap() as f64 / self.sample_rate as f64;
 
+        self.reverse = params.strt > params.end;
         self.trigger_internal();
 
         self.retrigs_remaining = retrig_total_hits(params.rtrg).map_or(usize::MAX, |n| n - 1);
@@ -184,7 +185,6 @@ impl RamPlay {
         let start = self.current_params.strt;
         // Multiply before dividing so exact sample boundaries stay exact.
         let start_pos = start as f64 * buffer_len / 127.0;
-        self.reverse = start > self.current_params.end;
         self.engine.trigger(start_pos);
 
         self.envelope = 1.0;
@@ -602,6 +602,39 @@ mod tests {
             }
             assert!(!player.is_playing());
             assert_eq!(player.process(), 0.0);
+        }
+    }
+
+    #[test]
+    fn crossing_end_does_not_reverse_an_existing_retrigger_train() {
+        let memory = Arc::new(SampleMemory::new());
+        // At 1024 Hz and 120 BPM, RTIM=127 repeats every 128 frames.
+        let codes: Vec<i16> = (0..127).map(|i| i * 8 + 256).collect();
+        assert!(memory.replace_buffer_at_rate(codes.clone(), 1024.0));
+        for (end, crossed_end, first_index, new_index) in [(95, 31, 63, 62), (31, 95, 62, 63)] {
+            let mut player = RamPlay::new(1024.0, memory.clone());
+            let params = RamPlayParams {
+                strt: 63,
+                end,
+                rtrg: 3,
+                rtim: 127,
+                vol: 127,
+                ..Default::default()
+            };
+            player.trigger(&params);
+            assert_eq!(player.process(), codes[first_index] as f32 / 2048.0);
+            let crossed = RamPlayParams {
+                end: crossed_end,
+                ..params
+            };
+            player.update_params(&crossed);
+            for frame in 1..384 {
+                assert_eq!(player.process(), 0.0, "end={end}, frame={frame}");
+            }
+            assert!(!player.is_playing());
+            // A fresh external trigger, unlike a repeat, latches the new direction.
+            player.trigger(&crossed);
+            assert_eq!(player.process(), codes[new_index] as f32 / 2048.0);
         }
     }
 

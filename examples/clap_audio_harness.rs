@@ -1169,6 +1169,56 @@ unsafe fn reverse_pitch_notes_and_triggers(module: &Module) {
     );
 }
 
+unsafe fn end_automation_preserves_retrigger_direction(module: &Module) {
+    for (end, crossed_end, reverse) in [(95, 31, false), (31, 95, true)] {
+        let mut plugin = module.create();
+        configure(&plugin);
+        plugin.activate(48_000.0, 16_384);
+        let tr = transport(true, 120.0, 0, false);
+        let source: Vec<_> = (0..127).map(|i| (256 + i * 8) as f32 / 2048.0).collect();
+        let silence = vec![0.0; 12_110];
+        plugin.process(
+            [&source, &silence[..127], &silence[..127], &silence[..127]],
+            127,
+            &[Event::note(0, 48, 1.0)],
+            &tr,
+        );
+        plugin.reset();
+        plugin.flush(&[
+            ("Start", "63"),
+            ("End", &end.to_string()),
+            ("Retrigger", "3"),
+            ("Retrig Time", "MD 127"),
+        ]);
+        let output = plugin.process(
+            [&silence; 4],
+            silence.len(),
+            &[
+                Event::note(0, 50, 1.0),
+                Event::param(5, plugin.param("End"), f64::from(crossed_end)),
+                // Internal hits occur at 6000 and 12000 frames. Only this fresh
+                // external trigger is allowed to latch the opposite direction.
+                Event::note(12_100, 50, 1.0),
+            ],
+            &tr,
+        );
+        let mut raw = vec![0.0; silence.len()];
+        for frame in 0..5 {
+            raw[frame] = source[if reverse { 62 - frame } else { 63 + frame }];
+        }
+        for frame in 0..10 {
+            raw[12_100 + frame] = source[if reverse { 63 + frame } else { 62 - frame }];
+        }
+        let expected = WetReference::new(48_000.0).render(raw);
+        assert_wet(
+            &output[0],
+            &expected,
+            &format!("End crossing, initially reverse={reverse}"),
+        );
+        assert_eq!(output[0], output[1]);
+    }
+}
+
 unsafe fn capture_control_is_a_rising_edge(module: &Module) {
     let mut plugin = module.create();
     configure(&plugin);
@@ -1596,6 +1646,7 @@ fn main() {
             capture_playback_at_rate(&module, rate, block);
         }
         reverse_pitch_notes_and_triggers(&module);
+        end_automation_preserves_retrigger_direction(&module);
         capture_control_is_a_rising_edge(&module);
         record_priority_and_no_feedback(&module);
         one_shot_rearm_and_invalidation(&module);

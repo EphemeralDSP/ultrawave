@@ -57,9 +57,12 @@ pub fn parameter_value_with_format<P: nice_plug::prelude::Param>(
             response.request_focus();
             state.focus = false;
         }
-        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if escape || (response.lost_focus() && !enter) {
+        // Enter itself releases a single-line TextEdit's focus. An editor that
+        // was hidden during blur must not handle another field's keyboard input.
+        let owns_keyboard = response.has_focus() || response.lost_focus();
+        let escape = owns_keyboard && ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let enter = owns_keyboard && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if escape || (!response.has_focus() && !enter) {
             state.editing = false;
             state.invalid = false;
         }
@@ -355,6 +358,86 @@ mod tests {
         assert_eq!(param.preview_plain(events[1].unwrap()), 93.0);
         assert_eq!(events[2], None);
         assert_eq!(param.value(), 32.0, "only the host changes DSP parameters");
+    }
+
+    #[test]
+    fn returning_hidden_edit_cannot_commit_or_steal_focus_from_another_field() {
+        for abandoned_text in ["77", "invalid"] {
+            let ctx = egui::Context::default();
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "test".into(),
+                Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../../assets/fonts/DejaVuSans.ttf"
+                ))),
+            );
+            fonts
+                .families
+                .insert(egui::FontFamily::Proportional, vec!["test".into()]);
+            fonts
+                .families
+                .insert(egui::FontFamily::Monospace, vec!["test".into()]);
+            ctx.set_fonts(fonts);
+            let host = Arc::new(Host::default());
+            let gui = GuiContext::new(host.clone());
+            let params = [33, 44]
+                .map(|value| IntParam::new("Value", value, IntRange::Linear { min: 0, max: 127 }));
+            let ids = [egui::Id::new("popover-value"), egui::Id::new("panel-value")];
+            let edit = |index: usize, text: &str| {
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        ids[index],
+                        ValueEdit {
+                            text: text.into(),
+                            editing: true,
+                            focus: true,
+                            ..Default::default()
+                        },
+                    )
+                })
+            };
+            let frame = |show_popover, events| {
+                ctx.run_ui(
+                    egui::RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if show_popover {
+                            parameter_value(ui, ids[0], &params[0], &gui);
+                        }
+                        parameter_value(ui, ids[1], &params[1], &gui);
+                    },
+                )
+                .drop_without_applying_deltas();
+            };
+            edit(0, abandoned_text);
+            frame(true, vec![]);
+            // Close the popover without rendering its text field on the blur frame.
+            frame(false, vec![]);
+            frame(false, vec![]);
+            edit(1, "99");
+            frame(false, vec![]);
+            // The old editor returns while the other field owns keyboard focus.
+            frame(true, vec![]);
+            assert!(ctx.memory(|memory| memory.has_focus(ids[1].with("input"))));
+            frame(
+                true,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            let events = host.0.lock().unwrap();
+            assert_eq!(events.len(), 3, "abandoned {abandoned_text:?}: {events:?}");
+            assert_eq!(events[0], None);
+            assert_eq!(params[1].preview_plain(events[1].unwrap()), 99);
+            assert_eq!(events[2], None);
+            assert!(!ctx.data(|data| data.get_temp::<ValueEdit>(ids[0]).unwrap().editing));
+        }
     }
 
     #[test]
