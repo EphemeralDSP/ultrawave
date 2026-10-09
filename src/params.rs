@@ -1,20 +1,12 @@
 use nice_plug::prelude::*;
 use std::sync::Arc;
 
-fn clamp_i32(value: i32, min: i32, max: i32) -> i32 {
-    value.clamp(min, max)
-}
-
-fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
-    value.clamp(min, max)
-}
-
 fn parse_i32_clamped(string: &str, min: i32, max: i32) -> Option<i32> {
     string
         .trim()
         .parse::<i32>()
         .ok()
-        .map(|value| clamp_i32(value, min, max))
+        .map(|value| value.clamp(min, max))
 }
 
 fn parse_f32_clamped(string: &str, min: f32, max: f32) -> Option<f32> {
@@ -23,7 +15,7 @@ fn parse_f32_clamped(string: &str, min: f32, max: f32) -> Option<f32> {
         .parse::<f32>()
         .ok()
         .filter(|value| value.is_finite())
-        .map(|value| clamp_f32(value, min, max))
+        .map(|value| value.clamp(min, max))
 }
 
 fn parse_from_formatter_lookup(
@@ -56,14 +48,14 @@ fn parse_balance(string: &str) -> Option<i32> {
         .strip_prefix('L')
         .or_else(|| trimmed.strip_prefix('l'))
     {
-        return parse_i32_clamped(rest, 0, 64).map(|amount| clamp_i32(64 - amount, 0, 127));
+        return parse_i32_clamped(rest, 0, 64).map(|amount| (64 - amount).clamp(0, 127));
     }
 
     if let Some(rest) = trimmed
         .strip_prefix('R')
         .or_else(|| trimmed.strip_prefix('r'))
     {
-        return parse_i32_clamped(rest, 0, 64).map(|amount| clamp_i32(64 + amount, 0, 127));
+        return parse_i32_clamped(rest, 0, 64).map(|amount| (64 + amount).clamp(0, 127));
     }
 
     parse_0_127(trimmed)
@@ -133,7 +125,6 @@ fn parse_milliseconds(string: &str, max_ms: f32) -> Option<i32> {
         0.0,
         max_ms,
     )
-    .filter(|v| v.is_finite())
     .map(|ms| (ms / max_ms * 127.0).round() as i32)
 }
 
@@ -153,7 +144,7 @@ fn parse_percent(string: &str) -> Option<i32> {
     let trimmed = string.trim();
     if let Some(percent_str) = trimmed.strip_suffix('%') {
         return parse_i32_clamped(percent_str, 0, 100)
-            .map(|percent| clamp_i32((percent as f32 / 100.0 * 127.0).round() as i32, 0, 127));
+            .map(|percent| ((percent as f32 / 100.0 * 127.0).round() as i32).clamp(0, 127));
     }
 
     parse_0_127(trimmed)

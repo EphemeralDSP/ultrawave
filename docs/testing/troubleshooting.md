@@ -14,7 +14,8 @@ Common plugin validation failures and how to fix them.
    - `./tools/pluginval` (project-local)
    - `~/.local/bin/pluginval` or `$HOME/pluginval/` (user)
    - `/usr/local/bin/pluginval` (system)
-3. Or specify path: `.\scripts\validate-vst3.ps1 -PluginvalPath "C:\path\to\pluginval.exe"`
+3. Or pass `--pluginval C:\path\to\pluginval.exe` to the
+   [native release gate](../releasing.md#3-run-the-same-native-build-on-each-node).
 
 ### "clap-validator not found"
 
@@ -33,7 +34,7 @@ Or download from [clap-validator releases](https://github.com/free-audio/clap-va
 
 **Fix**:
 ```bash
-cargo xtask bundle ultrawave --release
+cargo xtask bundle ultrawave-plugin --release
 ```
 
 Then retry validation.
@@ -161,17 +162,18 @@ Then retry validation.
 When facing many failures, start at a lower strictness level:
 
 ```powershell
-.\scripts\validate-vst3.ps1 -Strictness 1
+pluginval --validate-in-process --strictness-level 1 --validate "$PWD/target/bundled/ultrawave-plugin.vst3" | Out-Host
 ```
 
-Fix failures at each level before increasing.
+Check `$LASTEXITCODE` after each direct invocation. Fix failures at each level
+before increasing; a reduced-strictness run is not release validation.
 
 ### Run Specific Tests
 
 For CLAP, isolate specific test categories:
 
 ```powershell
-.\scripts\validate-clap.ps1 -Tests "param-fuzzing"
+clap-validator validate --test-filter "param-fuzzing" "$PWD/target/bundled/ultrawave-plugin.clap"
 ```
 
 ### Enable Verbose Output
@@ -179,8 +181,8 @@ For CLAP, isolate specific test categories:
 Get detailed logs for debugging:
 
 ```powershell
-.\scripts\validate-vst3.ps1 -Detailed
-.\scripts\validate-clap.ps1 -Detailed
+pluginval --validate-in-process --strictness-level 5 --verbose --validate "$PWD/target/bundled/ultrawave-plugin.vst3" | Out-Host
+clap-validator --verbosity trace validate "$PWD/target/bundled/ultrawave-plugin.clap"
 ```
 
 ### Check CI Logs

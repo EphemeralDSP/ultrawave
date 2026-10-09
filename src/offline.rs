@@ -10,10 +10,6 @@ use std::sync::Arc;
 const SAMPLE_RATE: u32 = 44100;
 const SAMPLE_RATE_F: f32 = SAMPLE_RATE as f32;
 
-// ---------------------------------------------------------------------------
-// Config structs
-// ---------------------------------------------------------------------------
-
 pub struct RecordConfig {
     pub input: PathBuf,
     pub output: Option<PathBuf>,
@@ -26,10 +22,6 @@ pub struct PlayConfig {
     pub tempo_bpm: f64,
     pub params: RamPlayParams,
 }
-
-// ---------------------------------------------------------------------------
-// WAV helpers (private)
-// ---------------------------------------------------------------------------
 
 fn read_wav_stereo_frames(path: &Path) -> Result<(Vec<(f32, f32)>, u32), String> {
     let reader = hound::WavReader::open(path)
@@ -117,10 +109,6 @@ fn write_wav_f32(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), S
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Offline record
-// ---------------------------------------------------------------------------
-
 pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
     let (frames, sr) = read_wav_stereo_frames(&config.input)?;
     if sr != SAMPLE_RATE {
@@ -159,10 +147,6 @@ pub fn run_offline_record(config: &RecordConfig) -> Result<(), String> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Offline play
-// ---------------------------------------------------------------------------
 
 pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
     if !config.tempo_bpm.is_finite() || config.tempo_bpm <= 0.0 {
@@ -212,10 +196,6 @@ pub fn run_offline_play(config: &PlayConfig) -> Result<(), String> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// CLI arg parsing
-// ---------------------------------------------------------------------------
 
 fn get_arg(args: &[String], flag: &str) -> Option<String> {
     let index = args.iter().position(|a| a == flag)?;

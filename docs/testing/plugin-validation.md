@@ -51,6 +51,27 @@ retain logs under `target/validation/`, propagate failures and reject caught
 panic/window-error signatures even when a validator exits successfully. Missing
 tools or plugin paths are errors, not skipped successes. Run `--help` for options.
 
+### Windows without Bash
+
+Use `py -3 ci/release.py build` for the full native gate, with explicit validator
+paths as described in [releasing](../releasing.md#3-run-the-same-native-build-on-each-node).
+It retains logs, waits for validators and rejects caught panic signatures.
+The old PowerShell wrappers have been removed; they used obsolete bundle names
+and CLAP options. For a focused probe of an already bundled plugin, with both
+validators on PATH:
+
+```powershell
+pluginval --validate-in-process --strictness-level 5 --validate "$PWD/target/bundled/ultrawave-plugin.vst3" | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "pluginval failed: $LASTEXITCODE" }
+clap-validator validate "$PWD/target/bundled/ultrawave-plugin.clap"
+if ($LASTEXITCODE -ne 0) { throw "clap-validator failed: $LASTEXITCODE" }
+clap-validator list tests
+```
+
+Piping pluginval to `Out-Host` waits for the GUI executable to exit in an
+interactive PowerShell session. These direct probes do not perform the release
+gate's log-signature checks or produce a release receipt.
+
 ## Editor and real host
 
 ```bash

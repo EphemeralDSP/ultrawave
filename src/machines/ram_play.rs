@@ -85,7 +85,6 @@ pub struct RamPlay {
     reverse: bool,
 }
 
-#[allow(dead_code)]
 impl RamPlay {
     pub fn new(sample_rate: f32, memory: Arc<SampleMemory>) -> Self {
         Self {
@@ -139,14 +138,13 @@ impl RamPlay {
     pub fn trigger(&mut self, params: &RamPlayParams) {
         self.current_params = *params;
         self.update_params(params);
-        let source_rate = self.engine.latch_buffer(Arc::clone(&self.memory));
-        if source_rate.is_none() {
+        let Some(source_rate) = self.engine.latch_buffer(Arc::clone(&self.memory)) else {
             self.is_playing = false;
             self.retrigs_remaining = 0;
             return;
-        }
+        };
         self.playback_ratio =
-            pitch_to_ratio(params.pitch) * source_rate.unwrap() as f64 / self.sample_rate as f64;
+            pitch_to_ratio(params.pitch) * source_rate as f64 / self.sample_rate as f64;
 
         self.reverse = params.strt > params.end;
         self.trigger_internal();
@@ -279,10 +277,6 @@ impl RamPlay {
             return None;
         }
         Some(self.engine.playback_position())
-    }
-
-    pub fn buffer_len(&self) -> usize {
-        self.memory.buffer_len()
     }
 }
 

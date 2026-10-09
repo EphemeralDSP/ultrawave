@@ -202,14 +202,6 @@ impl RamRecord {
         self.monitor
     }
 
-    pub fn get_buffer(&self) -> Vec<i16> {
-        self.memory.read_buffer().unwrap_or_default()
-    }
-
-    pub fn buffer_len(&self) -> usize {
-        self.memory.buffer_len()
-    }
-
     pub fn target_length(&self) -> usize {
         self.target_length
     }
@@ -229,13 +221,6 @@ impl RamRecord {
         self.is_recording = false;
         self.rec_rate_counter = 0.0;
         self.rec_rate_divisor = 1.0;
-    }
-
-    pub fn recording_progress(&self) -> f32 {
-        if self.target_length == 0 {
-            return 0.0;
-        }
-        self.elapsed_samples as f32 / self.target_length as f32
     }
 }
 

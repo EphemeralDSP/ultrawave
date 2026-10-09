@@ -6,32 +6,22 @@ use std::process::{Command, ExitCode};
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() > 1 {
-        match args[1].as_str() {
-            "install" => install_plugins(),
-            "pluginval" | "validate-vst3" => run_validate_vst3(&args[2..]),
-            "validate-clap" => run_validate_clap(&args[2..]),
-            "validate-all" => run_validate_all(&args[2..]),
-            "help" | "--help" | "-h" => {
-                print_help();
-                ExitCode::SUCCESS
-            }
-            _ => match nice_plug_xtask::main() {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(err) => {
-                    eprintln!("xtask failed: {err}");
-                    ExitCode::FAILURE
-                }
-            },
+    match args.get(1).map(String::as_str) {
+        Some("install") => install_plugins(),
+        Some("pluginval" | "validate-vst3") => run_validate_vst3(&args[2..]),
+        Some("validate-clap") => run_validate_clap(&args[2..]),
+        Some("validate-all") => run_validate_all(&args[2..]),
+        Some("help" | "--help" | "-h") => {
+            print_help();
+            ExitCode::SUCCESS
         }
-    } else {
-        match nice_plug_xtask::main() {
+        _ => match nice_plug_xtask::main() {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 eprintln!("xtask failed: {err}");
                 ExitCode::FAILURE
             }
-        }
+        },
     }
 }
 
@@ -70,37 +60,32 @@ EXAMPLES:
 }
 
 fn ensure_bundled(skip_bundle: bool) -> bool {
-    let plugins = ["ultrawave-plugin"];
+    let plugin = "ultrawave-plugin";
     if skip_bundle {
-        for plugin in plugins {
-            for ext in ["vst3", "clap"] {
-                let path = PathBuf::from(format!("target/bundled/{plugin}.{ext}"));
-                if !path.exists() {
-                    eprintln!("--skip-bundle requires existing {}", path.display());
-                    return false;
-                }
+        for ext in ["vst3", "clap"] {
+            let path = PathBuf::from(format!("target/bundled/{plugin}.{ext}"));
+            if !path.exists() {
+                eprintln!("--skip-bundle requires existing {}", path.display());
+                return false;
             }
         }
         return true;
     }
-    for plugin in plugins {
-        println!("Building and bundling {plugin}...");
-        match Command::new("cargo")
-            .args(["xtask", "bundle", plugin, "--release"])
-            .status()
-        {
-            Ok(status) if status.success() => {}
-            Ok(_) => {
-                eprintln!("Bundle failed for {plugin}");
-                return false;
-            }
-            Err(err) => {
-                eprintln!("Could not bundle {plugin}: {err}");
-                return false;
-            }
+    println!("Building and bundling {plugin}...");
+    match Command::new("cargo")
+        .args(["xtask", "bundle", plugin, "--release"])
+        .status()
+    {
+        Ok(status) if status.success() => true,
+        Ok(_) => {
+            eprintln!("Bundle failed for {plugin}");
+            false
+        }
+        Err(err) => {
+            eprintln!("Could not bundle {plugin}: {err}");
+            false
         }
     }
-    true
 }
 
 fn run_validate_vst3(args: &[String]) -> ExitCode {
@@ -235,16 +220,14 @@ fn install_plugins() -> ExitCode {
     let skip_bundle = args.iter().any(|a| a == "--skip-bundle");
     let system_install = args.iter().any(|a| a == "--system");
 
-    let plugins = ["ultrawave-plugin"];
+    let primary = "ultrawave-plugin";
     let bundle_dir = PathBuf::from("target/bundled");
 
     if !skip_bundle {
-        for primary in plugins {
-            println!("Building and bundling {}...", primary);
-            if !bundle_plugin(primary) {
-                eprintln!("Bundle failed for {}", primary);
-                return ExitCode::FAILURE;
-            }
+        println!("Building and bundling {}...", primary);
+        if !bundle_plugin(primary) {
+            eprintln!("Bundle failed for {}", primary);
+            return ExitCode::FAILURE;
         }
     }
 
@@ -261,42 +244,18 @@ fn install_plugins() -> ExitCode {
     }
 
     let mut had_errors = false;
-    for primary in plugins {
-        // Install VST3 bundle
-        if let Some(vst3_src) = find_artifact(&bundle_dir, primary, "vst3") {
-            let dest = vst3_dest.join(
-                vst3_src
-                    .file_name()
-                    .expect("missing file name for VST3 source"),
-            );
-            println!("Installing VST3 to {:?}", dest);
-            if let Err(err) = install_artifact(&vst3_src, &dest) {
-                eprintln!("Failed to install VST3 for {}: {}", primary, err);
+    for (format, ext, directory) in [("VST3", "vst3", vst3_dest), ("CLAP", "clap", clap_dest)] {
+        if let Some(src) = find_artifact(&bundle_dir, primary, ext) {
+            let dest = directory.join(src.file_name().expect("artifact has a file name"));
+            println!("Installing {format} to {:?}", dest);
+            if let Err(err) = install_artifact(&src, &dest) {
+                eprintln!("Failed to install {format} for {}: {}", primary, err);
                 had_errors = true;
             } else {
-                println!("✓ VST3 installed for {}", primary);
+                println!("✓ {format} installed for {}", primary);
             }
         } else {
-            eprintln!("VST3 bundle not found for {}", primary);
-            had_errors = true;
-        }
-
-        // Install CLAP bundle/binary
-        if let Some(clap_src) = find_artifact(&bundle_dir, primary, "clap") {
-            let dest = clap_dest.join(
-                clap_src
-                    .file_name()
-                    .expect("missing file name for CLAP source"),
-            );
-            println!("Installing CLAP to {:?}", dest);
-            if let Err(err) = install_artifact(&clap_src, &dest) {
-                eprintln!("Failed to install CLAP for {}: {}", primary, err);
-                had_errors = true;
-            } else {
-                println!("✓ CLAP installed for {}", primary);
-            }
-        } else {
-            eprintln!("CLAP bundle not found for {}", primary);
+            eprintln!("{format} bundle not found for {}", primary);
             had_errors = true;
         }
     }

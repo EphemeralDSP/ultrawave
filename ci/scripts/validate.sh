@@ -16,7 +16,5 @@ require_file() {
 require_file "$ROOT/target/bundled/ultrawave-plugin.vst3"
 require_file "$ROOT/target/bundled/ultrawave-plugin.clap"
 
-for plugin in ultrawave-plugin; do
-    "$ROOT/scripts/validate-vst3.sh" --plugin "$ROOT/target/bundled/$plugin.vst3" --strictness "$STRICTNESS"
-    "$ROOT/scripts/validate-clap.sh" --plugin "$ROOT/target/bundled/$plugin.clap"
-done
+"$ROOT/scripts/validate-vst3.sh" --plugin "$ROOT/target/bundled/ultrawave-plugin.vst3" --strictness "$STRICTNESS"
+"$ROOT/scripts/validate-clap.sh" --plugin "$ROOT/target/bundled/ultrawave-plugin.clap"
