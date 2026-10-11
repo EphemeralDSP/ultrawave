@@ -75,23 +75,25 @@ pub fn waveform(
         Stroke::new(1.0, Color32::WHITE),
         StrokeKind::Inside,
     );
-    let center = rect.center().y;
-    painter.line_segment(
-        [pos2(rect.left(), center), pos2(rect.right(), center)],
-        Stroke::new(1.0, Color32::WHITE),
-    );
     let width = rect.width().max(1.0) as usize;
     cache.update(identity, width, samples);
-    let amplitude = rect.height() * 0.5 - 5.0;
-    for (x, &(low, high)) in cache.peaks.iter().enumerate() {
-        let px = rect.left() + x as f32;
+    if !samples.is_empty() {
+        let center = rect.center().y;
         painter.line_segment(
-            [
-                pos2(px, center + display_scale(low) * amplitude),
-                pos2(px, center + display_scale(high) * amplitude),
-            ],
+            [pos2(rect.left(), center), pos2(rect.right(), center)],
             Stroke::new(1.0, Color32::WHITE),
         );
+        let amplitude = rect.height() * 0.5 - 5.0;
+        for (x, &(low, high)) in cache.peaks.iter().enumerate() {
+            let px = rect.left() + x as f32;
+            painter.line_segment(
+                [
+                    pos2(px, center + display_scale(low) * amplitude),
+                    pos2(px, center + display_scale(high) * amplitude),
+                ],
+                Stroke::new(1.0, Color32::WHITE),
+            );
+        }
     }
 
     if let Some((start, end)) = markers {
@@ -184,16 +186,20 @@ pub fn waveform(
                 )
             };
             painter.rect_filled(bracket, 0.0, color);
-            painter.text(
-                pos2(
-                    x.clamp(rect.left() + 10.0, rect.right() - 10.0),
-                    rect.top() + 5.0,
-                ),
-                egui::Align2::CENTER_TOP,
-                if index == 0 { "S" } else { "E" },
+            let label = painter.layout_no_wrap(
+                if index == 0 { "S" } else { "E" }.into(),
                 egui::FontId::monospace(11.0),
                 color,
             );
+            let label_rect = Rect::from_min_size(
+                pos2(
+                    x.clamp(rect.left() + 10.0, rect.right() - 10.0) - label.size().x * 0.5,
+                    rect.top() + 5.0,
+                ),
+                label.size(),
+            );
+            painter.rect_filled(label_rect.expand(1.0), 0.0, Color32::BLACK);
+            painter.galley(label_rect.min, label, color);
         }
     }
     if let Some(position) = cursor {
@@ -218,6 +224,53 @@ pub fn waveform(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn empty_waveform_has_markers_without_a_sample_trace() {
+        let ctx = egui::Context::default();
+        let gui = GuiContext::new(Arc::new(crate::widgets::tests::Host::default()));
+        let mut cache = WaveformCache::default();
+        let start = IntParam::new(
+            "Start",
+            0,
+            nice_plug::prelude::IntRange::Linear { min: 0, max: 127 },
+        );
+        let end = IntParam::new(
+            "End",
+            127,
+            nice_plug::prelude::IntRange::Linear { min: 0, max: 127 },
+        );
+        for samples in [&[][..], &[-1024, 1024][..], &[][..]] {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                waveform(
+                    ui,
+                    Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(400.0, 100.0)),
+                    samples,
+                    (0, samples.len(), 0),
+                    &mut cache,
+                    Some((&start, &end)),
+                    None,
+                    &gui,
+                );
+            });
+            let mut sample_trace = false;
+            let mut marker_labels = Vec::new();
+            for shape in &output.shapes {
+                match &shape.shape {
+                    egui::Shape::LineSegment { stroke, .. } if stroke.color == Color32::WHITE => {
+                        sample_trace = true;
+                    }
+                    egui::Shape::Text(text) => marker_labels.push(text.galley.job.text.clone()),
+                    _ => {}
+                }
+            }
+            output.drop_without_applying_deltas();
+            assert_eq!(sample_trace, !samples.is_empty());
+            for label in ["S", "E"] {
+                assert!(marker_labels.iter().any(|drawn| drawn == label));
+            }
+        }
+    }
 
     #[test]
     fn marker_drag_snaps_crosses_and_yields_to_host_updates() {

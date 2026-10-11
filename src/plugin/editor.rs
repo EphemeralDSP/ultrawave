@@ -207,8 +207,6 @@ impl NiceEguiApp for UltrawaveEditorApp {
             &gui,
         );
         if len == 0 {
-            ui.painter()
-                .rect_filled(wave_rect.shrink(10.0), 0.0, Color32::BLACK);
             ui.painter().text(
                 wave_rect.center(),
                 egui::Align2::CENTER_CENTER,
