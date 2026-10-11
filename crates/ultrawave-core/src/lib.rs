@@ -4,5 +4,6 @@
 
 pub mod dsp;
 pub mod machines;
+pub mod sampler;
 
 pub use dsp::decimator::Decimator;

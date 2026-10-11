@@ -25,6 +25,16 @@ Callers rebinding on an audio thread must retain old asset ownership elsewhere
 so replacing a voice's reference cannot free its last allocation there. This
 does not change the plugin's RAM capacity or staged replacement behavior.
 
+`sampler::Sampler` provides exclusive-owner ROM and progressive RAM playback
+through the same cursor/interpolation implementation. Prepare storage off-thread;
+`record` changes logical extent without clearing/copying the take, and
+`render_frame` reads every voice, calls a routing closure, then writes captures.
+The caller must keep that closure bounded, allocation-free and nonblocking.
+The sampler retains assets until non-real-time destruction. Its RAM is ordinary
+exclusively owned memory, not a concurrent snapshot API; concurrent workers would
+need a separate safe ownership/publication design. None of this changes the
+existing plugin's staged recording, revision invalidation or ten-second capacity.
+
 ### Building
 
 Requires Rust 1.95+. Linux development packages are listed in

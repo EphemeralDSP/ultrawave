@@ -1,4 +1,4 @@
-use crate::dsp::sample_engine::param_to_normalized;
+use crate::dsp::sample_engine::{param_to_normalized, quantize_12bit};
 use crate::machines::memory::{SampleMemory, MAX_BUFFER_SAMPLES};
 use std::sync::Arc;
 
@@ -183,7 +183,7 @@ impl RamRecord {
         }
         self.rec_rate_counter = 0.0;
 
-        let sample_12bit = (mono * 2048.0).round().clamp(-2048.0, 2047.0) as i16;
+        let sample_12bit = quantize_12bit(mono);
         if !self.memory.write_sample(sample_12bit) {
             self.stop_recording();
             return;

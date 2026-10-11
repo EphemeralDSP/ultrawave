@@ -12,6 +12,33 @@ enum SampleSource {
     },
 }
 
+pub(crate) trait SampleRead {
+    fn extent(&self) -> usize;
+    fn pair(&self, index: usize) -> Option<(i16, i16)>;
+}
+
+impl SampleRead for SampleSource {
+    fn extent(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::Owned(buffer) => buffer.len(),
+            Self::Buffer { len, .. } => *len,
+        }
+    }
+
+    fn pair(&self, index: usize) -> Option<(i16, i16)> {
+        match self {
+            Self::Empty => None,
+            Self::Owned(buffer) => Some((buffer[index], buffer[(index + 1).min(buffer.len() - 1)])),
+            Self::Buffer {
+                memory,
+                revision,
+                len,
+            } => memory.read_sample_pair(index, *revision, *len),
+        }
+    }
+}
+
 pub struct SampleEngine {
     source: SampleSource,
     position: f64,
@@ -65,7 +92,11 @@ impl SampleEngine {
     }
 
     pub fn trigger(&mut self, start_position: f64) {
-        self.position = start_position.clamp(0.0, self.buffer_len() as f64);
+        self.trigger_at(start_position.clamp(0.0, self.buffer_len() as f64));
+    }
+
+    pub(crate) fn trigger_at(&mut self, position: f64) {
+        self.position = position;
         self.decimator = Decimator::new();
     }
 
@@ -73,41 +104,20 @@ impl SampleEngine {
     /// boundary, then steps backwards. At unity rate, swapping integral region
     /// boundaries reverses its samples exactly, without skipping either endpoint.
     pub fn read_sample_linear(&mut self, pitch_ratio: f64) -> f32 {
-        let len = self.buffer_len();
-        let reverse = pitch_ratio < 0.0;
-        if self.is_finished(if reverse { 0.0 } else { len as f64 }, pitch_ratio) {
-            return 0.0;
-        }
+        read_linear(
+            &mut self.position,
+            &mut self.decimator,
+            &self.source,
+            pitch_ratio,
+        )
+    }
 
-        let read_position = if reverse {
-            (self.position - 1.0).max(0.0)
-        } else {
-            self.position
-        };
-        let idx = read_position as usize;
-        let frac = (read_position - idx as f64) as f32;
-        // RAM stores signed 12-bit codes in an i16 container, not 16-bit PCM.
-        let pair = match &self.source {
-            SampleSource::Empty => None,
-            SampleSource::Owned(buffer) => Some((buffer[idx], buffer[(idx + 1).min(len - 1)])),
-            SampleSource::Buffer {
-                memory, revision, ..
-            } => memory.read_sample_pair(idx, *revision, len),
-        };
-        let Some((a, b)) = pair else {
-            self.position = if reverse { 0.0 } else { len as f64 };
-            // SRR holds a previous sample; discard it when the latched buffer
-            // revision is invalidated so a dead voice cannot leak old audio.
-            self.decimator = Decimator::new();
-            return 0.0;
-        };
-        let s0: f32 = a as f32 / 2048.0;
-        let s1: f32 = b as f32 / 2048.0;
-        let interpolated = s0 + (s1 - s0) * frac;
+    pub(crate) fn read_from(&mut self, source: &impl SampleRead, pitch_ratio: f64) -> f32 {
+        read_linear(&mut self.position, &mut self.decimator, source, pitch_ratio)
+    }
 
-        self.position += pitch_ratio;
-
-        interpolated
+    pub(crate) fn position(&self) -> f64 {
+        self.position
     }
 
     pub fn read_sample_with_processing(&mut self, pitch_ratio: f64, srr: f32, brr: i32) -> f32 {
@@ -125,11 +135,7 @@ impl SampleEngine {
     }
 
     pub fn buffer_len(&self) -> usize {
-        match &self.source {
-            SampleSource::Empty => 0,
-            SampleSource::Owned(buffer) => buffer.len(),
-            SampleSource::Buffer { len, .. } => *len,
-        }
+        self.source.extent()
     }
 
     pub fn playback_position(&self) -> usize {
@@ -141,6 +147,43 @@ impl Default for SampleEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn read_linear(
+    position: &mut f64,
+    decimator: &mut Decimator,
+    source: &impl SampleRead,
+    ratio: f64,
+) -> f32 {
+    let len = source.extent();
+    let reverse = ratio < 0.0;
+    if (reverse && (*position <= 0.0 || *position > len as f64))
+        || (!reverse && *position >= len as f64)
+    {
+        return 0.0;
+    }
+    let read_position = if reverse {
+        (*position - 1.0).max(0.0)
+    } else {
+        *position
+    };
+    let index = read_position as usize;
+    let fraction = (read_position - index as f64) as f32;
+    let Some((a, b)) = source.pair(index) else {
+        *position = if reverse { 0.0 } else { len as f64 };
+        // Invalidated staged takes must not leak SRR's held sample.
+        *decimator = Decimator::new();
+        return 0.0;
+    };
+    let a = a as f32 / 2048.0;
+    let b = b as f32 / 2048.0;
+    *position += ratio;
+    a + (b - a) * fraction
+}
+
+/// Storage boundary shared by staged and progressive recording.
+pub fn quantize_12bit(sample: f32) -> i16 {
+    (sample * 2048.0).round().clamp(-2048.0, 2047.0) as i16
 }
 
 /// BRR progressively removes up to ten bits from the 12-bit playback signal.
