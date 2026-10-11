@@ -35,6 +35,12 @@ exclusively owned memory, not a concurrent snapshot API; concurrent workers woul
 need a separate safe ownership/publication design. None of this changes the
 existing plugin's staged recording, revision invalidation or ten-second capacity.
 
+Call `Sampler::reserve_instruments` off-thread to prepare metadata capacity for
+later immutable assets. `append_rom` installs a borrowed `Arc` into the next slot
+without allocating or disturbing existing voices. It refuses when reserved
+capacity is exhausted and leaves ownership with the caller. Audio-budget and
+instrument-count policy belong to the host; the sampler never evicts old audio.
+
 ### Building
 
 Requires Rust 1.95+. Linux development packages are listed in

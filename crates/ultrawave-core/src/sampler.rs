@@ -15,6 +15,7 @@ pub enum SamplerError {
     ReadOnly,
     InvalidLength,
     InvalidPlayback,
+    InstrumentCapacity,
 }
 
 impl fmt::Display for SamplerError {
@@ -25,6 +26,9 @@ impl fmt::Display for SamplerError {
             Self::ReadOnly => "cannot record into ROM",
             Self::InvalidLength => "capture length must be nonzero and fit RAM capacity",
             Self::InvalidPlayback => "playback requires finite nonzero ratio and finite gain",
+            Self::InstrumentCapacity => {
+                "reserve instrument capacity off-thread before appending ROM"
+            }
         })
     }
 }
@@ -104,8 +108,8 @@ struct Voice {
     active: bool,
 }
 
-/// Construction/destruction allocate/free; all other operations are bounded by
-/// prepared instrument/voice counts. Samples cannot be mutated outside a frame.
+/// Construction, reservation and destruction are non-real-time. Other operations
+/// are bounded by prepared counts. Samples cannot be mutated outside a frame.
 pub struct Sampler {
     samples: Vec<Storage>,
     voices: Vec<Voice>,
@@ -145,6 +149,28 @@ impl Sampler {
             outputs: vec![0.0; voices],
             inputs,
         }
+    }
+
+    /// Non-real-time: reserve metadata for at least this many instruments.
+    pub fn reserve_instruments(&mut self, capacity: usize) {
+        self.samples
+            .reserve(capacity.saturating_sub(self.samples.len()));
+        self.inputs
+            .reserve(capacity.saturating_sub(self.inputs.len()));
+    }
+
+    /// Install prepared immutable signed-12-bit audio without allocating, freeing
+    /// old assets or disturbing voices. On refusal the caller retains ownership.
+    pub fn append_rom(&mut self, samples: &Arc<[i16]>) -> Result<usize, SamplerError> {
+        if self.samples.len() == self.samples.capacity()
+            || self.inputs.len() == self.inputs.capacity()
+        {
+            return Err(SamplerError::InstrumentCapacity);
+        }
+        let instrument = self.samples.len();
+        self.samples.push(Storage::Rom(samples.clone()));
+        self.inputs.push(0.0);
+        Ok(instrument)
     }
 
     /// Establish the full intended extent in O(1), retaining old audio inside it.
