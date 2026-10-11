@@ -100,6 +100,10 @@ impl SampleEngine {
         self.decimator = Decimator::new();
     }
 
+    pub(crate) fn seek_at(&mut self, position: f64) {
+        self.position = position;
+    }
+
     /// Position is a boundary in 0..=len. A negative ratio reads just below that
     /// boundary, then steps backwards. At unity rate, swapping integral region
     /// boundaries reverses its samples exactly, without skipping either endpoint.

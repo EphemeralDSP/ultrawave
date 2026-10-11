@@ -41,6 +41,12 @@ without allocating or disturbing existing voices. It refuses when reserved
 capacity is exhausted and leaves ownership with the caller. Audio-budget and
 instrument-count policy belong to the host; the sampler never evicts old audio.
 
+`play_region` latches absolute source-frame bounds and clamps interpolation to
+that region in either direction. `set_region` seeks a still-sounding voice without
+resetting pitch, gain or DSP history; it cannot resurrect a finished voice. Empty
+regions are valid silence. Sample shrink still limits these bounds immediately;
+proportional slice definitions and command interpretation belong to the host.
+
 ### Building
 
 Requires Rust 1.95+. Linux development packages are listed in

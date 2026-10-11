@@ -22,6 +22,37 @@ fn shared_samples_have_independent_cursors_and_no_recording_capacity_limit() {
 }
 
 #[test]
+fn regions_bound_interpolation_and_seek_without_restarting_finished_voices() {
+    use ultrawave_core::sampler::{Sample, Sampler, SamplerError};
+    let mut sampler = Sampler::new(vec![Sample::Rom(vec![128, 512, 1024, 1792].into())], 2);
+    sampler.play_region(0, 0, 1..3, 0.5, 0.5).unwrap();
+    sampler.play_region(1, 0, 1..3, -0.5, 0.5).unwrap();
+    for (a, b) in [(256, 512), (384, 384), (512, 256), (512, 256)] {
+        sampler.render_frame(|voices, _| {
+            assert_eq!(voices, &[a as f32 / 2048.0, b as f32 / 2048.0]);
+        });
+    }
+    for voice in 0..2 {
+        assert_eq!(sampler.voice_instrument(voice), None);
+        sampler.set_region(voice, 0..4).unwrap();
+    }
+    sampler.render_frame(|voices, _| assert_eq!(voices, &[0.0, 0.0]));
+
+    sampler.play_region(0, 0, 1..3, 0.5, 0.5).unwrap();
+    assert_eq!(
+        sampler.set_region(0, 1..5),
+        Err(SamplerError::InvalidRegion)
+    );
+    sampler.render_frame(|voices, _| assert_eq!(voices[0], 256.0 / 2048.0));
+    sampler.set_region(0, 0..4).unwrap();
+    for code in [64, 160] {
+        sampler.render_frame(|voices, _| assert_eq!(voices[0], code as f32 / 2048.0));
+    }
+    sampler.set_region(0, 2..2).unwrap();
+    sampler.render_frame(|voices, _| assert_eq!(voices[0], 0.0));
+}
+
+#[test]
 fn progressive_overwrite_reads_old_cells_before_writes_without_resetting_voices() {
     use ultrawave_core::sampler::{Sample, Sampler};
     let mut sampler = Sampler::new(vec![Sample::Ram { capacity: 8 }], 2);

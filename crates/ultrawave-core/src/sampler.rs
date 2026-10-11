@@ -1,7 +1,7 @@
 //! Exclusive-owner sampler. Every frame reads all voices before any RAM writes.
 //! ROM and progressive RAM differ only at the common sampler's read boundary.
 use crate::dsp::sample_engine::{quantize_12bit, SampleEngine, SampleRead};
-use std::{fmt, sync::Arc};
+use std::{fmt, ops::Range, sync::Arc};
 
 pub enum Sample {
     Rom(Arc<[i16]>),
@@ -15,6 +15,7 @@ pub enum SamplerError {
     ReadOnly,
     InvalidLength,
     InvalidPlayback,
+    InvalidRegion,
     InstrumentCapacity,
 }
 
@@ -26,6 +27,7 @@ impl fmt::Display for SamplerError {
             Self::ReadOnly => "cannot record into ROM",
             Self::InvalidLength => "capture length must be nonzero and fit RAM capacity",
             Self::InvalidPlayback => "playback requires finite nonzero ratio and finite gain",
+            Self::InvalidRegion => "region must be ordered and within the sample extent",
             Self::InstrumentCapacity => {
                 "reserve instrument capacity off-thread before appending ROM"
             }
@@ -80,6 +82,7 @@ impl Storage {
 
 struct VoiceView<'a> {
     storage: &'a Storage,
+    start: usize,
     end: usize,
 }
 
@@ -92,6 +95,12 @@ impl SampleRead for VoiceView<'_> {
         if index >= self.extent() {
             return None;
         }
+        // A fractional reverse cursor can read just below its starting sample.
+        // Clamp both interpolation endpoints, not only the integer cursor.
+        if index < self.start {
+            let sample = self.storage.sample(self.start)?;
+            return Some((sample, sample));
+        }
         Some((
             self.storage.sample(index)?,
             self.storage.sample((index + 1).min(self.extent() - 1))?,
@@ -102,10 +111,35 @@ impl SampleRead for VoiceView<'_> {
 struct Voice {
     engine: SampleEngine,
     instrument: usize,
+    start: usize,
     end: usize,
     ratio: f64,
     gain: f32,
     active: bool,
+}
+
+impl Voice {
+    fn sounding(&self, extent: usize) -> bool {
+        let position = self.engine.position();
+        let end = self.end.min(extent) as f64;
+        self.active
+            && if self.ratio < 0.0 {
+                position > self.start as f64 && position <= end
+            } else {
+                position >= self.start as f64 && position < end
+            }
+    }
+
+    fn region(&mut self, region: Range<usize>) {
+        self.start = region.start;
+        self.end = region.end;
+        self.active = !region.is_empty();
+        self.engine.seek_at(if self.ratio < 0.0 {
+            self.end
+        } else {
+            self.start
+        } as f64);
+    }
 }
 
 /// Construction, reservation and destruction are non-real-time. Other operations
@@ -140,6 +174,7 @@ impl Sampler {
                 .map(|_| Voice {
                     engine: SampleEngine::new(),
                     instrument: 0,
+                    start: 0,
                     end: 0,
                     ratio: 1.0,
                     gain: 1.0,
@@ -215,9 +250,23 @@ impl Sampler {
         ratio: f64,
         gain: f32,
     ) -> Result<(), SamplerError> {
-        let storage = self
-            .samples
-            .get(instrument)
+        let end = self
+            .extent(instrument)
+            .ok_or(SamplerError::InvalidInstrument)?;
+        self.play_region(voice, instrument, 0..end, ratio, gain)
+    }
+
+    /// Latch absolute source-frame bounds. Empty regions are valid silence.
+    pub fn play_region(
+        &mut self,
+        voice: usize,
+        instrument: usize,
+        region: Range<usize>,
+        ratio: f64,
+        gain: f32,
+    ) -> Result<(), SamplerError> {
+        let extent = self
+            .extent(instrument)
             .ok_or(SamplerError::InvalidInstrument)?;
         let voice = self
             .voices
@@ -226,15 +275,46 @@ impl Sampler {
         if !ratio.is_finite() || ratio == 0.0 || !gain.is_finite() {
             return Err(SamplerError::InvalidPlayback);
         }
+        if region.start > region.end || region.end > extent {
+            return Err(SamplerError::InvalidRegion);
+        }
         voice.instrument = instrument;
-        voice.end = storage.extent();
         voice.ratio = ratio;
         voice.gain = gain;
-        voice.active = voice.end != 0;
-        voice
-            .engine
-            .trigger_at(if ratio < 0.0 { voice.end as f64 } else { 0.0 });
+        voice.engine.trigger_at(0.0);
+        voice.region(region);
         Ok(())
+    }
+
+    /// Seek an existing voice without resetting its pitch, gain or DSP history.
+    /// Ended voices are never resurrected by a region change.
+    pub fn set_region(&mut self, voice: usize, region: Range<usize>) -> Result<(), SamplerError> {
+        let voice = self
+            .voices
+            .get_mut(voice)
+            .ok_or(SamplerError::InvalidVoice)?;
+        let Some(storage) = self.samples.get(voice.instrument) else {
+            return Ok(());
+        };
+        if !voice.sounding(storage.extent()) {
+            return Ok(());
+        }
+        if region.start > region.end || region.end > storage.extent() {
+            return Err(SamplerError::InvalidRegion);
+        }
+        voice.region(region);
+        Ok(())
+    }
+
+    pub fn voice_instrument(&self, voice: usize) -> Option<usize> {
+        let voice = self.voices.get(voice)?;
+        voice
+            .sounding(self.samples.get(voice.instrument)?.extent())
+            .then_some(voice.instrument)
+    }
+
+    pub fn extent(&self, instrument: usize) -> Option<usize> {
+        self.samples.get(instrument).map(Storage::extent)
     }
 
     pub fn cut(&mut self, voice: usize) -> Result<(), SamplerError> {
@@ -279,16 +359,13 @@ impl Sampler {
                 continue;
             }
             let storage = &self.samples[voice.instrument];
-            let end = voice.end.min(storage.extent()) as f64;
-            let position = voice.engine.position();
-            if (voice.ratio > 0.0 && position >= end)
-                || (voice.ratio < 0.0 && (position <= 0.0 || position > end))
-            {
+            if !voice.sounding(storage.extent()) {
                 voice.active = false;
                 continue;
             }
             let view = VoiceView {
                 storage,
+                start: voice.start,
                 end: voice.end,
             };
             *output = voice.engine.read_from(&view, voice.ratio) * voice.gain;
