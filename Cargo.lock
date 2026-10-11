@@ -2774,7 +2774,12 @@ dependencies = [
  "libloading 0.8.9",
  "nice-plug",
  "nice-plug-egui",
+ "ultrawave-core",
 ]
+
+[[package]]
+name = "ultrawave-core"
+version = "0.1.0"
 
 [[package]]
 name = "ultrawave-plugin"

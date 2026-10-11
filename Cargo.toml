@@ -16,6 +16,7 @@ name = "ultrawave"
 path = "src/bin/ultrawave.rs"
 
 [dependencies]
+ultrawave-core = { path = "crates/ultrawave-core" }
 nice-plug = { version = "=0.4.2", features = ["standalone"] }
 nice-plug-egui = "=0.5.1"
 egui = { version = "=0.36.1", default-features = false }
@@ -31,7 +32,7 @@ lto = "thin"
 strip = "symbols"
 
 [workspace]
-members = ["xtask", "plugins/ultrawave"]
+members = ["crates/ultrawave-core", "xtask", "plugins/ultrawave"]
 exclude = ["vendor/nice-plug", "vendor/nice-plug-core", "vendor/baseview"]
 
 # See vendor/README.md for immediate-save and synchronous editor teardown patches.

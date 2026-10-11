@@ -11,6 +11,20 @@ Thank you for your interest in contributing to Ultrawave!
 
 ## Development Workflow
 
+### Host-independent DSP
+
+`crates/ultrawave-core` contains sample memory, recording, playback and DSP with
+no external dependencies. The plugin, standalone and offline tools consume it
+through the root crate. Host smoothing, parameters, files, devices and UI stay
+outside the core. Run `cargo test -p ultrawave-core` for its isolated tests and
+`cargo test --workspace` for the complete regression suite.
+
+`SampleEngine::load_shared_buffer` also accepts immutable signed 12-bit samples
+without copying them per voice or imposing the recorded-RAM capacity limit.
+Callers rebinding on an audio thread must retain old asset ownership elsewhere
+so replacing a voice's reference cannot free its last allocation there. This
+does not change the plugin's RAM capacity or staged replacement behavior.
+
 ### Building
 
 Requires Rust 1.95+. Linux development packages are listed in

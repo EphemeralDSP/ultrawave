@@ -22,9 +22,9 @@ second sampler. See README.md for routing, state and trigger semantics.
 
 - `src/plugin/sampler.rs` - Combined effect and MIDI/automation callback
 - `src/plugin/editor.rs` - Single-pane Capture/Play editor and MIDI dropdowns
-- `src/machines/memory.rs` - Private atomic sample RAM and UI snapshots
-- `src/machines/ram_record.rs` - Recording DSP
-- `src/machines/ram_play.rs` - Playback DSP with pitch/envelope
+- `crates/ultrawave-core/src/machines/memory.rs` - Private atomic sample RAM and UI snapshots
+- `crates/ultrawave-core/src/machines/ram_record.rs` - Recording DSP
+- `crates/ultrawave-core/src/machines/ram_play.rs` - Playback DSP with pitch/envelope
 - `technical_specs.md` - Elektron hardware specs for reference
 
 ### Build Commands

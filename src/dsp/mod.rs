@@ -1,4 +1,2 @@
-pub mod decimator;
-pub mod effects;
 pub mod mix;
-pub mod sample_engine;
+pub use ultrawave_core::dsp::{decimator, effects, sample_engine};

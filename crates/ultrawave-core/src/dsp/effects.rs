@@ -2,7 +2,7 @@
 /// generation paths both lose about 1.1–1.2 dB at 30 Hz. This normalized one-pole
 /// high-pass models that broad low cut, not an identified hardware circuit.
 /// Keep state across voice boundaries; reset only with the host audio state.
-pub(crate) struct DcBlocker {
+pub struct DcBlocker {
     pole: f32,
     gain: f32,
     previous_input: f32,

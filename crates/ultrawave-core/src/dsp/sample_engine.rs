@@ -3,7 +3,8 @@ use crate::Decimator;
 use std::sync::Arc;
 
 enum SampleSource {
-    Owned(Vec<i16>),
+    Empty,
+    Owned(Arc<[i16]>),
     Buffer {
         memory: Arc<SampleMemory>,
         revision: u64,
@@ -20,13 +21,22 @@ pub struct SampleEngine {
 impl SampleEngine {
     pub fn new() -> Self {
         Self {
-            source: SampleSource::Owned(Vec::new()),
+            source: SampleSource::Empty,
             position: 0.0,
             decimator: Decimator::new(),
         }
     }
 
     pub fn load_buffer(&mut self, samples: Vec<i16>) {
+        self.load_shared_buffer(samples.into());
+    }
+
+    /// Bind immutable signed 12-bit codes without copying them per voice.
+    ///
+    /// Unlike recorded RAM, this source has no ten-second capacity limit. For
+    /// real-time rebinding, retain the old asset elsewhere so releasing this
+    /// voice's reference cannot free its allocation on the audio thread.
+    pub fn load_shared_buffer(&mut self, samples: Arc<[i16]>) {
         self.source = SampleSource::Owned(samples);
         self.position = 0.0;
     }
@@ -45,7 +55,7 @@ impl SampleEngine {
     /// Also usable between retriggers, when no samples are being read.
     pub fn source_is_current(&self) -> bool {
         match &self.source {
-            SampleSource::Owned(_) => true,
+            SampleSource::Empty | SampleSource::Owned(_) => true,
             SampleSource::Buffer {
                 memory, revision, ..
             } => memory
@@ -78,6 +88,7 @@ impl SampleEngine {
         let frac = (read_position - idx as f64) as f32;
         // RAM stores signed 12-bit codes in an i16 container, not 16-bit PCM.
         let pair = match &self.source {
+            SampleSource::Empty => None,
             SampleSource::Owned(buffer) => Some((buffer[idx], buffer[(idx + 1).min(len - 1)])),
             SampleSource::Buffer {
                 memory, revision, ..
@@ -115,6 +126,7 @@ impl SampleEngine {
 
     pub fn buffer_len(&self) -> usize {
         match &self.source {
+            SampleSource::Empty => 0,
             SampleSource::Owned(buffer) => buffer.len(),
             SampleSource::Buffer { len, .. } => *len,
         }

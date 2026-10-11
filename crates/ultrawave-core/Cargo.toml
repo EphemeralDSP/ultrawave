@@ -1,0 +1,8 @@
+[package]
+name = "ultrawave-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = ["EphemeralDSP"]
+license = "MIT"
+description = "Host-independent Ultrawave sample memory, capture, playback and DSP"
