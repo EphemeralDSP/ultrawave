@@ -245,13 +245,32 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("vendor/nice-plug/LICENSE", package.namelist())
             self.assertFalse(any(name.startswith("target/") for name in package.namelist()))
 
-    def test_validator_exit_and_caught_panics_both_fail(self):
-        for code in ("raise SystemExit(7)", "print('thread panicked at audio callback')"):
-            # Keep the simulated panic's command out of the enclosing CI log.
+    def test_validator_exit_and_logged_failures_both_fail(self):
+        failures = (
+            "PANIC: plugin callback failed",
+            "thread panicked at audio callback",
+            "ERROR Failed to create editor: Failed to create window",
+            "Could not find a valid Framebuffer configuration",
+            "BadDrawable", "BadWindow", "Error while closing window",
+            "X Error of failed request", "glXSwapBuffers failed",
+        )
+        for code in ("raise SystemExit(7)", *(f"print({text!r})" for text in failures)):
+            # Keep the simulated failure's command out of the enclosing CI log.
             # The subprocess output still reaches checked() and must fail it.
             with self.subTest(code=code), self.assertRaises(RuntimeError), patch("builtins.print"):
                 release.checked([sys.executable, "-c", code], self.out / "validator.log", None)
+            if code.startswith("print"):
+                result = subprocess.run(
+                    [sys.executable, release.__file__, "check-log", str(self.out / "validator.log")],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         release.checked([sys.executable, "-c", "print('validated')"], self.out / "validator.log", None)
+        result = subprocess.run(
+            [sys.executable, release.__file__, "check-log", str(self.out / "validator.log")],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,6 @@ set +e
 "${args[@]}" 2>&1 | tee "$LOG"
 status=${PIPESTATUS[0]}
 set -e
-if grep -Eiq '(panic(ked)?|BadDrawable|BadWindow|Error while closing window)' "$LOG"; then echo "fatal signature in $LOG" >&2; exit 1; fi
+python3 "$ROOT/ci/release.py" check-log "$LOG"
 [[ $status -eq 0 ]] || { echo "pluginval failed ($status); log: $LOG" >&2; exit "$status"; }
 echo "pluginval passed; log: $LOG"

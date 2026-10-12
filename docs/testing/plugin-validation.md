@@ -51,6 +51,14 @@ retain logs under `target/validation/`, propagate failures and reject caught
 panic/window-error signatures even when a validator exits successfully. Missing
 tools or plugin paths are errors, not skipped successes. Run `--help` for options.
 
+VST3/CLAP validation and editor lifecycle checks use the release gate's shared
+`python3 ci/release.py check-log LOG` check (Python 3.11+). Editor-creation and
+framebuffer failures are fatal even when pluginval reports success. This matters
+on headless Linux: Mesa/Xvfb without a DRM device may expose no sRGB visuals.
+The editor requests a normal RGBA framebuffer because egui_glow already writes
+gamma-encoded colors with framebuffer sRGB conversion disabled; it does not
+need an sRGB-capable visual. No editor tests are skipped to accommodate CI.
+
 ### Windows without Bash
 
 Use `py -3 ci/release.py build` for the full native gate, with explicit validator

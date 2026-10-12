@@ -41,9 +41,6 @@ set +e
 "$VALIDATOR" "${args[@]}" 2>&1 | tee "$LOG"
 status=${PIPESTATUS[0]}
 set -e
-if grep -Eiq '(panic(ked)?|BadDrawable)' "$LOG"; then
-  echo "fatal signature in $LOG" >&2
-  exit 1
-fi
+python3 "$ROOT/ci/release.py" check-log "$LOG"
 [[ $status -eq 0 ]] || { echo "clap-validator failed ($status); log: $LOG" >&2; exit "$status"; }
 echo "clap-validator passed; log: $LOG"

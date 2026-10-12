@@ -157,8 +157,15 @@ def checked(args, log, env):
     print("Running:", subprocess.list2cmdline([str(a) for a in args]), flush=True)
     with log.open("w", encoding="utf-8") as stream:
         result = subprocess.run(args, cwd=ROOT, env=env, stdout=stream, stderr=subprocess.STDOUT)
+    check_log(log, result.returncode)
+
+
+def check_log(log, returncode=0):
     text = log.read_text(errors="replace")
-    if result.returncode or re.search(r"panicked at|BadDrawable|BadWindow|Error while closing window", text):
+    failures = (r"\bpanic(?:ked)?\b|BadDrawable|BadWindow|glXSwapBuffers|X Error of failed request|"
+                r"Error while closing window|Failed to create editor|"
+                r"Could not find a valid Framebuffer configuration")
+    if returncode or re.search(failures, text, re.I):
         raise RuntimeError(f"Check failed: {log}\n{text[-6000:]}")
 
 
@@ -282,6 +289,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("bump", help="edit Cargo versions/lock only; no commit/tag/push")
     p.add_argument("version")
+    p = commands.add_parser("check-log", help="reject validator/editor failures even after exit zero")
+    p.add_argument("log", type=Path)
     for action in ("prepare", "build"):
         p = commands.add_parser(action, help="export committed source" if action == "prepare"
                                 else "test, validate and package this native platform")
@@ -296,7 +305,8 @@ def main():
     p.add_argument("--publish", action="store_true", help="also make the completed draft visible")
     args = parser.parse_args()
     try:
-        {"bump": bump, "prepare": prepare, "build": build, "publish": publish}[args.command](args)
+        {"bump": bump, "prepare": prepare, "build": build, "publish": publish,
+         "check-log": lambda args: check_log(args.log)}[args.command](args)
     except (ValueError, OSError, KeyError, RuntimeError, subprocess.CalledProcessError) as error:
         print(f"Release stopped: {error}", file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError):

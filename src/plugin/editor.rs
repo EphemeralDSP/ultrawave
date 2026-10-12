@@ -8,8 +8,8 @@ use nice_plug::context::gui::GuiContext;
 use nice_plug::editor::dpi::LogicalSize;
 use nice_plug::prelude::{BoolParam, IntParam, Param};
 use nice_plug_egui::{
-    create_egui_editor, EguiEditor, EguiEditorState, EguiNiceSettings, Frame, NiceEguiApp,
-    RepaintNotifier,
+    create_egui_editor, EguiEditor, EguiEditorState, EguiNiceSettings, Frame, GlConfig,
+    GraphicsConfig, NiceEguiApp, RepaintNotifier,
 };
 use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
@@ -56,7 +56,17 @@ pub fn create(
     create_egui_editor(
         state,
         RepaintNotifier::new(),
-        EguiNiceSettings::new().with_tile("Ultrawave"),
+        EguiNiceSettings::new()
+            .with_tile("Ultrawave")
+            .with_graphics_config(GraphicsConfig {
+                // egui_glow writes gamma-encoded colors with FRAMEBUFFER_SRGB disabled.
+                // Requiring an sRGB visual needlessly rejects headless Mesa/Xvfb.
+                gl_config: GlConfig {
+                    srgb: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
         UltrawaveEditorApp {
             params,
             midi_open: false,

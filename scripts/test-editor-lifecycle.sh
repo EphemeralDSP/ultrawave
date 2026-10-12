@@ -11,7 +11,6 @@ readonly PLUGINVAL="${PLUGINVAL:-${ROOT_DIR}/target/tools/pluginval}"
 readonly REPEATS="${EDITOR_LIFECYCLE_REPEATS:-10}"
 readonly STRICTNESS="${VALIDATION_STRICTNESS:-5}"
 readonly LOG_DIR="${EDITOR_LIFECYCLE_LOG_DIR:-${TMPDIR:-/tmp}/ultrawave-editor-lifecycle-$$}"
-readonly FAILURE_PATTERN='BadDrawable|BadWindow|glXSwapBuffers|panicked at|thread .* panicked|X Error of failed request|Error while closing window'
 
 if [[ ! -x "${PLUGINVAL}" ]]; then
     echo "pluginval is not executable: ${PLUGINVAL}" >&2
@@ -44,10 +43,6 @@ if (( status != 0 )); then
     exit "${status}"
 fi
 
-if grep -E -q "${FAILURE_PATTERN}" "${log}"; then
-    echo "Editor teardown failure found for ${plugin}; log: ${log}" >&2
-    grep -E -n "${FAILURE_PATTERN}" "${log}" >&2
-    exit 1
-fi
+python3 "${ROOT_DIR}/ci/release.py" check-log "${log}"
 
 echo "Editor lifecycle regression passed; logs: ${LOG_DIR}"
