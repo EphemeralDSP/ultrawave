@@ -2,6 +2,41 @@ use std::sync::Arc;
 use ultrawave_core::dsp::sample_engine::SampleEngine;
 
 #[test]
+fn replacing_a_slot_cuts_only_its_voices_and_returns_old_storage() {
+    use ultrawave_core::sampler::{Sample, Sampler, SamplerError};
+    let old: Arc<[i16]> = vec![256, 512, 768].into();
+    let weak = Arc::downgrade(&old);
+    let new: Arc<[i16]> = vec![-1024, 128].into();
+    let mut sampler = Sampler::new(vec![Sample::Rom(old), Sample::Ram { capacity: 3 }], 2);
+    sampler.record(1, 3).unwrap();
+    sampler.play(0, 0, 1.0, 1.0).unwrap();
+    sampler.play(1, 0, -1.0, 1.0).unwrap();
+    let retired = sampler.replace_rom(0, &new).unwrap();
+    assert_eq!(weak.strong_count(), 1);
+    sampler.render_frame(|voices, inputs| {
+        assert_eq!(voices, &[0.0, 0.0]);
+        inputs[1] = 0.25;
+    });
+    assert_eq!(sampler.sample(1, 0), Some(512));
+    assert!(sampler.capture_status(1).unwrap().recording);
+    drop(retired);
+    assert_eq!(weak.strong_count(), 0);
+
+    sampler.play(0, 0, 1.0, 1.0).unwrap();
+    let retired_ram = sampler.replace_rom(1, &new).unwrap();
+    assert!(sampler.capture_status(1).is_none());
+    assert_eq!(sampler.record(1, 1), Err(SamplerError::ReadOnly));
+    sampler.render_frame(|voices, _| assert_eq!(voices, &[-0.5, 0.0]));
+    assert_eq!(sampler.sample(1, 1), Some(128));
+    assert!(matches!(
+        sampler.replace_rom(2, &new),
+        Err(SamplerError::InvalidInstrument)
+    ));
+    sampler.render_frame(|voices, _| assert_eq!(voices, &[0.0625, 0.0]));
+    drop(retired_ram);
+}
+
+#[test]
 fn shared_samples_have_independent_cursors_and_no_recording_capacity_limit() {
     let mut codes = vec![0; 441_003];
     codes[441_000..].copy_from_slice(&[-512, 1024, 1536]);

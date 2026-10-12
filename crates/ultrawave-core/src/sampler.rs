@@ -52,6 +52,12 @@ enum Storage {
     },
 }
 
+/// Replaced sample ownership. Move to a non-audio thread before dropping it.
+#[must_use = "retire replaced sample storage off the audio thread"]
+pub struct RetiredSample {
+    _storage: Storage,
+}
+
 impl Storage {
     fn sample(&self, index: usize) -> Option<i16> {
         if index >= self.extent() {
@@ -206,6 +212,29 @@ impl Sampler {
         self.samples.push(Storage::Rom(samples.clone()));
         self.inputs.push(0.0);
         Ok(instrument)
+    }
+
+    /// Replace one ROM/RAM slot with prepared signed-12-bit ROM. Cut its voices
+    /// and capture only; other slots continue. Caller must retire the returned
+    /// storage off-thread. No allocation or destruction occurs here.
+    pub fn replace_rom(
+        &mut self,
+        instrument: usize,
+        samples: &Arc<[i16]>,
+    ) -> Result<RetiredSample, SamplerError> {
+        let storage = self
+            .samples
+            .get_mut(instrument)
+            .ok_or(SamplerError::InvalidInstrument)?;
+        let retired = RetiredSample {
+            _storage: std::mem::replace(storage, Storage::Rom(samples.clone())),
+        };
+        for voice in &mut self.voices {
+            if voice.instrument == instrument {
+                voice.active = false;
+            }
+        }
+        Ok(retired)
     }
 
     /// Establish the full intended extent in O(1), retaining old audio inside it.
